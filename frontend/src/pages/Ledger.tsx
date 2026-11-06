@@ -70,7 +70,7 @@ function summary(e: LedgerEvent): string {
     case "payout_claimed":
       return `epoch ${str(p.epoch)} · ${fmtHbar(str(p.amount_tinybar) || "0")} claimed`;
     case "agent_key_created":
-      return `agent key ${str(p.agent_id)} · budget ${cr(p.budget_mc, 0)} cr`;
+      return `API key ${str(p.agent_id)} · ${p.budget_mc == null ? "no cap" : `cap ${cr(p.budget_mc, 0)} cr`}`;
     case "hardware_challenge":
       return `hardware check ${str(p.result)} · node ${shortHash(str(p.node_id), 6, 4)}`;
     case "credits_clawed_back":

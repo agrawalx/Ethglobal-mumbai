@@ -15,6 +15,7 @@ const titles: Record<RouteName, string> = {
   landing: `${BRAND.name}: Spare GPUs, one bigger model.`,
   chat: "Chat",
   account: "Account",
+  keys: "API keys",
   network: "Network",
   ledger: "Ledger",
   payouts: "Payouts",

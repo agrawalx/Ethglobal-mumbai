@@ -2,7 +2,7 @@
 import type { Receipt } from "@shared/types";
 import { ModelsResponse, WorldVerifyResponse, NodeRegisterRequest, NodeRegisterResponse } from "@gpupool/shared";
 import config from "../../../../shared/config/gpupool.config.json";
-import { meFromWire, receiptFromWire, networkFromWire, ledgerFromWire, rpFromWire, payoutsFromWire } from "./adapters";
+import { meFromWire, receiptFromWire, networkFromWire, ledgerFromWire, rpFromWire, payoutsFromWire, keysFromWire, newKeyFromWire, keyRequestsFromWire } from "./adapters";
 import { env } from "../../config/env";
 import { NotImplementedError, PaymentRequired, SessionExpired } from "../api";
 import type { ChatChunk, LoginResult, ModelOffer, PoolApi } from "../api";
@@ -71,6 +71,13 @@ export const liveApi: PoolApi = {
     NodeRegisterResponse.parse(await post("/nodes/register", NodeRegisterRequest.parse(link), token, "node registration"));
     return liveApi.me(token);
   },
+
+  keys: async (token) => keysFromWire(await get("/agents", token)),
+  createKey: async (token, name, cap) => newKeyFromWire(await post("/agents", { name, ...(cap === null ? {} : { budget_mc: Math.round(cap * 1000) }) }, token, "API keys")),
+  async revokeKey(token, id) {
+    await call(`/agents/${encodeURIComponent(id)}`, { method: "DELETE", headers: auth(token), what: "API key" });
+  },
+  keyRequests: async (token, id) => keyRequestsFromWire(await get(`/agents/${encodeURIComponent(id)}/requests`, token)),
 
   async models() {
     const r = ModelsResponse.parse(await get("/v1/models"));

@@ -45,6 +45,13 @@ export type NodeLink = { node_id: string; pool_id: string; node_sig: string; ts:
 
 export type MirrorResult = { found: boolean; consensus_ts?: string; message?: string };
 
+/** An API key (gateway agent key): spends this account's credits, up to `cap` (null = whole balance). Credits, not mc. */
+export type ApiKey = { id: string; name: string; cap: number | null; spent: number; revoked: boolean; created_at: number; last_used_at: number | null };
+/** Returned once, at creation: `Authorization: Bearer <token>`. */
+export type NewApiKey = ApiKey & { token: string };
+/** One request made with a key (newest first). `max_tokens` = the answer cap the gateway picked. */
+export type KeyRequest = { req_id: string; model: string; status: "pending" | "ok" | "failed"; in_tokens: number | null; out_tokens: number | null; max_tokens: number | null; cost: number | null; hcs_seq: number | null; ts: number };
+
 export interface PoolApi {
   readonly mode: "mock" | "live";
 
@@ -74,6 +81,15 @@ export interface PoolApi {
   ledger(opts?: { type?: LedgerType; limit?: number }): Promise<LedgerEvent[]>;
   /** Hedera mirror node: check that an HCS message exists. */
   mirror(topic: string, seq: number): Promise<MirrorResult>;
+
+  /** GET /agents: this account's API keys. */
+  keys(token: string): Promise<ApiKey[]>;
+  /** POST /agents. `cap` in credits; null = no cap. The token comes back once. */
+  createKey(token: string, name: string, cap: number | null): Promise<NewApiKey>;
+  /** DELETE /agents/:id. */
+  revokeKey(token: string, id: string): Promise<void>;
+  /** GET /agents/:id/requests. */
+  keyRequests(token: string, id: string): Promise<KeyRequest[]>;
 
   /** GET /payouts/:address: all epochs and this address's Merkle leaves. */
   payouts(address: string): Promise<{ epochs: Epoch[]; payouts: Payout[] }>;

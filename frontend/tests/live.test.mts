@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { meFromWire,receiptFromWire,ledgerFromWire,rpFromWire,payoutsFromWire,networkFromWire } from '../src/data/live/adapters.ts';
+import { meFromWire,receiptFromWire,ledgerFromWire,rpFromWire,payoutsFromWire,networkFromWire,keysFromWire,newKeyFromWire,keyRequestsFromWire } from '../src/data/live/adapters.ts';
 const fixture=(name:string)=>JSON.parse(readFileSync(new URL(`../../shared/examples/${name}.json`,import.meta.url),'utf8'));
 const me=fixture('me-response');
 assert.equal(meFromWire(me).balance.starter,me.balance.starter_mc/1000);
@@ -16,6 +16,10 @@ assert.ok(netv.pools[0].members.length>netv.nodes.length,'pool members without a
 assert.equal(receiptFromWire(r).account_id,r.account_id);
 assert.deepEqual(payoutsFromWire(fixture('payouts-response')).epochs,[]);
 assert.throws(()=>meFromWire({balance:{starter:10000}}));
+const kl=fixture('agent-key-list-response');assert.equal(keysFromWire(kl)[0].spent,kl.agents[0].spent_mc/1000);assert.equal(keysFromWire(kl)[0].cap,kl.agents[0].budget_mc/1000);
+const kc=fixture('agent-key-create-response');assert.equal(newKeyFromWire(kc).cap,null);assert.equal(newKeyFromWire(kc).token,kc.token);
+const kr=fixture('agent-requests-response');assert.equal(keyRequestsFromWire(kr)[0].cost,kr.requests[0].cost_mc/1000);assert.equal(keyRequestsFromWire(kr)[1].cost,null);
+assert.throws(()=>keysFromWire({agents:[{agent_id:'bad'}]}));
 const {api}=await import('../src/data/index.ts');
 const original=globalThis.fetch;
 globalThis.fetch=async()=>{throw new TypeError('offline')};

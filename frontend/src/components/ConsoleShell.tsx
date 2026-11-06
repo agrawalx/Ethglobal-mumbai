@@ -14,6 +14,7 @@ import { fmtNum } from "../lib/format";
 const nav: { name: RouteName; to: string; label: string; icon: IconName }[] = [
   { name: "chat", to: "/chat", label: "Chat", icon: "chat" },
   { name: "account", to: "/account", label: "Account", icon: "user-check" },
+  { name: "keys", to: "/keys", label: "Keys", icon: "key" },
   { name: "network", to: "/network", label: "Network", icon: "pod" },
   { name: "ledger", to: "/ledger", label: "Ledger", icon: "list" },
   { name: "payouts", to: "/payouts", label: "Payouts", icon: "coins" },
