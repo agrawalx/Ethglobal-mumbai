@@ -15,7 +15,7 @@ const MODEL = "Qwen/Qwen3-14B-FP8";
 // ---------- fake Parallax ----------
 type Seen = { body: any; closedEarly: boolean };
 const seen: Seen[] = [];
-let streamMode: "normal" | "slow" | "usage-then-hang" = "normal";
+let streamMode: "normal" | "slow" | "slow-then-end" | "usage-then-hang" = "normal";
 
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((res) => {
@@ -51,6 +51,19 @@ const fake: Server = createServer(async (req, res) => {
     res.write(delta("Hel"));
     res.write(chunk({ id: "p", object: "chat.completion.chunk", choices: [], usage }));
     return; // never sends [DONE]
+  }
+  if (streamMode === "slow-then-end") {
+    // A real pool answer: content for a while, then usage and [DONE].
+    res.write(delta("Hel"));
+    let n = 0;
+    const t = setInterval(() => {
+      if (++n < 8) { res.write(delta(".")); return; }
+      clearInterval(t);
+      res.write(chunk({ id: "p", object: "chat.completion.chunk", choices: [], usage }));
+      res.end("data: [DONE]\n\n");
+    }, 50);
+    res.on("close", () => clearInterval(t));
+    return;
   }
   if (streamMode === "slow") {
     res.write(delta("Hel"));
@@ -150,18 +163,19 @@ test("streaming: SSE passed through unchanged, include_usage forced, usage + tex
   assert.equal(completions[0]!.reqId, reqId);
 });
 
-test("streaming: client disconnect aborts the upstream request", async () => {
+test("streaming: client disconnect lets the pool finish (drained, not aborted), costs nothing, no penalty", async () => {
   const outcomesBefore = (db.prepare("SELECT count(*) AS n FROM node_request_outcomes").get() as { n: number }).n;
   completions.length = 0;
-  streamMode = "slow";
+  streamMode = "slow-then-end";
   const ac = new AbortController();
   const r = await post({ model: MODEL, messages: [{ role: "user", content: "hi" }], stream: true }, ac.signal);
   const reader = r.body!.getReader();
   await reader.read();
   ac.abort();
   const entry = seen.at(-1)!;
-  await waitFor(() => entry.closedEarly);
   await waitFor(() => completions.length === 1);
+  // Parallax 162354a crashes its last stage when a running request is aborted: never close it early.
+  assert.equal(entry.closedEarly, false);
   assert.equal(completions[0]!.ok, false);
   assert.equal(completions[0]!.reason, "client_aborted");
   assert.equal((db.prepare("SELECT count(*) AS n FROM node_request_outcomes").get() as { n: number }).n, outcomesBefore);
@@ -262,6 +276,10 @@ test("POOL_TIMEOUT_MS bounds time to headers only: a long stream is not cut", as
   assert.ok(chunks > 3, `stream stopped early after ${chunks} chunks`);
   assert.equal(done.length, 0, "no completion while still streaming");
   await reader.cancel();
+  // The client left: the never-ending pool stream is drained only up to the cap (POOL_TIMEOUT_MS), then aborted.
+  await waitFor(() => done.length === 1);
+  assert.equal(done[0]!.ok, false);
+  assert.equal(done[0]!.reason, "client_aborted");
   streamMode = "normal";
   local.close();
 });

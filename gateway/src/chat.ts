@@ -104,10 +104,12 @@ export type PoolFetch = (url: URL, init: RequestInit) => Promise<Response>;
  * the first-token limit for streaming (Parallax sends stream headers at once; P5.1).
  */
 async function openUpstream(url: string, body: Record<string, unknown>, stream: boolean, headerMs: number, clientSignal: AbortSignal, poolFetch: PoolFetch): Promise<Attempt | OpenError> {
+  // A client that left before we start: do not send the request at all.
+  if (clientSignal.aborted) return { message: "client aborted before the pool request", stalled: false };
+  // Once sent, the pool request is NOT tied to the client. Parallax 162354a crashes its last stage
+  // ("Decode request … must already be admitted") when a running pipeline request is aborted, so a
+  // client cancel lets the request finish and discards it (proxyStream drains; billing = 0).
   const abort = new AbortController();
-  const onClient = () => abort.abort();
-  if (clientSignal.aborted) abort.abort();
-  clientSignal.addEventListener("abort", onClient, { once: true });
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; abort.abort(new Error("pool timeout")); }, headerMs);
   try {
@@ -231,6 +233,10 @@ export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker, 
           const body = (await attempt.upstream.json()) as Record<string, any>;
           const usage = Usage.safeParse(body.usage);
           const text = String(body.choices?.[0]?.message?.content ?? "");
+          if (usage.success && clientSignal.aborted) {
+            complete(null, text, false, "client_aborted"); // the pool finished; the client is gone: no charge
+            return withHeaders(errorResponse(c, 502, "pool_error", "client closed the request"), extra);
+          }
           if (usage.success) {
             complete(usage.data, text, true);
             // The response id is the gateway req_id (shared ChatCompletionResponse).
@@ -256,6 +262,7 @@ export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker, 
       first, clientSignal, stall, inputTokens,
       poolId: () => target.poolId,
       allowContinuation: cfg.net.resilience.continuation,
+      drainMs: cfg.env.POOL_TIMEOUT_MS,
       reopen: async (reason, partial, streamedTokens) => {
         // Retry until an attempt opens or the failover budget is used up.
         while (await nextTarget(reason, streamedTokens)) {
@@ -288,6 +295,8 @@ type StreamOptions = {
   poolId: () => string;
   /** false: never resume after content was sent (only fail fast). */
   allowContinuation: boolean;
+  /** Upper bound for draining a pool answer after the client left (then it is aborted). */
+  drainMs: number;
   /** Open the next attempt (continuation of `partial`), or null. */
   reopen: (reason: "pool_error" | "no_usage" | "stalled", partial: string, streamedTokens: number) => Promise<Attempt | null>;
   done: (usage: Usage | null, text: string, ok: boolean, reason?: FailReason, streamedTokens?: number) => void;
@@ -324,6 +333,7 @@ export function proxyStream(o: StreamOptions): ReadableStream<Uint8Array> {
   let totalTokens = 0;
   let lastChunkAt: number | null = null;
   let finished = false;
+  let draining = false;
   const finish = (ok: boolean, reason?: FailReason) => {
     if (finished) return;
     finished = true;
@@ -408,10 +418,10 @@ export function proxyStream(o: StreamOptions): ReadableStream<Uint8Array> {
         try {
           r = await readWithin(reader, limit);
         } catch (e) {
-          if (finished) return;
+          if (finished || draining) return;
           return fail(controller, "pool_error", `pool stream failed: ${(e as Error).message}`);
         }
-        if (finished) return;
+        if (finished || draining) return;
         if (r === "stalled") {
           if (o.clientSignal.aborted) { stopAttempt(); controller.close(); finish(false, "client_aborted"); return; }
           await fail(controller, "stalled", `pool stream stalled for ${limit} ms`);
@@ -451,11 +461,27 @@ export function proxyStream(o: StreamOptions): ReadableStream<Uint8Array> {
       }
     },
     cancel() {
-      // The client went away: stop the pool's work too.
-      stopAttempt();
-      // The usage chunk comes after the last content chunk: if it is here, the answer was complete.
-      if (usage) finish(true);
-      else finish(false, "client_aborted");
+      // The client went away. Do NOT abort the pool request (see openUpstream): read the rest of the
+      // answer and discard it, then finish, which also frees the pool slot. Only a real stall aborts.
+      // The usage chunk comes after the last content chunk: if it is already here, the answer was complete.
+      const complete = usage !== null;
+      draining = true;
+      // Usage already received: Parallax has finished this request, so closing it is safe.
+      if (complete) { stopAttempt(); finish(true); return; }
+      const deadline = Date.now() + o.drainMs;
+      void (async () => {
+        try {
+          for (;;) {
+            const r = await readWithin(reader, Math.max(1, Math.min(o.stall.stallMs(o.poolId()), deadline - Date.now())));
+            if (r === "stalled") { stopAttempt(); break; } // a real stall, or the drain cap
+            if (r.done) break;
+          }
+        } catch {
+          // The pool stream broke on its own; nothing left to drain.
+        }
+        if (complete) finish(true);
+        else finish(false, "client_aborted");
+      })();
     },
   });
 }
