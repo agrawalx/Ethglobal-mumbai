@@ -28,7 +28,11 @@ test("cost: model_factor × (out + 0.2 × in), integer millicredits", () => {
 });
 
 test("hold: max_tokens + 0.2 × ceil(chars / 4)", () => {
-  assert.equal(estimateInputTokens([{ content: "abcd" }, { content: "e" }]), 2);
+  assert.equal(estimateInputTokens([{ role: "user", content: "abcd" }, { role: "user", content: "e" }]), 2);
+  // text parts, tool calls and tool definitions count too
+  assert.equal(estimateInputTokens([{ role: "user", content: [{ type: "text", text: "abcd" }] }, { role: "assistant", content: null, tool_calls: [{ id: "c", type: "function", function: { name: "read", arguments: "{}" } }] }]), 3); // 4 + "read" + "{}" = 10 chars
+  const tools = [{ type: "function" as const, function: { name: "read", parameters: { type: "object" } } }];
+  assert.equal(estimateInputTokens([{ role: "user", content: "abcd" }], tools), Math.ceil((4 + JSON.stringify(tools).length) / 4));
   assert.equal(holdMc(cfg.net, M14, 512, 2), costMc(cfg.net, M14, 2, 512));
 });
 

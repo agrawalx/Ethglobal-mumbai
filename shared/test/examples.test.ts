@@ -13,6 +13,8 @@ const EXAMPLES: Record<string, z.ZodType> = {
   "error-response.json": S.ErrorResponse,
   "chat-completion-request.json": S.ChatCompletionRequest,
   "chat-completion-response.json": S.ChatCompletionResponse,
+  "chat-completion-request-tools.json": S.ChatCompletionRequest,
+  "chat-completion-response-tools.json": S.ChatCompletionResponse,
   "models-response.json": S.ModelsResponse,
   "world-verify-response.json": S.WorldVerifyResponse,
   "rp-signature-response.json": S.RpSignatureResponse,
@@ -134,6 +136,21 @@ test("failure path: bad inputs are rejected", () => {
   // logprobs is stripped, never forwarded to Parallax
   const req = S.ChatCompletionRequest.parse({ ...(load("chat-completion-request.json") as object), logprobs: true });
   assert.equal("logprobs" in req, false);
+  // only text parts; an image part is rejected
+  const img = { model: "Qwen/Qwen3-14B-FP8", messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "x" } }] }] };
+  assert.equal(S.ChatCompletionRequest.safeParse(img).success, false);
+  // a tool message needs its tool_call_id
+  assert.equal(S.ChatMessage.safeParse({ role: "tool", content: "x" }).success, false);
+});
+
+test("OpenCode-shaped request keeps tools, tool calls and tool results", () => {
+  const req = S.ChatCompletionRequest.parse(load("chat-completion-request-tools.json"));
+  assert.equal(req.tools?.[0]?.function.name, "read");
+  assert.equal(req.tool_choice, "auto");
+  const [, user, asst, tool] = req.messages;
+  assert.equal(S.contentText(user!.content), "What does src/main.ts do?");
+  assert.ok(asst!.role === "assistant" && asst!.tool_calls?.[0]?.id === "call_0" && S.contentText(asst!.content) === "");
+  assert.ok(tool!.role === "tool" && tool!.tool_call_id === "call_0");
 });
 
 test("canonical JSON: sorted keys, no whitespace, same bytes as Python json.dumps(sort_keys, separators, ensure_ascii=False)", () => {

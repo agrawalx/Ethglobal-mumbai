@@ -166,7 +166,7 @@ export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker) 
       return true;
     };
 
-    const inputTokens = estimateInputTokens(req.messages);
+    const inputTokens = estimateInputTokens(req.messages, req.tools);
     const headerMs = req.stream ? stall.firstTokenMs(inputTokens) : cfg.env.POOL_TIMEOUT_MS;
 
     // Before any byte reaches the client, a failed attempt can start again from the beginning.

@@ -1,5 +1,5 @@
 import { addReserve, consumeEarned, creditEarned } from "./incentives.ts";
-import type { CreditSplit, GpupoolConfig, ModelConfig, Route } from "@gpupool/shared";
+import { contentText, type ChatMessage, type CreditSplit, type GpupoolConfig, type ModelConfig, type Route, type Tool } from "@gpupool/shared";
 import type { Db } from "./db.ts";
 import { recordEvent, type Signer } from "./events.ts";
 
@@ -22,9 +22,18 @@ export function costMc(cfg: GpupoolConfig, model: ModelConfig, inTokens: number,
   return Math.floor((factorMilli(model) * (outTokens * BPS + inTokens * weightBps(cfg))) / BPS);
 }
 
-/** Input tokens before the request runs: ceil(total characters of all message contents / 4). */
-export function estimateInputTokens(messages: { content: string }[]): number {
-  return Math.ceil(messages.reduce((n, m) => n + m.content.length, 0) / 4);
+/** Characters a message adds to the prompt: its text, plus tool-call names and arguments. */
+const messageChars = (m: ChatMessage): number =>
+  contentText(m.content).length +
+  (m.role === "assistant" ? (m.tool_calls ?? []).reduce((n, t) => n + t.function.name.length + t.function.arguments.length, 0) : 0);
+
+/**
+ * Input tokens before the request runs: ceil(characters / 4) over all message text, tool calls and
+ * the tool definitions (they are part of the prompt the model reads).
+ */
+export function estimateInputTokens(messages: ChatMessage[], tools: Tool[] = []): number {
+  const chars = messages.reduce((n, m) => n + messageChars(m), 0) + (tools.length ? JSON.stringify(tools).length : 0);
+  return Math.ceil(chars / 4);
 }
 
 /** Hold (SPEC §5.3 step 4) = the cost formula with max_tokens output and the estimated input. */

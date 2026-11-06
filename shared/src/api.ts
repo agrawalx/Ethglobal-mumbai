@@ -43,6 +43,8 @@ export const ErrorCode = z.enum([
   "not_found",
   "pool_error",
   "internal",
+  /** The prompt does not fit the pool's context even after the gateway trimmed it. */
+  "context_length_exceeded",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCode>;
 
@@ -54,11 +56,55 @@ export type ErrorResponse = z.infer<typeof ErrorResponse>;
 
 // ---------- POST /v1/chat/completions (OpenAI-compatible subset) ----------
 
-export const ChatMessage = z.object({
-  role: z.enum(["system", "user", "assistant"]),
-  content: z.string(),
+/** Text content part (OpenAI array content). Image and audio parts are not supported. */
+export const TextPart = z.object({ type: z.literal("text"), text: z.string() });
+export type TextPart = z.infer<typeof TextPart>;
+/** Message content: a string or text parts. */
+export const MessageContent = z.union([z.string(), z.array(TextPart)]);
+export type MessageContent = z.infer<typeof MessageContent>;
+
+/** An OpenAI function tool call (assistant messages, responses). `arguments` is a JSON string. */
+export const ToolCall = z.object({
+  id: z.string().min(1).max(128),
+  type: z.literal("function"),
+  function: z.object({ name: z.string().min(1).max(128), arguments: z.string() }),
 });
+export type ToolCall = z.infer<typeof ToolCall>;
+
+/** A function tool the client offers (OpenCode, OpenAI SDKs). `parameters` is a JSON Schema. */
+export const Tool = z.object({
+  type: z.literal("function"),
+  function: z.object({
+    name: z.string().min(1).max(128),
+    description: z.string().optional(),
+    parameters: z.record(z.string(), z.unknown()).optional(),
+    strict: z.boolean().nullable().optional(),
+  }),
+});
+export type Tool = z.infer<typeof Tool>;
+
+export const ToolChoice = z.union([
+  z.enum(["auto", "none", "required"]),
+  z.object({ type: z.literal("function"), function: z.object({ name: z.string().min(1).max(128) }) }),
+]);
+export type ToolChoice = z.infer<typeof ToolChoice>;
+
+export const ChatMessage = z.discriminatedUnion("role", [
+  z.object({ role: z.literal("system"), content: MessageContent }),
+  z.object({ role: z.literal("user"), content: MessageContent }),
+  z.object({
+    role: z.literal("assistant"),
+    /** Null or absent when the turn is only tool calls. */
+    content: MessageContent.nullable().optional(),
+    tool_calls: z.array(ToolCall).optional(),
+  }),
+  z.object({ role: z.literal("tool"), tool_call_id: z.string().min(1).max(128), content: MessageContent }),
+]);
 export type ChatMessage = z.infer<typeof ChatMessage>;
+
+/** The plain text of a message's content (parts joined; null → ""). */
+export const contentText = (c: MessageContent | null | undefined): string =>
+  c == null ? "" : typeof c === "string" ? c : c.map((p) => p.text).join("");
 
 /**
  * Unknown fields are stripped (zod default), so `logprobs` never reaches Parallax.
@@ -79,6 +125,10 @@ export const ChatCompletionRequest = z.object({
   seed: z.number().int().optional(),
   stop: z.union([z.string(), z.array(z.string())]).optional(),
   chat_template_kwargs: z.object({ enable_thinking: z.boolean().optional() }).optional(),
+  /** Function tools. The gateway emulates tool calling when the pool has no native support. */
+  tools: z.array(Tool).optional(),
+  tool_choice: ToolChoice.optional(),
+  parallel_tool_calls: z.boolean().optional(),
 });
 export type ChatCompletionRequest = z.infer<typeof ChatCompletionRequest>;
 
@@ -99,7 +149,12 @@ export const ChatCompletionResponse = z.object({
     .array(
       z.object({
         index: z.number().int().nonnegative(),
-        message: z.object({ role: z.literal("assistant"), content: z.string() }),
+        message: z.object({
+          role: z.literal("assistant"),
+          /** Null when the answer is only tool calls. */
+          content: z.string().nullable(),
+          tool_calls: z.array(ToolCall).optional(),
+        }),
         finish_reason: z.string().nullable(),
       }),
     )
@@ -107,6 +162,23 @@ export const ChatCompletionResponse = z.object({
   usage: Usage,
 });
 export type ChatCompletionResponse = z.infer<typeof ChatCompletionResponse>;
+
+// ---------- price (1 credit is not 1 token; the multiplier floats with pool load) ----------
+
+/** Credits per 1,000 tokens, quoted when a request starts and locked for that request. */
+export const PriceQuote = z.object({
+  credits_per_1k_in: z.number().nonnegative(),
+  credits_per_1k_out: z.number().nonnegative(),
+  /** Load multiplier on the model's base price (1 = base). */
+  multiplier: z.number().positive(),
+  quoted_at: TimestampMs,
+});
+export type PriceQuote = z.infer<typeof PriceQuote>;
+
+/** Picked max_tokens for a request (per-user budget), set on /v1/chat/completions responses. */
+export const MAX_TOKENS_HEADER = "x-gpupool-max-tokens";
+/** JSON PriceQuote locked for the request, set on /v1/chat/completions responses. */
+export const PRICE_HEADER = "x-gpupool-price";
 
 // ---------- GET /v1/models ----------
 
@@ -122,6 +194,10 @@ export const ModelsResponse = z.object({
       /** Number of ready pools that serve the model now. */
       pools: z.number().int().nonnegative(),
       source: z.literal("arkiv"),
+      /** Largest prompt + answer the serving pools take, tokens (minimum over their nodes). */
+      context_length: z.number().int().positive().optional(),
+      /** Current price; requests lock their own quote. */
+      price: PriceQuote.optional(),
     }),
   ),
 });
@@ -287,6 +363,8 @@ export const NodeHeartbeat = z.object({
   served_sessions: z.number().int().nonnegative().nullable().default(null),
   /** P5.5: the last pool restart ID this node executed. */
   restart_ack: z.number().int().nonnegative().nullable().default(null),
+  /** Largest sequence (prompt + answer, tokens) this node's Parallax process accepts. */
+  max_seq: z.number().int().positive().nullable().default(null),
   // ---- SPEC §16.1 automatic pool formation ----
   /** Parallax TCP port of this node (other nodes measure delay to lan_ip:p2p_port). */
   p2p_port: z.number().int().min(1).max(65535).nullable().default(null),
@@ -347,6 +425,8 @@ export const PoolStateResponse = z.object({
   layer_map: Route.nullable(),
   /** P5.5: a clean restart is running (not every member has acknowledged it yet). */
   restarting: z.boolean(),
+  /** Minimum max_seq of the members (tokens); absent until nodes report it. */
+  context_length: z.number().int().positive().optional(),
 });
 export type PoolStateResponse = z.infer<typeof PoolStateResponse>;
 
@@ -412,6 +492,8 @@ export const Receipt = z.object({
   hcs_seq: z.number().int().nonnegative().nullable(),
   /** Null = served by the first attempt with no failover record (post-MVP P5.2). */
   attempts: z.array(RequestAttempt).nullable(),
+  /** Price multiplier locked for this request; absent on requests before floating prices. */
+  price_multiplier: z.number().positive().nullable().optional(),
   ts: TimestampMs,
 });
 export type Receipt = z.infer<typeof Receipt>;

@@ -226,7 +226,7 @@ export function makePrepare(d: BillingDeps): Prepare {
       };
 
       if (accountId) {
-        const hold = holdMc(cfg.net, model, maxTokens, estimateInputTokens(req.messages));
+        const hold = holdMc(cfg.net, model, maxTokens, estimateInputTokens(req.messages, req.tools));
         if (agentId && hold > agentBudgetLeft(db, agentId)) {
           return errorResponse(c, 403, "insufficient_credits", `agent budget left ${agentBudgetLeft(db, agentId)} mc; this request needs a hold of ${hold} mc`);
         }
