@@ -44,12 +44,12 @@ export const crew: {
   {
     id: "quil",
     name: "Pod",
-    role: "The coordinator",
+    role: "Pool scheduler",
     color: "#d8e8ff",
     light: "#f0f7ff",
     dark: "#7298ce",
     introduction:
-      "I’m the pool. Any number of laptops, one model, one route through all of them.",
+      "I’m the pool’s Parallax scheduler. The gateway hands me a request and I run it through the laptops in layer order.",
   },
   {
     id: "iris",
@@ -59,7 +59,7 @@ export const crew: {
     light: "#dbf4e9",
     dark: "#438c73",
     introduction:
-      "I’m Hedy. I check your World login, hold your credits and write every receipt to HCS.",
+      "I’m Hedy, the gateway. I talk to everything: World login, the Arkiv directory, routing, credits and receipts on Hedera.",
   },
   {
     id: "wren",

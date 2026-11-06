@@ -33,7 +33,7 @@ export default function ProviderForm({ mode, models, done }: { mode: "create" | 
     </div> : <label>Pool ID<input name="pool" autoFocus required placeholder="pool_…" autoComplete="off" spellCheck={false} /><span className="faint">Ask the coordinator for their Pool ID. They approve new members.</span></label>}
     <div className="provider-payout"><label>Your HBAR payout address<input value={payout} onChange={e => setAddress(e.target.value)} required pattern="0x[0-9a-fA-F]{40}" placeholder="0x…" spellCheck={false} autoComplete="off" /><span className="faint">Needed because serving earns HBAR: requests paid with x402 are paid out to laptop owners each epoch on Hedera testnet. Each owner receives their own share at this EVM address (0x…).</span></label>
       {wallet.hasInjected && <button className="button button-ghost button-sm" type="button" disabled={wallet.connecting} onClick={() => wallet.connectInjected().catch(e => setError(e))}><Icon name="wallet" size={14} />{wallet.connecting ? <Busy size={12}>Connecting…</Busy> : "Use wallet for payout address"}</button>}</div>
-    {error && <ErrorBox error={error} />}
+    {error && <ErrorBox title={mode === "create" ? "Couldn't create the pool" : "Couldn't send your request"} error={error} hint="Nothing was saved. Fix the field above or try again." />}
     <button className="button button-blue" type="submit" disabled={busy || (mode === "create" && !models.length)}>{busy ? <Busy>Saving…</Busy> : mode === "create" ? "Create pool" : "Request to join"}<Icon name="arrow" size={15} /></button>
   </form>;
 }

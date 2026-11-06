@@ -138,18 +138,6 @@ export default function ConsoleShell({
       <main className="console-main" id="console-main" tabIndex={-1}>
         {children}
       </main>
-      <footer className="console-footer">
-        <span>
-          <span className="tiny-cross">+</span> Data sources:
-        </span>
-        <span className="badge badge-arkiv">Arkiv</span> pools, nodes, models ·
-        <span className="badge badge-hcs">HCS</span> ledger events ·
-        <span className="badge badge-hashscan">HashScan</span> x402 payments &amp; payouts ·
-        <a className="text-link" href="/ledger">Network activity</a> ·
-        <a className="text-link" href="/payouts">Payouts</a> ·
-        <a className="text-link" href="/keys">API access</a> ·
-        <a className="text-link" href="/account">Credits &amp; earnings</a>
-      </footer>
     </div>
   );
 }

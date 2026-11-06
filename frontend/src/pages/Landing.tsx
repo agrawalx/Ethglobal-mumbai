@@ -2,6 +2,7 @@ import { Suspense, lazy, useCallback, useState } from "react";
 import GooeyNav from "../components/GooeyNav";
 import { Brand } from "../components/Shared";
 import { Icon } from "../components/Icon";
+import type { IconName } from "../components/Icon";
 import CrewScene from "../components/CrewScene";
 import ParticleStage from "../components/ParticleStage";
 import PoolStory from "../components/story/PoolStory";
@@ -11,28 +12,12 @@ import { useSession } from "../auth/context";
 
 const LiveLayerSim = lazy(() => import("../components/sim/LiveLayerSim"));
 
-/* The earn → spend loop, in order (SPEC §8). */
-const steps = [
-  {
-    number: "01",
-    title: "Prove you are human.",
-    description: "Log in with World ID. One account per person, with 10,000 starter credits for 14 days to try any pool.",
-  },
-  {
-    number: "02",
-    title: "Lend your laptop to a pool.",
-    description: "Your laptop joins a pool and serves the layers that fit in its memory. No single laptop has to hold the whole model.",
-  },
-  {
-    number: "03",
-    title: "Earn by the layer.",
-    description: "90% of every request goes to the laptops that served it, by layers served. Your own requests pay your laptop nothing. Earnings unlock after an hour.",
-  },
-  {
-    number: "04",
-    title: "Spend on another pool.",
-    description: "Use what you earned to query a different pool and model. Earn more than you spend and your requests go first when pools are busy.",
-  },
+/* One request, executing across a pool. */
+const EXEC: { title: string; tag: string; icon: IconName }[] = [
+  { title: "Prompt", tag: "you → gateway", icon: "chat" },
+  { title: "Split across laptops", tag: "layers in a pipeline", icon: "laptop" },
+  { title: "Answer streams", tag: "token by token", icon: "bolt" },
+  { title: "Receipt on Hedera", tag: "cost + route on HCS", icon: "file" },
 ];
 
 export default function Landing() {
@@ -98,29 +83,11 @@ export default function Landing() {
           <div className="hero-atmosphere" aria-hidden="true" />
           <ParticleStage onPhase={phaseChange} />
           <div className="hero-copy">
-            <span className="eyebrow">
-              <i className="status-dot" /> SPARE GPUS. ONE BIGGER MODEL.
-            </span>
             <h1>
               Your laptop, idle tonight.
               <br />
               Part of something bigger.
             </h1>
-          </div>
-          <div className="hero-aside">
-            <p>
-              Your laptop serves a slice
-              <br />
-              of a model too big for it.
-              <br />
-              Each request earns credits.
-              <br />
-              Spend them on any pool.
-            </p>
-            <button className="text-link" onClick={login}>
-              {session.me ? "Open the playground" : "Log in with World ID"}{" "}
-              <Icon name="arrow" size={16} />
-            </button>
           </div>
           <div className="scene-caption">
             <span className="tiny-cross">+</span>
@@ -143,38 +110,26 @@ export default function Landing() {
           </div>
         </section>
         <section className="warm-section content-section" id="the-pool">
-          <div className="section-topline">
-            <span className="section-label">
-              <span className="tiny-cross">+</span> SERVE, EARN, SPEND
-            </span>
-            <span className="section-index">01 / THE LOOP</span>
-          </div>
-          <div className="section-intro">
+          <div className="section-intro loop-intro">
             <h2>
               Serve one pool.
               <br />
               Spend in another.
             </h2>
-            <p>
-              Like seeding a torrent: you give compute now and use it later.
-              <br className="desktop-break" /> A pool can be two laptops or twenty.
-              Each one serves its
-              <br className="desktop-break" /> share of the layers, and the gateway pays it
-              for exactly that share.
-            </p>
           </div>
-          <div id="the-crew" className="landing-crew"><p className="faint">An illustration of one pool. The Network page lists every live pool and node.</p>
+          <div id="the-crew" className="landing-crew">
             <CrewScene variant="landing" />
           </div>
-          <div className="journey-steps">
-            {steps.map((step) => (
-              <div className="journey-step" key={step.number}>
-                <span>{step.number}</span>
-                <h3>{step.title}</h3>
-                <p>{step.description}</p>
-              </div>
+          <ol className="exec-boxes" aria-label="How one request executes">
+            {EXEC.map((box, i) => (
+              <li key={box.title} className="exec-box" style={{ ["--i" as string]: i }}>
+                <span className="exec-icon" aria-hidden="true">
+                  <Icon name={box.icon} size={22} />
+                </span>
+                <b>{box.title}</b>
+              </li>
             ))}
-          </div>
+          </ol>
         </section>
         <section className="content-section sim-section" id="simulator">
           <div className="section-topline">

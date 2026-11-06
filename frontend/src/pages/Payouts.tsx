@@ -215,13 +215,13 @@ export default function Payouts() {
         </>
       )}
 
-      <section className="panel section-gap" aria-labelledby="epochs-h">
-        <div className="panel-head">
+      <details className="panel section-gap payout-tech">
+        <summary className="panel-head">
           <h2 id="epochs-h" className="section-title">
-            Epochs
+            Technical details: epochs and Merkle roots
           </h2>
           <span className="faint">from epoch_closed events on HCS</span>
-        </div>
+        </summary>
         {closed.error && !closed.data ? (
           <ErrorBox error={closed.error} retry={closed.reload} />
         ) : !closed.data ? (
@@ -273,7 +273,7 @@ export default function Payouts() {
             See epoch_closed events <Icon name="arrow" size={12} />
           </button>
         </p>
-      </section>
+      </details>
     </>
   );
 }

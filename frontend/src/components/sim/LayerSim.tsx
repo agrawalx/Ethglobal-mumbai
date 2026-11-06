@@ -66,8 +66,6 @@ export default function LayerSim({ pools = [], nodes = [], preferLive = false }:
   const cost = costMc(view.factor, inTok, outTok);
   const split = splitMc(cost, view.route, view.total, (id) => selfRequest && view.laptops.find((l) => l.id === id)?.owner === youLap?.owner);
   const yourMc = split.nodes.filter((n) => view.laptops.find((l) => l.id === n.node_id)?.owner === youLap?.owner).reduce((a, n) => a + n.mc, 0);
-  const other = config.models.find((m) => m.model_id !== view.modelId) ?? config.models[0];
-  const buysOut = Math.floor(yourMc / Math.round(other.model_factor * 1000));
   const pooledGb = view.laptops.reduce((a, l) => a + l.mem, 0);
   // A run belongs to one setup: change anything and it reads as idle again.
   const key = JSON.stringify([mode, pool?.pool_id, modelId, laptops, inTok, outTok, you, selfRequest]);
@@ -249,7 +247,7 @@ export default function LayerSim({ pools = [], nodes = [], preferLive = false }:
         <div className="sim-cost">
           <span className="faint">Cost</span>
           <p className="sim-formula">
-            {view.factor} × ({outTok} out + 0.2 × {inTok} in) = <b>{fmtMc(cost)} credits</b>
+            <b>{fmtMc(cost)} credits</b>
           </p>
           <div className="sim-split" aria-label="Split of this request">
             <span style={{ flex: split.nodes.reduce((a, n) => a + n.mc, 0) || 0.0001 }} className="sim-split-nodes">
@@ -262,21 +260,18 @@ export default function LayerSim({ pools = [], nodes = [], preferLive = false }:
               reserve {fmtMc(split.reserve_mc)}
             </span>
           </div>
-          <p className="faint sim-note">90% to the nodes on the route, divided by layers served. 5% is burned. 5% goes to the network reserve, plus rounding and any share of a node that served its own owner.</p>
         </div>
         <div className={`sim-loop${settled ? " is-on" : ""}`}>
-          <span className="faint">Your laptop, after this query</span>
+          <span className="faint">You earn</span>
           {selfRequest ? (
             <p>
-              <b>0 credits.</b> Your own request pays your laptop nothing, so trading with yourself never raises your ratio. You still pay the cost.
+              <b>0 credits</b> <span className="faint">· own request</span>
             </p>
           ) : (
             <p>
-              <b>+{fmtMc(yourMc)} credits</b> for {youLap?.name ?? "your laptop"}. They vest for {Math.round(config.incentives.vesting_s / 60)} minutes, then you can spend them on any pool: that buys about{" "}
-              <b>{fmtNum(buysOut)} answer tokens</b> on {short(other.model_id)}.
+              <b>+{fmtMc(yourMc)} credits</b> <span className="faint">· {youLap?.name ?? "your laptop"}</span>
             </p>
           )}
-          <p className="faint sim-note">Earning raises your contribution ratio (earned ÷ spent). When a pool is busy, higher ratios go first.</p>
         </div>
       </div>
       {live && <p className="faint sim-source">Source: Arkiv pool listing {pool?.pool_id}. Memory and GPU come from each node's own listing.</p>}

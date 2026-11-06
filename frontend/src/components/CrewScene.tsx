@@ -63,6 +63,54 @@ const poses: Partial<Record<MissionPhase, Partial<Record<AgentId, Pose>>>> = {
     wren: { x: 77, y: 70 },
   },
 };
+/* Hanging badges for the three networks the pool runs on (simple marks, not official logos). */
+/* Badge geometry (px, landing scene is 400px tall): hanger top −8, string HANG, badge 40 tall.
+   Lines from the gateway end at each badge's bottom centre. Order follows a request: World → Arkiv → Hedera. */
+const HANG = 24;
+const SCENE_H = 400;
+const BADGE_BOTTOM_VB = ((-8 + HANG + 40) / SCENE_H) * 280;
+const HANGERS = [
+  { id: "world", name: "World", x: 20, len: HANG, color: "#a1d6ff", mark: <><circle cx="16" cy="16" r="12.5" fill="none" stroke="currentColor" strokeWidth="2.6" /><path d="M7 16 H25" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" /></> },
+  { id: "arkiv", name: "Arkiv", x: 50, len: HANG, color: "#b4a0ed", mark: <><path d="M16 5 L27 27 H22 L16 14 L10 27 H5 Z" fill="currentColor" /><rect x="11" y="20" width="10" height="2.6" rx="1.3" fill="currentColor" /></> },
+  { id: "hedera", name: "Hedera", x: 80, len: HANG, color: "#8ecab3", mark: <><circle cx="16" cy="16" r="13" fill="none" stroke="currentColor" strokeWidth="2.2" /><path d="M11 9 V23 M21 9 V23 M11 13.5 H21 M11 18.5 H21" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" /></> },
+];
+
+/* Landing layout = the repo's architecture: the gateway (Hedy) coordinates everything.
+   It talks to World (login), Arkiv (pool directory) and Hedera (credits, receipts, payouts),
+   and routes each request to a pool: Pod (Parallax scheduler) → Rex → Mika → Nova → back to the gateway. */
+const GATEWAY = { x: 50, y: 47 };
+const landingHomes: Record<AgentId, Pose> = {
+  iris: GATEWAY,
+  quil: { x: 17, y: 78 },
+  pip: { x: 39, y: 80 },
+  milo: { x: 61, y: 80 },
+  wren: { x: 83, y: 78 },
+};
+const landingPoses: Partial<Record<MissionPhase, Partial<Record<AgentId, Pose>>>> = {
+  introducing: { iris: { ...GATEWAY, say: "I’m the gateway. I talk to everything." } },
+  planning: { iris: { ...GATEWAY, say: "World ID checked. One human, one account." } },
+  discovering: { iris: { ...GATEWAY, say: "Arkiv: this pool serves Qwen3-14B." } },
+  investigating: { quil: { x: 17, y: 78, say: "Routing: Rex → Mika → Nova." } },
+  reviewing: { wren: { x: 83, y: 78, say: "Last layers done. Answer to the gateway." } },
+  writing: { iris: { ...GATEWAY, say: "Receipt and credit split on Hedera." } },
+  complete: { iris: { ...GATEWAY, say: "Settled. Every laptop paid by layers." } },
+};
+/* which hanging badge the gateway is talking to in each phase */
+const activeHanger: Partial<Record<MissionPhase, string>> = { planning: "world", discovering: "arkiv", writing: "hedera", complete: "hedera" };
+/* svg coordinates (viewBox 1000 × 280) */
+const gx = 500, gy = (GATEWAY.y / 100) * 280;
+const badge = (id: string) => { const h = HANGERS.find((x) => x.id === id)!; return `${h.x * 10} ${BADGE_BOTTOM_VB.toFixed(1)}`; };
+const at = (p: Pose) => `${p.x * 10} ${(p.y / 100) * 280}`;
+const landingSignal: Partial<Record<MissionPhase, string>> = {
+  introducing: `M${gx} ${gy} L${badge("world")} M${gx} ${gy} L${badge("arkiv")} M${gx} ${gy} L${badge("hedera")} M${gx} ${gy} L${at(landingHomes.quil)}`,
+  planning: `M${gx} ${gy} L${badge("world")}`,
+  discovering: `M${gx} ${gy} L${badge("arkiv")}`,
+  investigating: `M${gx} ${gy} L${at(landingHomes.quil)} L${at(landingHomes.pip)} L${at(landingHomes.milo)} L${at(landingHomes.wren)}`,
+  reviewing: `M${at(landingHomes.wren)} L${gx} ${gy}`,
+  writing: `M${gx} ${gy} L${badge("hedera")}`,
+  complete: `M${gx} ${gy} L${badge("hedera")}`,
+};
+
 const autoPhases: MissionPhase[] = [
   "idle",
   "introducing",
@@ -102,7 +150,7 @@ export default function CrewScene({
       className={`crew-scene crew-scene-${variant} phase-${current}`}
       data-phase={current}
       role="group"
-      aria-label="The pool: Rex, Mika and Nova, with Hedy the gateway, coordinated by Pod"
+      aria-label={variant === "landing" ? "Hedy the gateway coordinates World, Arkiv, Hedera and a pool: Pod the scheduler with Rex, Mika and Nova" : "The pool: Rex, Mika and Nova, with Hedy the gateway, coordinated by Pod"}
     >
       <div className="crew-ground" aria-hidden="true">
         <span />
@@ -124,6 +172,14 @@ export default function CrewScene({
             <stop offset="1" stopColor="#6fa6e5" stopOpacity="0" />
           </linearGradient>
         </defs>
+        {variant === "landing" ? (
+          <>
+            {/* gateway spokes: to World, Arkiv, Hedera and to the pool */}
+            <path className="crew-spokes" d={`M${gx} ${gy} L${badge("world")} M${gx} ${gy} L${badge("arkiv")} M${gx} ${gy} L${badge("hedera")} M${gx} ${gy} L${at(landingHomes.quil)} M${at(landingHomes.wren)} L${gx} ${gy} M${at(landingHomes.quil)} L${at(landingHomes.pip)} L${at(landingHomes.milo)} L${at(landingHomes.wren)}`} stroke="#94bdf2" strokeOpacity=".35" strokeWidth=".8" fill="none" />
+            {landingSignal[current] && <path className="crew-signal crew-signal-landing" d={landingSignal[current]} stroke="#cfe6ff" strokeWidth="1.8" strokeDasharray="3 12" fill="none" />}
+          </>
+        ) : (
+        <>
         <path
           d="M160 190Q310 250 500 158Q670 235 840 190"
           stroke={`url(#crew-line-${variant})`}
@@ -144,9 +200,12 @@ export default function CrewScene({
           strokeDasharray="2 16"
           fill="none"
         />
+        </>
+        )}
       </svg>
       {crew.map((person, i) => {
-        const pose = poses[current]?.[person.id] ?? homes[person.id],
+        const landing = variant === "landing";
+        const pose = landing ? landingPoses[current]?.[person.id] ?? landingHomes[person.id] : poses[current]?.[person.id] ?? homes[person.id],
           say = pose.say;
         const mood =
           current === "complete"
@@ -191,6 +250,19 @@ export default function CrewScene({
           </div>
         );
       })}
+      {variant === "landing" && (
+        <div className="crew-hangers" aria-hidden="true">
+          {HANGERS.map((h, i) => (
+            <div key={h.name} className={`crew-hanger crew-hanger-${h.id}${activeHanger[current] === h.id ? " is-active" : ""}`} style={{ ["--hx" as string]: `${h.x}%`, ["--hlen" as string]: `${h.len}px`, ["--hdelay" as string]: `${i * -1.3}s`, ["--hc" as string]: h.color } as CSSProperties}>
+              <i className="crew-hanger-string" />
+              <span className="crew-hanger-badge">
+                <svg viewBox="0 0 32 32" width="26" height="26">{h.mark}</svg>
+                <b>{h.name}</b>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       {variant === "landing" && (
         <div className="crew-scene-caption">
           <span>A LITTLE POOLING, IN MOTION.</span>

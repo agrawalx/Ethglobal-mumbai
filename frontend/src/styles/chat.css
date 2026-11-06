@@ -419,3 +419,123 @@
 .play-options summary { cursor: pointer; list-style: none; }
 .play-options summary::-webkit-details-marker { display: none; }
 .route-note { margin: 0 0 10px; font-size: 12.5px; }
+
+/* ── Playground: bluish-black backdrop + glassmorphism hover cards ── */
+.playground .panel {
+  position: relative;
+  background: linear-gradient(145deg, rgba(225, 230, 240, 0.09), rgba(200, 205, 215, 0.03) 60%, rgba(150, 155, 165, 0.05));
+  border: 1px solid rgba(220, 225, 235, 0.16);
+  border-radius: 12px;
+  padding: 22px 24px;
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transition:
+    transform 0.25s ease,
+    box-shadow 0.25s ease,
+    border-color 0.25s ease;
+}
+.playground .panel:hover {
+  transform: translateY(-4px);
+  border-color: rgba(235, 238, 245, 0.35);
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(230, 232, 240, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+/* the conversation card is large: lift it less so typing stays steady */
+.playground .panel.play:hover {
+  transform: translateY(-2px);
+}
+.playground .suggestion,
+.playground .msg-user,
+.playground .play-result,
+.playground .chat-input .input,
+.playground .play-select select {
+  background: rgba(225, 230, 240, 0.07);
+  border-color: rgba(220, 225, 235, 0.16);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.playground .suggestion {
+  transition:
+    transform 0.2s ease,
+    border-color 0.2s,
+    background 0.2s;
+}
+.playground .suggestion:hover:not(:disabled) {
+  transform: translateY(-2px);
+  background: rgba(230, 232, 240, 0.14);
+}
+@media (prefers-reduced-motion: reduce) {
+  .playground .panel,
+  .playground .suggestion {
+    transition: none;
+  }
+  .playground .panel:hover,
+  .playground .suggestion:hover:not(:disabled) {
+    transform: none;
+  }
+}
+
+/* glass sheen: a thin light edge along the top of each card */
+.playground .panel::before {
+  content: "";
+  position: absolute;
+  inset: 0 16px auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(235, 238, 245, 0.45), transparent);
+  pointer-events: none;
+}
+.playground .panel:hover::before {
+  background: linear-gradient(90deg, transparent, rgba(235, 238, 245, 0.8), transparent);
+}
+.playground .suggestion,
+.playground .play-result,
+.playground .chat-input .input,
+.playground .play-select select {
+  border-radius: 8px;
+}
+.playground .msg-user {
+  border-radius: 10px;
+}
+
+/* Playground: fully black page, silver accents */
+.console:has(.playground),
+.console:has(.playground) .console-footer { background: #000; }
+.console:has(.playground) .console-header { background: rgba(0, 0, 0, 0.85); }
+.playground .button-blue {
+  background: linear-gradient(180deg, #f2f3f6, #b9bdc6);
+  color: #0a0a0c;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+.playground .button-blue:hover:not(:disabled) { background: linear-gradient(180deg, #ffffff, #c9ccd4); }
+.playground .msg-user .mono-label,
+.playground .caret { color: #d9dce3; }
+.playground .caret { background: #d9dce3; }
+.playground .text-link { color: #d9dce3; }
+.playground .pill-ok { color: #e6e8ee; border-color: rgba(230, 232, 240, 0.35); background: rgba(230, 232, 240, 0.08); }
+.playground .play-balance b { color: #f2f3f6; }
+
+/* Playground: plain glass, no silver sheen; glowy hover only */
+.playground .panel {
+  box-shadow: none;
+  transform: none;
+}
+.playground .panel::before { display: none; }
+.playground .panel:hover,
+.playground .panel.play:hover {
+  transform: none;
+  border-color: rgba(255, 255, 255, 0.3);
+  box-shadow: 0 0 28px rgba(255, 255, 255, 0.1), 0 0 2px rgba(255, 255, 255, 0.25);
+}
+.playground .suggestion:hover:not(:disabled) {
+  transform: none;
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.1);
+}
+.receipt-earned { display: grid; gap: 6px; padding: 12px 14px; border: 1px solid var(--line); border-left: 3px solid var(--ok); border-radius: 10px; }
+.receipt-earned p { margin: 0; font-size: 13.5px; line-height: 1.55; }
+.receipt-tech { display: grid; gap: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
+.receipt-tech > summary { cursor: pointer; }

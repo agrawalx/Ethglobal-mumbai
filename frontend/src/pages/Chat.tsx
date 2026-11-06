@@ -5,9 +5,9 @@ import { useEffect, useRef, useState } from "react";
 import type { ModelEntry, Receipt, RouteHop } from "@shared/types";
 import RouteTrace from "../components/chat/RouteTrace";
 import ReceiptSheet from "../components/chat/ReceiptSheet";
-import InferenceTile from "../components/chat/InferenceTile";
 import SourceBadge from "../components/SourceBadge";
 import { Icon } from "../components/Icon";
+import InferenceTile from "../components/chat/InferenceTile";
 import UnavailableNotice from "../components/UnavailableNotice";
 import { ErrorBox, Busy } from "../components/console/Status";
 import { api, InsufficientCredits, PaymentRequired, SessionExpired } from "../data";
@@ -32,7 +32,6 @@ function LoginCard({ onLogin }: { onLogin: () => void }) {
         <Icon name="user-check" size={12} /> Credits
       </span>
       <h2 id="login-h">Log in to talk to the pool.</h2>
-      <p className="muted">World ID proves you are a real person. One human gets one account, with 10,000 starter credits for 14 days. Each request costs model_factor × (output tokens + 0.2 × input tokens).</p>
       <div className="tile-actions">
         <button className="button button-blue" onClick={onLogin}>
           Log in with World ID <Icon name="arrow" size={15} />
@@ -207,13 +206,13 @@ export default function Chat({ query }: { query: URLSearchParams }) {
 
   if (!session.token && !session.loading) {
     return (
-      <>
+      <div className="playground">
         {head}
         <div className="grid grid-2 chat-out">
           <LoginCard onLogin={() => session.openLogin("/chat")} />
           <InferenceTile />
         </div>
-      </>
+      </div>
     );
   }
 
@@ -226,7 +225,7 @@ export default function Chat({ query }: { query: URLSearchParams }) {
   const lastDone = !streaming && receipt;
 
   return (
-    <>
+    <div className="playground">
       {head}
       <section className="panel play" aria-label="Playground">
         <div className="play-bar">
@@ -323,6 +322,7 @@ export default function Chat({ query }: { query: URLSearchParams }) {
           <div className="play-result" role="status">
             <span>
               Served across {receipt.route.length || route?.length || 0} {(receipt.route.length || route?.length) === 1 ? "laptop" : "laptops"} · {cr(receipt.cost)} credits charged
+              {receipt.split && <> · {cr(receipt.split.nodes.reduce((sum, n) => sum + n.credits, 0))} earned by those laptops</>}
               {tokS != null && <span className="faint"> · {tokS.toFixed(1)} tok/s</span>}
               {ttft != null && <span className="faint"> · first token {ttft} ms</span>}
             </span>
@@ -394,6 +394,6 @@ export default function Chat({ query }: { query: URLSearchParams }) {
 
       <RouteTrace route={route} nodes={nodes} active={streaming ? -1 : active === -2 ? -2 : -1} streaming={streaming} />
       {sheet && receipt && <ReceiptSheet receipt={receipt} nodes={nodes} onClose={() => setSheet(false)} />}
-    </>
+    </div>
   );
 }

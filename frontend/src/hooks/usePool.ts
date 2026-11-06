@@ -7,7 +7,8 @@ import { useAsync } from "./useAsync";
 /** Live pools, nodes and account stats (Arkiv, through the gateway) via the poll / mock ticker. */
 export function useNetwork() {
   const result = useAsync(() => api.network(), [], { refreshMs: 5000 });
-  return result.data ? {...result.data, error:result.error} : result.error ? {pools:[],nodes:[],stats:[],updated_at:0,error:result.error} : undefined;
+  const extra = { error: result.error, reload: result.reload, loading: result.loading };
+  return result.data ? { ...result.data, ...extra } : result.error ? { pools: [], nodes: [], stats: [], updated_at: 0, ...extra } : undefined;
 }
 
 export const useModels = () => useAsync(() => api.models(), [], { refreshMs: 15_000 });

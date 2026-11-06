@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { ProviderPool } from "@gpupool/shared";
 import { Icon } from "../Icon";
 import CopyButton, { CodeBox } from "../console/CopyButton";
-import { ErrorBox, Busy } from "../console/Status";
+import { ErrorBox, Busy, Success } from "../console/Status";
 import { usePoolAvailability } from "../../hooks/usePool";
 import { useSession } from "../../auth/context";
 import { providerApi } from "../../data/provider";
@@ -23,15 +23,22 @@ export default function PoolSetup({ pool, refresh, sizeGb }: { pool: ProviderPoo
   const coordinator = pool.owner_account === session.me?.account_id;
   const [command, setCommand] = useState<{ command: string; expires_at: number } | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState<Error | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  useEffect(() => {
+    if (!done) return;
+    const t = window.setTimeout(() => setDone(null), 6000);
+    return () => window.clearTimeout(t);
+  }, [done]);
+  const doneText = (path: string) => path.endsWith("/approve") ? "Member approved. Their install command is now available to them." : path.endsWith("/revoke") ? "Member removed from the pool." : path === "stop" ? "Pool stopped. Helpers disconnect; restart it when you're ready." : "Restart requested. Laptops reconnect and reload the model.";
   async function action(path: string) {
-    setBusy(true); setError(null);
-    try { await providerApi.manage(session.token!, pool.pool_id, path); refresh(); }
+    setBusy(true); setError(null); setDone(null);
+    try { await providerApi.manage(session.token!, pool.pool_id, path); setDone(doneText(path)); refresh(); }
     catch (e) { setError(e as Error); }
     finally { setBusy(false); }
   }
   async function enroll() {
-    setBusy(true); setError(null);
-    try { setCommand(await providerApi.enroll(session.token!, pool.pool_id)); }
+    setBusy(true); setError(null); setDone(null);
+    try { setCommand(await providerApi.enroll(session.token!, pool.pool_id)); setDone("Install command ready. Run it in Terminal on this laptop."); }
     catch (e) { setError(e as Error); }
     finally { setBusy(false); }
   }
@@ -114,7 +121,8 @@ export default function PoolSetup({ pool, refresh, sizeGb }: { pool: ProviderPoo
     {members}
     <details className="provider-more"><summary>Connection details</summary>{connection}{footer}</details>
     <details className="provider-more"><summary>Reconnect instructions</summary>{install}</details>
-    {error && <ErrorBox error={error} />}
+    {error && <ErrorBox title="That didn't work" error={error} hint="Nothing changed. Check the details and try again." />}
+    {done && <Success onClose={() => setDone(null)}>{done}</Success>}
   </section>;
 
   return <section className="panel provider-pool" aria-label={`${pool.name} setup`}>
@@ -124,7 +132,8 @@ export default function PoolSetup({ pool, refresh, sizeGb }: { pool: ProviderPoo
     {connection}
     {!own?.approved ? null : ownOnline ? <details className="provider-more"><summary>Reconnect instructions</summary>{install}</details> : install}
     {members}
-    {error && <ErrorBox error={error} />}
+    {error && <ErrorBox title="That didn't work" error={error} hint="Nothing changed. Check the details and try again." />}
+    {done && <Success onClose={() => setDone(null)}>{done}</Success>}
     {footer}
   </section>;
 }
