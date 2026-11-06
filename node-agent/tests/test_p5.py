@@ -153,3 +153,13 @@ def test_swap_watch_only_on_unified_memory():
     # macOS keeps the swap watch.
     w.sample(1000, True, now=0.0)
     assert w.sample(1500, True, now=1.0) == "swap_growing"
+
+
+def test_pool_listing_key_falls_back_to_node_key(tmp_path):
+    from gpupool_node.agent import pool_listing_key
+    node, pool = tmp_path / "node.key", tmp_path / "pool.key"
+    node.write_text("0x" + "11" * 32)
+    # Elected writer without a pool key signs with its node key.
+    assert pool_listing_key(pool, node) == node
+    pool.write_text("0x" + "22" * 32)
+    assert pool_listing_key(pool, node) == pool

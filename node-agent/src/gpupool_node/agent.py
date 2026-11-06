@@ -31,6 +31,12 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def pool_listing_key(pool_key_path: Path, node_key_path: Path) -> Path:
+    """The gateway may elect ANY member as the pool-listing writer. Use the dedicated pool key when
+    this machine has one; otherwise sign the gpupool.pool listing with the node's own (funded) key."""
+    return pool_key_path if pool_key_path.exists() else node_key_path
+
+
 def send_heartbeat(cfg: Config, acct: LocalAccount, client: httpx.Client, extra: dict | None = None) -> tuple[dict | None, parallax.Assignment, bool]:
     running = parallax.node_running()
     a = parallax.read_assignment(cfg.parallax_node_log) if running else parallax.Assignment()
@@ -173,7 +179,7 @@ def run(cfg: Config, acct: LocalAccount) -> None:
             r = arkiv.upsert_node(entity, cfg.node_key_path, cfg.arkiv_env)
             print(f"arkiv node {entity['status']}: {r.get('entityKey')} tx {r.get('txHash')} created={r.get('created')}", flush=True)
             if pool:
-                p = arkiv.upsert_pool(pool, cfg.pool_key_path, cfg.arkiv_env)
+                p = arkiv.upsert_pool(pool, pool_listing_key(cfg.pool_key_path, cfg.node_key_path), cfg.arkiv_env)
                 print(f"arkiv pool {pool['status']}: {p.get('entityKey')} tx {p.get('txHash')} created={p.get('created')}", flush=True)
         except Exception as e:  # logged; retried at the next tick
             print(f"arkiv: write failed, retry in {cfg.arkiv_extend_seconds}s: {e}", flush=True)
