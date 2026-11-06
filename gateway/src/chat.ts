@@ -4,6 +4,7 @@ import { ChatCompletionRequest, REQUEST_ID_HEADER, Usage, type ModelConfig } fro
 import type { Config } from "./config.ts";
 import { errorResponse } from "./errors.ts";
 import { estimateInputTokens } from "./ledger.ts";
+import { compactTools, emulatedMessages, rewriteCompletion, toolStream, usesTools, type ToolsMode } from "./tools.ts";
 import type { StallTracker } from "./stall.ts";
 
 /** Why an attempt or a request failed. */
@@ -55,7 +56,7 @@ export function effectiveMaxTokens(req: ChatCompletionRequest, defaultMax: numbe
  * The body sent to Parallax. The request was already parsed by the shared schema, so unknown
  * fields (logprobs, …) are gone. Thinking is off unless the client set it (HANDOFF §2.2).
  */
-export function upstreamBody(req: ChatCompletionRequest, maxTokens: number): Record<string, unknown> {
+export function upstreamBody(req: ChatCompletionRequest, maxTokens: number, tools: ToolsMode = "native"): Record<string, unknown> {
   const { max_completion_tokens: _drop, ...rest } = req;
   const body: Record<string, unknown> = {
     ...rest,
@@ -63,6 +64,13 @@ export function upstreamBody(req: ChatCompletionRequest, maxTokens: number): Rec
     chat_template_kwargs: { ...req.chat_template_kwargs, enable_thinking: req.chat_template_kwargs?.enable_thinking ?? false },
   };
   if (req.stream) body.stream_options = { include_usage: true };
+  if (tools === "emulate" && usesTools(req)) {
+    // Parallax sees plain text only: tools in the system prompt, calls and results as text turns.
+    body.messages = emulatedMessages(req, compactTools(req.tools ?? []));
+    delete body.tools;
+    delete body.tool_choice;
+    delete body.parallel_tool_calls;
+  }
   return body;
 }
 
@@ -71,10 +79,10 @@ export function upstreamBody(req: ChatCompletionRequest, maxTokens: number): Rec
  * assistant message and the model goes on from its last token (vLLM `continue_final_message`; the
  * Parallax nodes serve chat through the vLLM Rust frontend). Output budget = what is left.
  */
-export function continuationBody(req: ChatCompletionRequest, maxTokens: number, partial: string, streamedTokens: number): Record<string, unknown> {
-  const body = upstreamBody(req, Math.max(1, maxTokens - streamedTokens));
+export function continuationBody(req: ChatCompletionRequest, maxTokens: number, partial: string, streamedTokens: number, tools: ToolsMode = "native"): Record<string, unknown> {
+  const body = upstreamBody(req, Math.max(1, maxTokens - streamedTokens), tools);
   if (!partial) return body;
-  body.messages = [...req.messages, { role: "assistant", content: partial }];
+  body.messages = [...(body.messages as unknown[]), { role: "assistant", content: partial }];
   body.continue_final_message = true;
   body.add_generation_prompt = false;
   return body;
@@ -166,13 +174,15 @@ export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker) 
       return true;
     };
 
+    const toolsMode: ToolsMode = cfg.env.TOOLS_MODE;
+    const emulate = toolsMode === "emulate" && usesTools(req);
     const inputTokens = estimateInputTokens(req.messages, req.tools);
     const headerMs = req.stream ? stall.firstTokenMs(inputTokens) : cfg.env.POOL_TIMEOUT_MS;
 
     // Before any byte reaches the client, a failed attempt can start again from the beginning.
     let first: Attempt;
     for (;;) {
-      const a = await openUpstream(target.url, tag(upstreamBody(req, maxTokens)), !!req.stream, headerMs, clientSignal);
+      const a = await openUpstream(target.url, tag(upstreamBody(req, maxTokens, toolsMode)), !!req.stream, headerMs, clientSignal);
       if (!isOpenError(a)) { first = a; break; }
       if (clientSignal.aborted) {
         complete(null, "", false, "client_aborted");
@@ -195,7 +205,8 @@ export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker) 
           if (usage.success) {
             complete(usage.data, text, true);
             // The response id is the gateway req_id (shared ChatCompletionResponse).
-            return withHeaders(c.json({ ...body, id: reqId, model: req.model }), extra);
+            const out = emulate ? rewriteCompletion(body) : body;
+            return withHeaders(c.json({ ...out, id: reqId, model: req.model }), extra);
           }
           failure = { reason: "no_usage", message: "pool response has no usage", text };
         } catch (e) {
@@ -203,7 +214,7 @@ export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker) 
         }
         // Nothing was sent to the client yet: a new attempt starts from the beginning.
         if (await nextTarget(failure.reason, 0)) {
-          const a = await openUpstream(target.url, tag(upstreamBody(req, maxTokens)), false, headerMs, clientSignal);
+          const a = await openUpstream(target.url, tag(upstreamBody(req, maxTokens, toolsMode)), false, headerMs, clientSignal);
           if (!isOpenError(a)) { attempt = a; continue; }
           failure = { reason: "pool_error", message: a.message, text: "" };
         }
@@ -212,21 +223,22 @@ export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker) 
       }
     }
 
-    return new Response(proxyStream({
+    const proxied = proxyStream({
       first, clientSignal, stall, inputTokens,
       poolId: () => target.poolId,
       allowContinuation: cfg.net.resilience.continuation,
       reopen: async (reason, partial, streamedTokens) => {
         // Retry until an attempt opens or the failover budget is used up.
         while (await nextTarget(reason, streamedTokens)) {
-          const a = await openUpstream(target.url, tag(continuationBody(req, maxTokens, partial, streamedTokens)), true, headerMs, clientSignal);
+          const a = await openUpstream(target.url, tag(continuationBody(req, maxTokens, partial, streamedTokens, toolsMode)), true, headerMs, clientSignal);
           if (!isOpenError(a)) return a;
           reason = a.stalled ? "stalled" : "pool_error";
         }
         return null;
       },
       done: complete,
-    }), {
+    });
+    return new Response(emulate ? toolStream(proxied) : proxied, {
       status: 200,
       headers: {
         "content-type": "text/event-stream; charset=utf-8",
@@ -313,8 +325,12 @@ export function proxyStream(o: StreamOptions): ReadableStream<Uint8Array> {
           if (chunk.error) { failed = true; forward = false; continue; }
           const u = Usage.safeParse(chunk.usage);
           if (u.success) usage = u.data;
-          const delta = chunk.choices?.[0]?.delta?.content;
-          if (typeof delta === "string" && delta.length > 0) {
+          const d = chunk.choices?.[0]?.delta;
+          const calls = Array.isArray(d?.tool_calls) ? d.tool_calls as { function?: { name?: string; arguments?: string } }[] : [];
+          // Native tool calls (TOOLS_MODE=native) carry no content: keep their text for the transcript.
+          const delta = typeof d?.content === "string" && d.content ? d.content
+            : calls.map((t) => `${t.function?.name ?? ""}${t.function?.arguments ?? ""}`).join("");
+          if (delta.length > 0) {
             text += delta;
             attemptTokens++;
             totalTokens++;
