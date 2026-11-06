@@ -29,6 +29,10 @@ async function list<K extends Kind>(pub: PublicArkivClient, kind: K, where: Para
   return decodeAll(kind, res.entities as Row[], res.skipped);
 }
 
+/** Public network view includes ready, loading and offline pools until their Arkiv expiry. */
+export const listPools = (pub: PublicArkivClient, opts: ReadOptions = {}) =>
+  list(pub, "pool", undefined, opts) as Promise<ArkivPool[]>;
+
 /** Router read path (SPEC §5.4 step 1): pools with status=ready that list the model. */
 export const listReadyPools = (pub: PublicArkivClient, model: string, opts: ReadOptions = {}) =>
   list(pub, "pool", readyPoolsWhere(model), opts) as Promise<ArkivPool[]>;

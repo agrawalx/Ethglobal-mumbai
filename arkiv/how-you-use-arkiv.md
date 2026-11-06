@@ -9,7 +9,8 @@ Arkiv is the **public directory** of the GPU pool network (SPEC §11): what exis
    picks a pool by `reliability × (1 − load)` (SPEC §5.4). The frontend model list comes from the same read.
 4. **Model catalog (`gpupool.model`)**: the admin seeds one entity per model from `shared/config/gpupool.config.json` (`seed-models`), TTL 30 days.
 5. **Account stats (`gpupool.account_stats`)**: the gateway publishes pseudonymous stats (account ID, earned, spent, ratio, reliability)
-   every 10 minutes (TTL 1 day) for the leaderboard. The World nullifier never goes to Arkiv.
+   at gateway startup and every 10 minutes (TTL 1 day) for the leaderboard. `gateway/src/account-stats.ts`
+   uses the gateway writer key and owner-scoped upsert. The World nullifier never goes to Arkiv.
 
 Write rates follow SPEC §11.4: blocks are ~2 s, so we never write per request.
 
