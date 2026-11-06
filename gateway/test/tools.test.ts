@@ -311,3 +311,25 @@ test("API key: a wrong key is 401 (never falls through to x402); a capped key st
   assert.equal(r.status, 403); // 1 credit cannot pay even the prompt
   assert.equal(((await r.json()) as any).error.code, "insufficient_credits");
 });
+
+test("toolStream: an upstream that never sends finish_reason still closes a tool turn with \"tool_calls\", once, before usage", async () => {
+  const { toolStream } = await import("../src/tools.ts");
+  const sse = (o: unknown) => `data: ${JSON.stringify(o)}\n\n`;
+  const read = async (body: string) => new Response(toolStream(new Response(body).body!)).text();
+  const events = (t: string) => t.split("\n\n").filter((e) => e.startsWith("data: {")).map((e) => JSON.parse(e.slice(6)));
+
+  const noFinish = events(await read(sse({ choices: [{ index: 0, delta: { content: '<tool_call>{"name":"read","arguments":{"filePath":"a"}}</tool_call>' } }] }) + sse({ choices: [], usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 } }) + "data: [DONE]\n\n"));
+  const finishes = noFinish.flatMap((e) => e.choices.map((c: any) => c.finish_reason).filter(Boolean));
+  assert.deepEqual(finishes, ["tool_calls"]);
+  const iFinish = noFinish.findIndex((e) => e.choices[0]?.finish_reason === "tool_calls");
+  const iUsage = noFinish.findIndex((e) => e.usage);
+  assert.ok(iFinish >= 0 && iFinish < iUsage, "finish before usage");
+
+  // with the upstream's own finish chunk: exactly one finish, still "tool_calls"
+  const withFinish = events(await read(sse({ choices: [{ index: 0, delta: { content: '<tool_call>{"name":"read","arguments":{}}</tool_call>' } }] }) + sse({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }) + "data: [DONE]\n\n"));
+  assert.deepEqual(withFinish.flatMap((e) => e.choices.map((c: any) => c.finish_reason).filter(Boolean)), ["tool_calls"]);
+
+  // plain text without a finish chunk: nothing is invented
+  const text = events(await read(sse({ choices: [{ index: 0, delta: { content: "hi" } }] }) + "data: [DONE]\n\n"));
+  assert.deepEqual(text.flatMap((e) => e.choices.map((c: any) => c.finish_reason).filter(Boolean)), []);
+});

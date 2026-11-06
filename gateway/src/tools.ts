@@ -210,6 +210,7 @@ export function toolStream(source: ReadableStream<Uint8Array>): ReadableStream<U
   const parser = new ToolCallParser();
   let buf = "";
   let flushed = false;
+  let finished = false;
   let base: Record<string, any> = { object: "chat.completion.chunk", choices: [] };
 
   // the index of a call is fixed when it is emitted: count as we go
@@ -225,10 +226,17 @@ export function toolStream(source: ReadableStream<Uint8Array>): ReadableStream<U
     }
     return s;
   };
-  const flush = (): string => {
+  /** Emit held text/calls. A stream that ends without its own finish chunk still closes a tool turn
+      with finish_reason "tool_calls", or OpenAI clients (OpenCode) would not run the tools. */
+  const flush = (closeTurn = true): string => {
     if (flushed) return "";
     flushed = true;
-    return emit(parser.end());
+    let s = emit(parser.end());
+    if (closeTurn && !finished && parser.calls > 0) {
+      finished = true;
+      s += `data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] })}\n\n`;
+    }
+    return s;
   };
 
   const rewrite = (ev: string): string => {
@@ -255,7 +263,8 @@ export function toolStream(source: ReadableStream<Uint8Array>): ReadableStream<U
     if (typeof delta.content === "string" && delta.content) out += emit(parser.feed(delta.content));
     else if (delta.role && !out) out += `data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { role: delta.role, content: "" }, finish_reason: null }] })}\n\n`;
     if (choice.finish_reason) {
-      out += flush();
+      out += flush(false);
+      finished = true;
       const finish = parser.calls > 0 ? "tool_calls" : choice.finish_reason;
       out += `data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: finish }], ...(chunk.usage ? { usage: chunk.usage } : {}) })}\n\n`;
     } else if (chunk.usage) {
