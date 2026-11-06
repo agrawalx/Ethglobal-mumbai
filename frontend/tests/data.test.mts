@@ -183,5 +183,16 @@ ok(layers.coversExactly(r7, 40) && r7.length === 7, "7 laptops: route covers [0,
 ok(layers.allocateLayers([4, 4], 40, 16.3) === null, "too little memory: the pool cannot hold the model");
 ok(!layers.coversExactly([{ node_id: "a", layers: [0, 20] }, { node_id: "b", layers: [19, 40] }], 40), "overlapping ranges are not a valid layer map");
 
+console.log("API keys (mock)");
+const keyToken = (await mockApi.auth.verify({ simulate: "new" })).token;
+const k1 = await mockApi.createKey(keyToken, "opencode", null);
+ok(/^gpa_agt_[0-9a-f]+_[0-9a-f]{64}$/.test(k1.token) && k1.cap === null && k1.spent === 0, "create: token shown once, no cap");
+const listed = await mockApi.keys(keyToken);
+ok(listed.length === 1 && !("token" in listed[0]), "list: keys never carry the token");
+await mockApi.revokeKey(keyToken, k1.id);
+ok((await mockApi.keys(keyToken))[0].revoked, "revoke: the key is marked revoked");
+await assert.rejects(mockApi.revokeKey(keyToken, k1.id)); pass++; console.log("  ✓ revoking twice fails");
+ok((await mockApi.keyRequests(keyToken, k1.id)).length === 0, "usage: empty for a new key");
+
 console.log(`\n${pass} checks passed`);
 process.exit(0);

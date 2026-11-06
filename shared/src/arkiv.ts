@@ -44,6 +44,7 @@ export const ArkivPool = z.object({
    * gateway for the pool as one identity. Published for consumers; the router uses the gateway's own value.
    */
   reliability: z.number().min(0).max(1),
+  context_length: z.number().int().positive().optional(),
 });
 export type ArkivPool = z.infer<typeof ArkivPool>;
 

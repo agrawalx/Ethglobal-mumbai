@@ -194,13 +194,17 @@ test("validation failure → 400 bad_request with the shared error shape and req
   assert.equal(ErrorResponse.parse(await r.json()).error.code, "bad_request");
 });
 
-test("unknown model → 404 model_not_found; max_tokens above the last tier → 400", async () => {
+test("unknown model → 404 model_not_found; x402 max_tokens above the last tier → 400; credits are capped instead", async () => {
   const a = await post({ model: "nope/model", messages: [{ role: "user", content: "hi" }] });
   assert.equal(a.status, 404);
   assert.equal(ErrorResponse.parse(await a.json()).error.code, "model_not_found");
-  const b = await post({ model: MODEL, messages: [{ role: "user", content: "hi" }], max_tokens: 2049 });
+  const b = await fetch(`${base}/v1/chat/completions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: MODEL, messages: [{ role: "user", content: "hi" }], max_tokens: 2049 }) });
   assert.equal(b.status, 400);
   assert.equal(ErrorResponse.parse(await b.json()).error.code, "bad_request");
+  const capped = await post({ model: MODEL, messages: [{ role: "user", content: "hi" }], max_tokens: 32000 });
+  assert.equal(capped.status, 200);
+  assert.ok(Number(capped.headers.get("x-gpupool-max-tokens")) <= 2048);
+  assert.ok(seen.at(-1)!.body.max_tokens <= 2048);
 });
 
 test("GET /v1/models lists catalog models with fresh Arkiv pools", async () => {

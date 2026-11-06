@@ -4,7 +4,14 @@ import { ChatCompletionRequest, REQUEST_ID_HEADER, Usage, type ModelConfig } fro
 import type { Config } from "./config.ts";
 import { errorResponse } from "./errors.ts";
 import { estimateInputTokens } from "./ledger.ts";
+import { fitContext, marginTokens } from "./context.ts";
+import { compactTools, emulatedMessages, rewriteCompletion, toolStream, usesTools, type ToolsMode } from "./tools.ts";
 import type { StallTracker } from "./stall.ts";
+
+/** Smallest answer room kept when trimming a prompt (tokens). */
+const MIN_OUTPUT = 256;
+/** Set when the gateway trimmed the prompt to fit the pool's context: number of messages cut or dropped. */
+export const TRIMMED_HEADER = "x-gpupool-trimmed";
 
 /** Why an attempt or a request failed. */
 export type FailReason = "pool_error" | "no_usage" | "client_aborted" | "stalled";
@@ -34,7 +41,7 @@ export type Failover = (f: { reason: Exclude<FailReason, "client_aborted">; stre
  * credit hold; no session → x402 settle. Returns a Response to stop (402/403/…), or extra response
  * headers (x402 PAYMENT-RESPONSE), the pool, `finish` (runs once with the completion) and `failover`.
  */
-export type Prepared = { headers: Record<string, string>; coordinatorUrl: string; poolId: string; finish: OnComplete; failover?: Failover };
+export type Prepared = { headers: Record<string, string>; coordinatorUrl: string; poolId: string; finish: OnComplete; failover?: Failover; /** Answer cap picked for a credit request (budget.ts); else the asked one. */ maxTokens?: number };
 export type Prepare = (c: Context, req: ChatCompletionRequest, model: ModelConfig, maxTokens: number, reqId: string) => Promise<Prepared | Response>;
 
 const withHeaders = (res: Response, headers: Record<string, string>): Response => {
@@ -55,7 +62,7 @@ export function effectiveMaxTokens(req: ChatCompletionRequest, defaultMax: numbe
  * The body sent to Parallax. The request was already parsed by the shared schema, so unknown
  * fields (logprobs, …) are gone. Thinking is off unless the client set it (HANDOFF §2.2).
  */
-export function upstreamBody(req: ChatCompletionRequest, maxTokens: number): Record<string, unknown> {
+export function upstreamBody(req: ChatCompletionRequest, maxTokens: number, tools: ToolsMode = "native"): Record<string, unknown> {
   const { max_completion_tokens: _drop, ...rest } = req;
   const body: Record<string, unknown> = {
     ...rest,
@@ -63,6 +70,13 @@ export function upstreamBody(req: ChatCompletionRequest, maxTokens: number): Rec
     chat_template_kwargs: { ...req.chat_template_kwargs, enable_thinking: req.chat_template_kwargs?.enable_thinking ?? false },
   };
   if (req.stream) body.stream_options = { include_usage: true };
+  if (tools === "emulate" && usesTools(req)) {
+    // Parallax sees plain text only: tools in the system prompt, calls and results as text turns.
+    body.messages = emulatedMessages(req, compactTools(req.tools ?? []));
+    delete body.tools;
+    delete body.tool_choice;
+    delete body.parallel_tool_calls;
+  }
   return body;
 }
 
@@ -71,10 +85,10 @@ export function upstreamBody(req: ChatCompletionRequest, maxTokens: number): Rec
  * assistant message and the model goes on from its last token (vLLM `continue_final_message`; the
  * Parallax nodes serve chat through the vLLM Rust frontend). Output budget = what is left.
  */
-export function continuationBody(req: ChatCompletionRequest, maxTokens: number, partial: string, streamedTokens: number): Record<string, unknown> {
-  const body = upstreamBody(req, Math.max(1, maxTokens - streamedTokens));
+export function continuationBody(req: ChatCompletionRequest, maxTokens: number, partial: string, streamedTokens: number, tools: ToolsMode = "native"): Record<string, unknown> {
+  const body = upstreamBody(req, Math.max(1, maxTokens - streamedTokens), tools);
   if (!partial) return body;
-  body.messages = [...req.messages, { role: "assistant", content: partial }];
+  body.messages = [...(body.messages as unknown[]), { role: "assistant", content: partial }];
   body.continue_final_message = true;
   body.add_generation_prompt = false;
   return body;
@@ -119,7 +133,10 @@ async function openUpstream(url: string, body: Record<string, unknown>, stream: 
 
 const isOpenError = (a: Attempt | OpenError): a is OpenError => !("upstream" in a);
 
-export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker, poolFetch: PoolFetch = (url, init) => fetch(url, init)) {
+/** The live pool context for a model; undefined = not reported, use the config value. */
+export type ContextFor = (model: ModelConfig) => Promise<number | undefined>;
+
+export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker, poolFetch: PoolFetch = (url, init) => fetch(url, init), contextFor?: ContextFor) {
   return async (c: Context): Promise<Response> => {
     const reqId = c.get("reqId") as string;
 
@@ -136,17 +153,37 @@ export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker, 
     }
     // P6.1 needs the exact sampling seed later for a Token-DiFR replay. Keep client-provided
     // seeds; assign one when absent and send it to Parallax with every completion request.
-    const req = { ...parsed.data, seed: parsed.data.seed ?? randomInt(0, 2 ** 31) };
-    const model: ModelConfig | undefined = cfg.model(req.model);
-    if (!model) return errorResponse(c, 404, "model_not_found", `unknown model ${req.model}`);
+    const asked = { ...parsed.data, seed: parsed.data.seed ?? randomInt(0, 2 ** 31) };
+    const model: ModelConfig | undefined = cfg.model(asked.model);
+    if (!model) return errorResponse(c, 404, "model_not_found", `unknown model ${asked.model}`);
 
-    const maxTokens = effectiveMaxTokens(req, cfg.net.cost.default_max_tokens);
+    // Credit requests (session or key): the gateway picks the answer cap (budget.ts), so a large
+    // client max_tokens is capped, not refused. x402 prices are per max_tokens tier: refuse above it.
+    const credit = !!c.get("accountId");
     const limit = model.x402_prices[model.x402_prices.length - 1]!.max_tokens;
-    if (maxTokens > limit) return errorResponse(c, 400, "bad_request", `max_tokens ${maxTokens} is above the limit ${limit} for ${req.model}`);
+    let maxTokens = effectiveMaxTokens(asked, cfg.net.cost.default_max_tokens);
+    if (credit) maxTokens = Math.min(maxTokens, limit);
+    else if (maxTokens > limit) return errorResponse(c, 400, "bad_request", `max_tokens ${maxTokens} is above the limit ${limit} for ${asked.model}`);
+
+    // Fit the prompt into the pool's context; the answer gets the room that is left.
+    const toolsMode: ToolsMode = cfg.env.TOOLS_MODE;
+    const live = contextFor ? await contextFor(model).catch((e: Error) => {
+      console.warn(`pool context read failed: ${e.name}; using config ${model.context_length}`);
+      return undefined;
+    }) : undefined;
+    const ctx = live ?? model.context_length;
+    const fit = fitContext(asked, ctx, Math.min(maxTokens, MIN_OUTPUT), toolsMode === "emulate" && usesTools(asked));
+    if (!fit.ok) {
+      return errorResponse(c, 400, "context_length_exceeded",
+        `the prompt needs about ${fit.promptTokens} tokens even after trimming; this pool takes ${fit.budget} prompt tokens (context ${ctx}). Start a new session or compact it.`);
+    }
+    const req = fit.req;
+    maxTokens = Math.max(1, Math.min(maxTokens, ctx - fit.promptTokens - marginTokens(ctx)));
 
     const prep = await prepare(c, req, model, maxTokens, reqId);
     if (prep instanceof Response) return prep;
-    const extra = prep.headers;
+    if (prep.maxTokens !== undefined) maxTokens = prep.maxTokens;
+    const extra = { ...prep.headers, ...(fit.trimmed ? { [TRIMMED_HEADER]: String(fit.trimmed) } : {}) };
     const clientSignal = c.req.raw.signal;
     const complete = (usage: Usage | null, text: string, ok: boolean, reason?: FailReason, streamedTokens = 0) =>
       prep.finish({ reqId, model: req.model, usage, text, ok, ...(reason ? { reason } : {}), ...(streamedTokens ? { streamedTokens } : {}) });
@@ -167,13 +204,14 @@ export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker, 
       return true;
     };
 
-    const inputTokens = estimateInputTokens(req.messages);
+    const emulate = toolsMode === "emulate" && usesTools(req);
+    const inputTokens = estimateInputTokens(req.messages, req.tools);
     const headerMs = req.stream ? stall.firstTokenMs(inputTokens) : cfg.env.POOL_TIMEOUT_MS;
 
     // Before any byte reaches the client, a failed attempt can start again from the beginning.
     let first: Attempt;
     for (;;) {
-      const a = await openUpstream(target.url, tag(upstreamBody(req, maxTokens)), !!req.stream, headerMs, clientSignal, poolFetch);
+      const a = await openUpstream(target.url, tag(upstreamBody(req, maxTokens, toolsMode)), !!req.stream, headerMs, clientSignal, poolFetch);
       if (!isOpenError(a)) { first = a; break; }
       if (clientSignal.aborted) {
         complete(null, "", false, "client_aborted");
@@ -196,7 +234,8 @@ export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker, 
           if (usage.success) {
             complete(usage.data, text, true);
             // The response id is the gateway req_id (shared ChatCompletionResponse).
-            return withHeaders(c.json({ ...body, id: reqId, model: req.model }), extra);
+            const out = emulate ? rewriteCompletion(body) : body;
+            return withHeaders(c.json({ ...out, id: reqId, model: req.model }), extra);
           }
           failure = { reason: "no_usage", message: "pool response has no usage", text };
         } catch (e) {
@@ -204,7 +243,7 @@ export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker, 
         }
         // Nothing was sent to the client yet: a new attempt starts from the beginning.
         if (await nextTarget(failure.reason, 0)) {
-          const a = await openUpstream(target.url, tag(upstreamBody(req, maxTokens)), false, headerMs, clientSignal, poolFetch);
+          const a = await openUpstream(target.url, tag(upstreamBody(req, maxTokens, toolsMode)), false, headerMs, clientSignal, poolFetch);
           if (!isOpenError(a)) { attempt = a; continue; }
           failure = { reason: "pool_error", message: a.message, text: "" };
         }
@@ -213,21 +252,22 @@ export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker, 
       }
     }
 
-    return new Response(proxyStream({
+    const proxied = proxyStream({
       first, clientSignal, stall, inputTokens,
       poolId: () => target.poolId,
       allowContinuation: cfg.net.resilience.continuation,
       reopen: async (reason, partial, streamedTokens) => {
         // Retry until an attempt opens or the failover budget is used up.
         while (await nextTarget(reason, streamedTokens)) {
-          const a = await openUpstream(target.url, tag(continuationBody(req, maxTokens, partial, streamedTokens)), true, headerMs, clientSignal, poolFetch);
+          const a = await openUpstream(target.url, tag(continuationBody(req, maxTokens, partial, streamedTokens, toolsMode)), true, headerMs, clientSignal, poolFetch);
           if (!isOpenError(a)) return a;
           reason = a.stalled ? "stalled" : "pool_error";
         }
         return null;
       },
       done: complete,
-    }), {
+    });
+    return new Response(emulate ? toolStream(proxied) : proxied, {
       status: 200,
       headers: {
         "content-type": "text/event-stream; charset=utf-8",
@@ -314,8 +354,12 @@ export function proxyStream(o: StreamOptions): ReadableStream<Uint8Array> {
           if (chunk.error) { failed = true; forward = false; continue; }
           const u = Usage.safeParse(chunk.usage);
           if (u.success) usage = u.data;
-          const delta = chunk.choices?.[0]?.delta?.content;
-          if (typeof delta === "string" && delta.length > 0) {
+          const d = chunk.choices?.[0]?.delta;
+          const calls = Array.isArray(d?.tool_calls) ? d.tool_calls as { function?: { name?: string; arguments?: string } }[] : [];
+          // Native tool calls (TOOLS_MODE=native) carry no content: keep their text for the transcript.
+          const delta = typeof d?.content === "string" && d.content ? d.content
+            : calls.map((t) => `${t.function?.name ?? ""}${t.function?.arguments ?? ""}`).join("");
+          if (delta.length > 0) {
             text += delta;
             attemptTokens++;
             totalTokens++;

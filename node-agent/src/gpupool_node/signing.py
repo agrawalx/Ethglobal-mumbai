@@ -32,6 +32,8 @@ def heartbeat_body(nid: str, pool_id: str, ts: int, online: bool, model: str | N
     body = {"node_id": nid, "pool_id": pool_id, "ts": ts, "online": online, "model": model, "layers": layers, "tok_s": tok_s}
     for k in P5_FIELDS:
         body[k] = (extra or {}).get(k)
+    if extra and "max_seq" in extra:
+        body["max_seq"] = extra["max_seq"]
     return json.dumps(body, separators=(",", ":")).encode("utf-8")
 
 

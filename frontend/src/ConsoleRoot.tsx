@@ -2,6 +2,7 @@
 import Chat from "./pages/Chat";
 import Network from "./pages/Network";
 import Account from "./pages/Account";
+import Keys from "./pages/Keys";
 import Ledger from "./pages/Ledger";
 import Payouts from "./pages/Payouts";
 import NotFound from "./pages/NotFound";
@@ -19,6 +20,8 @@ function page(route: Route) {
       return <Chat query={route.query} />;
     case "account":
       return <Account query={route.query} />;
+    case "keys":
+      return <Keys />;
     case "network":
       return <Network />;
     case "ledger":

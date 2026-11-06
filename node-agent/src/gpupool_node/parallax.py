@@ -32,6 +32,7 @@ class Assignment:
     layers: list[int] | None = None
     model: str | None = None
     peer_id: str | None = None
+    max_seq: int | None = None
 
 
 def parse_log(text: str) -> Assignment:
@@ -39,17 +40,20 @@ def parse_log(text: str) -> Assignment:
     for line in ANSI.sub("", text).splitlines():
         if line.startswith(START):
             a = Assignment()  # new process: forget the old assignment (no stale layers while loading)
+        elif line.startswith("gpupool max_seq="):
+            value = line.split("=", 1)[1]
+            a.max_seq = int(value) if value.isdigit() and int(value) > 0 else None
         elif m := JOIN.search(line):
             try:
                 d = ast.literal_eval(m.group(1))
             except (ValueError, SyntaxError):
                 continue
             if isinstance(d, dict) and d.get("start_layer") is not None and d.get("end_layer") is not None:
-                a = Assignment([int(d["start_layer"]), int(d["end_layer"])], d.get("model_name"), d.get("node_id"))
+                a = Assignment([int(d["start_layer"]), int(d["end_layer"])], d.get("model_name"), d.get("node_id"), a.max_seq)
         elif m := CHANGED.search(line):
-            a = Assignment([int(m.group(1)), int(m.group(2))], m.group(3), a.peer_id)
+            a = Assignment([int(m.group(1)), int(m.group(2))], m.group(3), a.peer_id, a.max_seq)
         elif m := RELOAD.search(line):
-            a = Assignment([int(m.group(1)), int(m.group(2))], a.model, a.peer_id)
+            a = Assignment([int(m.group(1)), int(m.group(2))], a.model, a.peer_id, a.max_seq)
     return a
 
 

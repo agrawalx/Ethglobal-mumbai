@@ -16,6 +16,8 @@ import type { ChatCompletionRequest, GpupoolConfig } from "@gpupool/shared";
  */
 
 export const X402_ROUTE = "POST /v1/chat/completions";
+/** API key top-up: the payer picks the amount; HBAR only (1 HBAR = credits_per_hbar credits for that key). */
+export const X402_TOPUP_ROUTE = "POST /v1/credits/topup";
 
 /** SPEC §7.3: first tier with tier.max_tokens >= max_tokens. Tinybar decimal string. */
 export function priceTinybar(cfg: GpupoolConfig, modelId: string, maxTokens: number): string {
@@ -34,10 +36,14 @@ export function priceUsdcUnits(cfg: GpupoolConfig, modelId: string, maxTokens: n
 }
 
 export type X402Paid = { payer: string; tx: string; amountTinybar: string; asset: "hbar" | "usdc"; amountRaw: string; headers: Record<string, string> };
-export type X402 = { charge(c: Context, req: ChatCompletionRequest, maxTokens: number): Promise<X402Paid | Response> };
+export type X402 = {
+  charge(c: Context, req: ChatCompletionRequest, maxTokens: number): Promise<X402Paid | Response>;
+  /** Charge exactly `tinybar` HBAR for a key top-up (settled before the credits are added). */
+  topup(c: Context, tinybar: string): Promise<X402Paid | Response>;
+};
 
 /** Body for the price callback. The handler has already parsed and checked the request. */
-type Priced = { model: string; maxTokens: number };
+type Priced = { model: string; maxTokens: number } | { tinybar: string };
 
 function adapter(c: Context, priced: Priced): HTTPAdapter {
   return {
@@ -73,7 +79,7 @@ export function createX402(opts: { cfg: GpupoolConfig; facilitatorUrl: string; n
         payTo: opts.payTo,
         // Native HBAR (asset 0.0.0), tinybars. A "$" price string would mean USDC.
         price: async (ctx: HTTPRequestContext) => {
-          const p = (await ctx.adapter.getBody?.()) as Priced;
+          const p = (await ctx.adapter.getBody?.()) as Extract<Priced, { model: string }>;
           return { asset: HBAR_ASSET_ID, amount: priceTinybar(opts.cfg, p.model, p.maxTokens) };
         },
         maxTimeoutSeconds: 120,
@@ -83,12 +89,26 @@ export function createX402(opts: { cfg: GpupoolConfig; facilitatorUrl: string; n
         network: opts.network as `${string}:${string}`,
         payTo: opts.payTo,
         price: async (ctx: HTTPRequestContext) => {
-          const p = (await ctx.adapter.getBody?.()) as Priced;
+          const p = (await ctx.adapter.getBody?.()) as Extract<Priced, { model: string }>;
           return { asset: opts.cfg.x402_usdc.token_id, amount: priceUsdcUnits(opts.cfg, p.model, p.maxTokens) };
         },
         maxTimeoutSeconds: 120,
       }] : [])],
       description: "gpupool chat completion (priced by model and max_tokens tier, SPEC §7.3)",
+      mimeType: "application/json",
+    },
+    [X402_TOPUP_ROUTE]: {
+      accepts: [{
+        scheme: "exact",
+        network: opts.network as `${string}:${string}`,
+        payTo: opts.payTo,
+        price: async (ctx: HTTPRequestContext) => {
+          const p = (await ctx.adapter.getBody?.()) as Extract<Priced, { tinybar: string }>;
+          return { asset: HBAR_ASSET_ID, amount: p.tinybar };
+        },
+        maxTimeoutSeconds: 120,
+      }],
+      description: "gpupool API key top-up (testnet HBAR → credits for one key)",
       mimeType: "application/json",
     },
   });
@@ -102,21 +122,20 @@ export function createX402(opts: { cfg: GpupoolConfig; facilitatorUrl: string; n
     await init;
   };
 
-  return {
-    async charge(c, req, maxTokens) {
+  async function pay(c: Context, priced: Priced, route: string): Promise<X402Paid | Response> {
       try {
         await ready();
       } catch (e) {
         return Response.json({ error: { code: "internal", message: `x402 facilitator unreachable: ${(e as Error).message}` } }, { status: 502 });
       }
       const ctx: HTTPRequestContext = {
-        adapter: adapter(c, { model: req.model, maxTokens }),
+        adapter: adapter(c, priced),
         path: c.req.path,
         method: c.req.method,
         paymentHeader: c.req.header("payment-signature") ?? c.req.header("x-payment"),
       };
       const result = await http.processHTTPRequest(ctx);
-      if (result.type === "no-payment-required") throw new Error("x402 route config does not match /v1/chat/completions");
+      if (result.type === "no-payment-required") throw new Error(`x402 route config does not match ${route}`);
       if (result.type === "payment-error") return toResponse(result.response);
       // Settle now, before the pool runs (SPEC §7.2 steps 4–5).
       const settled = result.beforeHandlerSettlement?.result
@@ -130,6 +149,16 @@ export function createX402(opts: { cfg: GpupoolConfig; facilitatorUrl: string; n
       if (usdc && result.paymentRequirements.asset !== opts.cfg.x402_usdc.token_id) return Response.json({ error: { code: "payment_required", message: `asset ${result.paymentRequirements.asset} is not accepted` } }, { status: 402 });
       const amountTinybar = usdc ? (BigInt(raw) * BigInt(opts.cfg.x402_usdc.tinybar_per_unit)).toString() : raw;
       return { payer: settled.payer, tx: settled.transaction, amountTinybar, asset: usdc ? "usdc" : "hbar", amountRaw: raw, headers: settled.headers };
+  }
+
+  return {
+    charge: (c, req, maxTokens) => pay(c, { model: req.model, maxTokens }, X402_ROUTE),
+    async topup(c, tinybar) {
+      const paid = await pay(c, { tinybar }, X402_TOPUP_ROUTE);
+      if (paid instanceof Response) return paid;
+      // Only the exact HBAR amount asked buys credits.
+      if (paid.asset !== "hbar" || paid.amountTinybar !== tinybar) return Response.json({ error: { code: "payment_required", message: `top-up must pay exactly ${tinybar} tinybar in HBAR` } }, { status: 402 });
+      return paid;
     },
   };
 }

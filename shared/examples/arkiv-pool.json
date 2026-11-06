@@ -10,6 +10,7 @@
     "0x4646464646464646464646464646464646464646"
   ],
   "status": "ready",
+  "context_length": 8192,
   "coordinator_url_hash": "0xefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
   "layer_map": [
     {

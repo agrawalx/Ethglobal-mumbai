@@ -38,7 +38,10 @@ export default function ReceiptSheet({ receipt, nodes, onClose }: { receipt: Rec
             {receipt.in_tokens} in / {receipt.out_tokens} out
           </dd>
           <dt>Paid</dt>
-          <dd>{paid}</dd>
+          <dd>
+            {paid}
+            {receipt.price_multiplier != null && <span className="faint"> · {receipt.price_multiplier}× price, locked at start</span>}
+          </dd>
           <dt>Time</dt>
           <dd>{fmtTime(receipt.ts)}</dd>
           <dt>Ledger</dt>

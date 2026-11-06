@@ -6,6 +6,9 @@ export function createPoolQueue(slots = 1) {
   type Waiter = { ratio: number; grant(): void };
   const pools = new Map<string, { busy: number; waiting: Waiter[] }>();
   return {
+    queued(poolIds: string[]): number {
+      return poolIds.reduce((n, id) => n + (pools.get(id)?.waiting.length ?? 0), 0);
+    },
     isIdle(poolId: string): boolean {
       const p = pools.get(poolId);
       return !p || (p.busy === 0 && p.waiting.length === 0);

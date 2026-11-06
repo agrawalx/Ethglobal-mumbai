@@ -126,7 +126,12 @@ export type Receipt = {
   resp_hash: string;
   status: "pending" | "ok" | "failed";
   ts: number;
+  /** Load multiplier locked at request start (credits only; x402 keeps fixed tiers). */
+  price_multiplier?: number | null;
 };
+
+/** Credit price quote from /v1/models (shared/src/api.ts PriceQuote). */
+export type PriceQuote = { credits_per_1k_in: number; credits_per_1k_out: number; multiplier: number; quoted_at: number };
 
 /* ── ledger (HCS §8.6, §10.2) ─────────────────────────────────────────── */
 

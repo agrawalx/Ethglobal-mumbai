@@ -16,6 +16,14 @@ We build an open GPU pool network. People bring computers (gaming laptops, MacBo
 
 ## 2. What we have proved already (measured, 5–6 Nov 2026)
 
+Person 2 OpenCode work on `api` (6 Nov): context-limit reporting and floating credit
+pricing are implemented locally. See `docs/OPENCODE.md` for the contract, pricing
+formula, pending hardware measurements and live acceptance runs. SQLite schema is
+15. Verification after integration: gateway 171 tests, node-agent 24 tests, shared 60 tests, Arkiv 10
+tests; gateway/shared/Arkiv typechecks pass. These are local fixtures. The automatic
+memory-based launch limit still needs live calibration; Mac launch limits have not
+been raised. No new live pool or public-chain evidence is claimed.
+
 ### 2.1 Results
 
 | # | Result | Evidence |
@@ -330,6 +338,7 @@ Each component has a `.env.example`. Copy it to `.env` and fill it. Summary:
 | `PRIVATE_POOLS` | SPEC §16.3 private pools: JSON `{"pool-id": ["acc_…"]}`; the pool's node owners may always use it |
 | `TRUSTED_ACCOUNTS` | SPEC §16.1 privacy: comma-separated `acc_` IDs trusted with the first/last layers |
 | `PARALLAX_ROUTE_LOG` | Post-MVP P5.8/P5.9: absolute path of the hook route log (`<repo>/pool/run/routes.jsonl`). Set **only** when the scheduler runs with `pool/hooks` (`HOOKS=1`): the gateway then tags requests with `gpupool_req_id`. Empty = off |
+| `TOOLS_MODE` | Tool calling for OpenAI clients such as OpenCode. `emulate` (default): the gateway puts `tools` into the system prompt in Qwen3 format and parses `<tool_call>` text back into OpenAI `tool_calls`. `native`: `tools` go to Parallax unchanged |
 | `VERIFICATION_ENABLED` | SPEC §16.2: `false` (default). Output verification is planned, not active: no sampled checks, canaries, capability challenges, penalties or `/verifications` routes. |
 | `VERIFIER_URL` / `VERIFIER_OWNER_ACCOUNT` | P6.1: trusted Token-DiFR reference service and its owner account; sampled checks stay disabled unless both are set |
 | `VERIFIER_SECONDARY_URL` / `VERIFIER_SECONDARY_OWNER_ACCOUNT` | P6.3: independent reference service and owner for appeals |
@@ -416,6 +425,8 @@ The coordinator runs both roles: `pool/scheduler.env` (`ROLE=scheduler`, ports 5
 | `AGENT_ACCOUNT_ID` / `AGENT_PRIVATE_KEY` | Pays with x402 |
 | `AGENT_BUDGET_HBAR` | Spending cap (the agent stops before a payment would exceed it) |
 | `HEDERA_NETWORK` | `testnet` |
+| `GPUPOOL_API_KEY` | `pnpm topup`: the API key (`gpa_…`) to buy credits for (1 testnet HBAR = 10 credits); `AGENT_ACCOUNT_ID` / `AGENT_PRIVATE_KEY` = the payer's Hedera Portal testnet account |
+| `AGENT_KEY_TYPE` | `ecdsa` (default) or `ed25519`; only for a raw 64-hex `AGENT_PRIVATE_KEY` (a DER key carries its type) |
 
 ### gateway/.env.provider (CLI only; copy gateway/provider.env.example)
 | Key | Purpose |

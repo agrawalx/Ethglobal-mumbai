@@ -32,8 +32,9 @@ const TYPES: LedgerType[] = [
   "epoch_resolved",
   "payout_claimed",
   "agent_key_created",
+  "credits_purchased",
 ];
-const PILL: Partial<Record<LedgerType, string>> = { request_settled: "pill-ok", payout_claimed: "pill-ok", availability_reward: "pill-ok", x402_payment: "pill-warn", credits_expired: "pill-bad", credits_clawed_back: "pill-bad", account_banned: "pill-bad" };
+const PILL: Partial<Record<LedgerType, string>> = { credits_purchased: "pill-ok", request_settled: "pill-ok", payout_claimed: "pill-ok", availability_reward: "pill-ok", x402_payment: "pill-warn", credits_expired: "pill-bad", credits_clawed_back: "pill-bad", account_banned: "pill-bad" };
 const topic = env.hcsTopic;
 
 const str = (v: unknown) => (v == null ? "" : String(v));
@@ -70,7 +71,9 @@ function summary(e: LedgerEvent): string {
     case "payout_claimed":
       return `epoch ${str(p.epoch)} · ${fmtHbar(str(p.amount_tinybar) || "0")} claimed`;
     case "agent_key_created":
-      return `agent key ${str(p.agent_id)} · budget ${cr(p.budget_mc, 0)} cr`;
+      return `API key ${str(p.agent_id)} · ${p.budget_mc == null ? "no cap" : `cap ${cr(p.budget_mc, 0)} cr`}`;
+    case "credits_purchased":
+      return `+${cr(p.amount_mc)} cr bought for API key ${str(p.agent_id)} · ${fmtHbar(str(p.amount_tinybar) || "0")}`;
     case "hardware_challenge":
       return `hardware check ${str(p.result)} · node ${shortHash(str(p.node_id), 6, 4)}`;
     case "credits_clawed_back":

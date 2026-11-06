@@ -1,6 +1,6 @@
 /** Validated wire records → UI presentation units. No synthetic service records. */
-import { MeResponse, Receipt as ReceiptSchema, NetworkResponse, LedgerEventsResponse, PayoutsResponse, RpSignatureResponse } from '@gpupool/shared';
-import type { NetworkSnapshot, WorldRpContext } from '../api';
+import { MeResponse, Receipt as ReceiptSchema, NetworkResponse, LedgerEventsResponse, PayoutsResponse, RpSignatureResponse, AgentKey, AgentKeyListResponse, AgentKeyCreateResponse, AgentRequestsResponse } from '@gpupool/shared';
+import type { ApiKey, KeyRequest, NetworkSnapshot, NewApiKey, WorldRpContext } from '../api';
 import type { Me, Receipt } from '@shared/types';
 import type { Epoch, LedgerEvent, NodeListing, Payout } from '@shared/types';
 
@@ -58,3 +58,12 @@ export function payoutsFromWire(raw: unknown): { epochs: Epoch[]; payouts: Payou
   // The endpoint lists this address's leaves, not aggregate epoch totals. Do not invent totals.
   return { epochs: [], payouts: r.payouts.map((p) => ({ ...p, payout_address: r.payout_address as Payout['payout_address'], proof: p.proof as Payout['proof'] })) };
 }
+
+const keyOf = (k: AgentKey): ApiKey => ({ id: k.agent_id, name: k.name, cap: k.budget_mc === null ? null : k.budget_mc / 1000, spent: k.spent_mc / 1000, revoked: k.revoked, created_at: k.created_at, last_used_at: k.last_used_at, bought: k.key_credits_mc / 1000, boughtTotal: k.bought_total_mc / 1000 });
+export const keysFromWire = (raw: unknown): ApiKey[] => AgentKeyListResponse.parse(raw).agents.map(keyOf);
+export function newKeyFromWire(raw: unknown): NewApiKey {
+  const k = AgentKeyCreateResponse.parse(raw);
+  return { ...keyOf(k), token: k.token };
+}
+export const keyRequestsFromWire = (raw: unknown): KeyRequest[] =>
+  AgentRequestsResponse.parse(raw).requests.map(({ cost_mc, ...r }) => ({ ...r, cost: cost_mc === null ? null : cost_mc / 1000 }));

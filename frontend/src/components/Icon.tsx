@@ -21,7 +21,8 @@ export type IconName =
   | "user-check"
   | "laptop"
   | "chat"
-  | "list";
+  | "list"
+  | "key";
 const paths: Record<IconName, ReactNode> = {
   arrow: <path d="M4 12h16m-6-6 6 6-6 6" />,
   "arrow-up": <path d="M6 18 18 6M6 6h12v12" />,
@@ -94,6 +95,12 @@ const paths: Record<IconName, ReactNode> = {
   ),
   chat: <path d="M4 5h16v11H9l-5 4V5Z" />,
   list: <path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" />,
+  key: (
+    <>
+      <circle cx="8" cy="15" r="4" />
+      <path d="m11 12 9-9m-3 3 3 3m-6 0 2 2" />
+    </>
+  ),
 };
 export function Icon({
   name,

@@ -13,6 +13,20 @@ from gpupool_node.parallax import parse_log, read_peer_id
 JOIN = "Join scheduler response: {'node_id': '12D3KooWold', 'model_name': 'Qwen/Qwen3-14B-FP8', 'start_layer': 29, 'end_layer': 40}\n"
 
 
+def test_context_limit_tracks_running_process_and_survives_assignment():
+    log = "=== gpupool start node now ===\ngpupool max_seq=8192\n" + JOIN
+    assert parse_log(log).max_seq == 8192
+    assert parse_log(log + "Reloading executor with layers [20, 40)\n").max_seq == 8192
+    assert parse_log(log + "=== gpupool start node later ===\n").max_seq is None
+    assert parse_log(log + "gpupool max_seq=bad\n").max_seq is None
+
+
+def test_context_limit_is_signed_in_heartbeat():
+    from gpupool_node.signing import heartbeat_body
+    body = json.loads(heartbeat_body("0xa", "p", 1, True, "m", [0, 40], None, {"max_seq": 8192}))
+    assert body["max_seq"] == 8192
+
+
 def test_start_marker_forgets_the_old_process():
     assert parse_log(JOIN).layers == [29, 40]
     log = JOIN + "=== gpupool start node 2026-11-06T10:00:00Z ===\n" + "loading weights...\n"

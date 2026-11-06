@@ -2,7 +2,9 @@ import { listAccountStats, listModels, listNodes, listPools, listReadyPools, pub
 import type { ArkivAccountStats, ArkivModel, ArkivNode, ArkivPool, ModelConfig, ModelsResponse, NetworkResponse, Route } from "@gpupool/shared";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
-import { configModelFor, poolLayerMap } from "./route.ts";
+import { configModelFor, poolLayerMap, poolContextLength } from "./route.ts";
+import { createPricing } from "./pricing.ts";
+import type { PoolQueue } from "./queue.ts";
 import { isRestarting, routeDispute, swappingMembers } from "./pools.ts";
 import { poolReliability } from "./reliability.ts";
 import { coordinatorFor, coordinatorMap, urlHash as hashUrl } from "./formation.ts";
@@ -23,7 +25,7 @@ export function arkivDirectory(cfg: Config): Directory {
   return { stats: () => listAccountStats(pub), models: () => listModels(pub), pools: () => listPools(pub), nodes: () => listNodes(pub), readyPools: (model) => listReadyPools(pub, model) };
 }
 
-export type SelectedPool = { poolId: string; coordinatorUrl: string; route: Route | null; score: number };
+export type SelectedPool = { poolId: string; coordinatorUrl: string; route: Route | null; score: number; context_length?: number };
 
 /**
  * Privacy (src/privacy.ts): `trusted-ends` = the first and last layers (closest to the prompt and the
@@ -47,8 +49,18 @@ function privatePools(cfg: Config): Record<string, string[]> {
 }
 
 /** One private coordinator in the MVP. Arkiv publishes only its URL hash. */
-export function createRouter(cfg: Config, db: Db, directory: Directory) {
+export function createRouter(cfg: Config, db: Db, directory: Directory, queue?: PoolQueue) {
   const active = new Map<string, number>();
+  /** Pool context per model, cached briefly so the request path adds no extra Arkiv read per request. */
+  const contexts = new Map<string, { value: number | undefined; at: number }>();
+  const minContext = (pools: SelectedPool[]): number | undefined =>
+    pools.length && pools.every((p) => p.context_length !== undefined) ? Math.min(...pools.map((p) => p.context_length!)) : undefined;
+  const pricing = createPricing((model) => {
+    const rows = db.prepare("SELECT DISTINCT pool_id, hb_model FROM nodes WHERE hb_online = 1 AND hb_ts >= ?")
+      .all(Date.now() - cfg.net.router.pool_heartbeat_max_age_s * 1000) as { pool_id: string; hb_model: string | null }[];
+    const ids = [...new Set(rows.filter((n) => configModelFor(cfg.net, n.hb_model)?.model_id === model).map((n) => n.pool_id))];
+    return { active: ids.reduce((n, id) => n + (active.get(id) ?? 0), 0), queued: queue?.queued(ids) ?? 0 };
+  });
 
   const ownerOf = (nodeId: string) => (db.prepare("SELECT account_id FROM nodes WHERE node_id = ?").get(nodeId) as { account_id: string } | undefined)?.account_id;
 
@@ -96,12 +108,21 @@ export function createRouter(cfg: Config, db: Db, directory: Directory) {
         const hops = !route ? [] : opts.privacy.mode === "trusted-all" ? route : [route[0]!, route.at(-1)!];
         if (!route || !hops.every((h) => opts.privacy!.accounts.has(ownerOf(h.node_id) ?? ""))) continue;
       }
-      out.set(p.pool_id, { poolId: p.pool_id, coordinatorUrl, route, score: reliability * (1 - load) });
+      out.set(p.pool_id, { poolId: p.pool_id, coordinatorUrl, route, score: reliability * (1 - load), context_length: poolContextLength(db, cfg.net, p.pool_id, model, now) });
     }
     return [...out.values()].sort((a, b) => b.score - a.score || a.poolId.localeCompare(b.poolId));
   }
 
   return {
+    pricing,
+    /** Smallest live context over the ready pools, or undefined when any pool has not reported one. */
+    async contextLength(model: ModelConfig): Promise<number | undefined> {
+      const hit = contexts.get(model.model_id);
+      if (hit && Date.now() - hit.at < 10_000) return hit.value;
+      const value = minContext(await candidates(model));
+      contexts.set(model.model_id, { value, at: Date.now() });
+      return value;
+    },
     /** Best ready pool; `poolId` = only that pool; `exclude` = any pool but that one (P5.2 failover). */
     async select(model: ModelConfig, poolId?: string, exclude?: string, opts: SelectOptions = {}): Promise<SelectedPool | null> {
       const selected = (await candidates(model, opts)).find((p) => (!poolId || p.poolId === poolId) && p.poolId !== exclude) ?? null;
@@ -145,7 +166,9 @@ export function createRouter(cfg: Config, db: Db, directory: Directory) {
         const pools = await candidates(model);
         if (!pools.length) continue;
         data.push({ id: model.model_id, object: "model", created: 0, owned_by: "gpupool",
-          model_factor: model.model_factor, pools: pools.length, source: "arkiv" });
+          model_factor: model.model_factor, pools: pools.length, source: "arkiv",
+          context_length: minContext(pools),
+          price: pricing.quote(model) });
       }
       return { object: "list", data };
     },

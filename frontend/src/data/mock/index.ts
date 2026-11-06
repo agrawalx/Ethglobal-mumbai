@@ -6,7 +6,7 @@
      __gpupoolReplug("Mika")    → renew again
      __gpupoolExpireNow("Mika") → skip the wait (listing expires now) */
 import type { Balance, LedgerEvent, LedgerType, Me, NodeListing, Receipt } from "@shared/types";
-import type { ChatBody, ChatChunk, LoginResult, NetworkSnapshot, NodeLink, PoolApi } from "../api";
+import type { ChatBody, ChatChunk, LoginResult, NetworkSnapshot, NewApiKey, NodeLink, PoolApi } from "../api";
 import { PaymentRequired, SessionExpired } from "../api";
 import { InsufficientCredits, START_NODE_CAP, STARTER_CREDITS, STARTER_TTL_MS, available, cost, estimateTokens, holdFor, ratio, spend, split } from "../../lib/credits";
 import {
@@ -321,6 +321,14 @@ async function* mockChat(body: ChatBody, token: string | null, signal: AbortSign
 }
 
 /* ── the API ───────────────────────────────────────────────────────────── */
+/** Mock API keys (in memory; tests and offline demos only). */
+const KEYS = new Map<string, NewApiKey[]>();
+const keysOf = (token: string) => {
+  const id = accountOf(token).id;
+  if (!KEYS.has(id)) KEYS.set(id, []);
+  return KEYS.get(id)!;
+};
+
 export const mockApi: PoolApi = {
   mode: "mock",
 
@@ -428,6 +436,29 @@ export const mockApi: PoolApi = {
     const e = LEDGER.find((x) => x.hcs_seq === seq);
     if (topic !== HCS_TOPIC || !e) return { found: false };
     return { found: true, consensus_ts: `${Math.floor(e.ts / 1000)}.${String(e.ts % 1000).padStart(3, "0")}000000`, message: JSON.stringify({ v: 1, type: e.type, ...e.payload, sig: e.gateway_sig }) };
+  },
+
+  async keys(token) {
+    await latency();
+    return clone(keysOf(token).map(({ token: _t, ...k }) => k));
+  },
+  async createKey(token, name, cap) {
+    await latency();
+    const id = `agt_${hex(8, rand)}`;
+    const k: NewApiKey = { id, name, cap, spent: 0, revoked: false, created_at: Date.now(), last_used_at: null, bought: 0, boughtTotal: 0, token: `gpa_${id}_${hex(64, rand)}` };
+    keysOf(token).push(k);
+    return clone(k);
+  },
+  async revokeKey(token, id) {
+    await latency();
+    const k = keysOf(token).find((x) => x.id === id && !x.revoked);
+    if (!k) throw new Error("No such active API key.");
+    k.revoked = true;
+  },
+  async keyRequests(token, id) {
+    await latency();
+    if (!keysOf(token).some((x) => x.id === id)) throw new Error("No such API key.");
+    return [];
   },
 
   async payouts(address) {

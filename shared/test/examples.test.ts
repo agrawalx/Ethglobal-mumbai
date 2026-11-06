@@ -13,6 +13,8 @@ const EXAMPLES: Record<string, z.ZodType> = {
   "error-response.json": S.ErrorResponse,
   "chat-completion-request.json": S.ChatCompletionRequest,
   "chat-completion-response.json": S.ChatCompletionResponse,
+  "chat-completion-request-tools.json": S.ChatCompletionRequest,
+  "chat-completion-response-tools.json": S.ChatCompletionResponse,
   "models-response.json": S.ModelsResponse,
   "world-verify-response.json": S.WorldVerifyResponse,
   "rp-signature-response.json": S.RpSignatureResponse,
@@ -56,6 +58,11 @@ const EXAMPLES: Record<string, z.ZodType> = {
   "hcs-agent-key-created.json": S.AgentKeyCreatedEvent,
   "agent-key-create-response.json": S.AgentKeyCreateResponse,
   "agent-key-list-response.json": S.AgentKeyListResponse,
+  "agent-requests-response.json": S.AgentRequestsResponse,
+  "hcs-credits-purchased.json": S.CreditsPurchasedEvent,
+  "key-credits-response.json": S.KeyCreditsResponse,
+  "credit-topup-request.json": S.CreditTopupRequest,
+  "credit-topup-response.json": S.CreditTopupResponse,
   "collusion-flags-response.json": S.CollusionFlagsResponse,
 };
 
@@ -89,6 +96,7 @@ test("ledger event types are exactly SPEC §8.6", () => {
     "agent_key_created",
     "availability_reward",
     "credits_clawed_back",
+    "credits_purchased",
     "credits_expired",
     "epoch_closed",
     "epoch_resolved",
@@ -103,6 +111,14 @@ test("ledger event types are exactly SPEC §8.6", () => {
     "verification_result",
     "x402_payment",
   ].sort());
+});
+
+test("top-up amounts: whole tinybars only; key credits fields are required on keys", () => {
+  assert.ok(S.CreditTopupRequest.safeParse({ hbar: 2.5 }).success);
+  assert.ok(S.CreditTopupRequest.safeParse({ hbar: 0.000000001 }).success === false, "below 1 tinybar");
+  assert.ok(!S.CreditTopupRequest.safeParse({ hbar: 0 }).success);
+  assert.ok(!S.CreditTopupRequest.safeParse({ hbar: "5" }).success);
+  assert.ok(!S.AgentKey.safeParse({ agent_id: "agt_a", name: "a", budget_mc: null, spent_mc: 0, revoked: false, created_at: 1, last_used_at: null }).success);
 });
 
 test("config file matches GpupoolConfig", () => {
@@ -134,6 +150,21 @@ test("failure path: bad inputs are rejected", () => {
   // logprobs is stripped, never forwarded to Parallax
   const req = S.ChatCompletionRequest.parse({ ...(load("chat-completion-request.json") as object), logprobs: true });
   assert.equal("logprobs" in req, false);
+  // only text parts; an image part is rejected
+  const img = { model: "Qwen/Qwen3-14B-FP8", messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "x" } }] }] };
+  assert.equal(S.ChatCompletionRequest.safeParse(img).success, false);
+  // a tool message needs its tool_call_id
+  assert.equal(S.ChatMessage.safeParse({ role: "tool", content: "x" }).success, false);
+});
+
+test("OpenCode-shaped request keeps tools, tool calls and tool results", () => {
+  const req = S.ChatCompletionRequest.parse(load("chat-completion-request-tools.json"));
+  assert.equal(req.tools?.[0]?.function.name, "read");
+  assert.equal(req.tool_choice, "auto");
+  const [, user, asst, tool] = req.messages;
+  assert.equal(S.contentText(user!.content), "What does src/main.ts do?");
+  assert.ok(asst!.role === "assistant" && asst!.tool_calls?.[0]?.id === "call_0" && S.contentText(asst!.content) === "");
+  assert.ok(tool!.role === "tool" && tool!.tool_call_id === "call_0");
 });
 
 test("canonical JSON: sorted keys, no whitespace, same bytes as Python json.dumps(sort_keys, separators, ensure_ascii=False)", () => {

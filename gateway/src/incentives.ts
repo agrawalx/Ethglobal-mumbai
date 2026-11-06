@@ -1,8 +1,9 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import type { AgentKey, CollusionFlagsResponse, CreditSplit, GpupoolConfig } from "@gpupool/shared";
+import type { AgentKey, AgentRequest, CollusionFlagsResponse, CreditSplit, GpupoolConfig, KeyCreditsResponse } from "@gpupool/shared";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { recordEvent, type Signer } from "./events.ts";
+import { availableMc } from "./ledger.ts"; // call-time only (ledger imports this module too)
 
 /**
  * SPEC §16.3 incentives and reputation, on the MVP ledger (SQLite working copy + an HCS event for
@@ -305,22 +306,31 @@ export function payAvailability(db: Db, cfg: Config, signer: Signer, now = Date.
 // ---------- human-backed agent keys (World Agent Pass, MVP form) ----------
 
 const hashSecret = (s: string) => createHash("sha256").update(s).digest("hex");
-type AgentRow = { id: string; account_id: string; name: string; secret_hash: string; budget_mc: number; spent_mc: number; created_at: number; revoked_at: number | null };
-const toKey = (r: AgentRow): AgentKey => ({ agent_id: r.id, name: r.name, budget_mc: r.budget_mc, spent_mc: r.spent_mc, revoked: r.revoked_at !== null, created_at: r.created_at });
+type AgentRow = { id: string; account_id: string; name: string; secret_hash: string; budget_mc: number | null; spent_mc: number; key_credits_mc: number; key_held_mc: number; bought_total_mc: number; key_spent_mc: number; created_at: number; revoked_at: number | null; last_used_at?: number | null };
+const toKey = (r: AgentRow): AgentKey => ({ agent_id: r.id, name: r.name, budget_mc: r.budget_mc, spent_mc: r.spent_mc, revoked: r.revoked_at !== null, created_at: r.created_at, last_used_at: r.last_used_at ?? null,
+  key_credits_mc: r.key_credits_mc - r.key_held_mc, bought_total_mc: r.bought_total_mc });
+const KEY_ROWS = "SELECT k.*, (SELECT max(ts) FROM requests r WHERE r.agent_id = k.id) AS last_used_at FROM agent_keys k";
 
-/** A World-verified human creates an agent key with a credit budget. The token is returned once. */
-export function createAgentKey(db: Db, signer: Signer, accountId: string, name: string, budgetMc: number, now = Date.now()): AgentKey & { token: string } {
+/** A World-verified human creates an API key, with an optional credit cap (null = whole balance). The token is returned once. */
+export function createAgentKey(db: Db, signer: Signer, accountId: string, name: string, budgetMc: number | null, now = Date.now()): AgentKey & { token: string } {
   const id = `agt_${randomBytes(8).toString("hex")}`;
   const secret = randomBytes(32).toString("hex");
   db.transaction(() => {
     db.prepare("INSERT INTO agent_keys (id, account_id, name, secret_hash, budget_mc, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, accountId, name, hashSecret(secret), budgetMc, now);
     recordEvent(db, signer, { type: "agent_key_created", account_id: accountId as Acc, agent_id: id, budget_mc: budgetMc }, now);
   })();
-  return { ...toKey(db.prepare("SELECT * FROM agent_keys WHERE id = ?").get(id) as AgentRow), token: `gpa_${id}_${secret}` };
+  return { ...toKey(db.prepare(`${KEY_ROWS} WHERE k.id = ?`).get(id) as AgentRow), token: `gpa_${id}_${secret}` };
 }
 
 export const listAgentKeys = (db: Db, accountId: string): AgentKey[] =>
-  (db.prepare("SELECT * FROM agent_keys WHERE account_id = ? ORDER BY created_at").all(accountId) as AgentRow[]).map(toKey);
+  (db.prepare(`${KEY_ROWS} WHERE k.account_id = ? ORDER BY k.created_at`).all(accountId) as AgentRow[]).map(toKey);
+
+/** The key's latest requests (newest first), or null when the key is not this account's. */
+export function agentRequests(db: Db, accountId: string, agentId: string, limit = 50): AgentRequest[] | null {
+  if (!db.prepare("SELECT 1 FROM agent_keys WHERE id = ? AND account_id = ?").get(agentId, accountId)) return null;
+  return db.prepare("SELECT req_id, model, status, in_tokens, out_tokens, max_tokens, cost_mc, hcs_seq, ts FROM requests WHERE agent_id = ? AND account_id = ? ORDER BY ts DESC LIMIT ?")
+    .all(agentId, accountId, limit) as AgentRequest[];
+}
 
 export function revokeAgentKey(db: Db, accountId: string, agentId: string, now = Date.now()): boolean {
   return db.prepare("UPDATE agent_keys SET revoked_at = ? WHERE id = ? AND account_id = ? AND revoked_at IS NULL").run(now, agentId, accountId).changes === 1;
@@ -336,10 +346,44 @@ export function agentFromToken(db: Db, token: string): { accountId: string; agen
   return a.length === b.length && timingSafeEqual(a, b) ? { accountId: r.account_id, agentId: r.id } : null;
 }
 
+/** Account credits the key may still spend; no cap = Infinity. The cap never limits the key's own bought credits. */
 export const agentBudgetLeft = (db: Db, agentId: string): number => {
-  const r = db.prepare("SELECT budget_mc, spent_mc FROM agent_keys WHERE id = ?").get(agentId) as { budget_mc: number; spent_mc: number };
-  return Math.max(0, r.budget_mc - r.spent_mc);
+  const r = db.prepare("SELECT budget_mc, spent_mc, key_spent_mc FROM agent_keys WHERE id = ?").get(agentId) as { budget_mc: number | null; spent_mc: number; key_spent_mc: number };
+  return r.budget_mc === null ? Infinity : Math.max(0, r.budget_mc - (r.spent_mc - r.key_spent_mc));
 };
+
+/** GET /v1/credits: what a key can spend now. */
+export function keyCredits(db: Db, cfg: GpupoolConfig, agentId: string, now = Date.now()): KeyCreditsResponse {
+  const r = db.prepare("SELECT * FROM agent_keys WHERE id = ?").get(agentId) as AgentRow;
+  const account = Math.max(0, availableMc(db, r.account_id, now));
+  const capLeft = agentBudgetLeft(db, agentId);
+  const keyCredits = r.key_credits_mc - r.key_held_mc;
+  return {
+    agent_id: r.id, name: r.name, key_credits_mc: keyCredits, bought_total_mc: r.bought_total_mc,
+    account_available_mc: account, cap_mc: r.budget_mc, cap_left_mc: capLeft === Infinity ? null : capLeft,
+    spendable_mc: keyCredits + Math.min(account, capLeft), spent_mc: r.spent_mc, topup: cfg.topup,
+  };
+}
+
+/** Millicredits for a top-up: tinybar × credits_per_hbar × 1000 / 1e8, rounded down. */
+export const topupMc = (cfg: GpupoolConfig, tinybar: bigint): number => Number((tinybar * BigInt(cfg.topup.credits_per_hbar) * 1000n) / 100_000_000n);
+
+/**
+ * Credit a settled x402 top-up to the key, once per Hedera transaction. false = this tx was
+ * already credited (replay). The HBAR stays in the treasury; it is not epoch payout income.
+ */
+export function creditTopup(db: Db, cfg: GpupoolConfig, signer: Signer, t: { agentId: string; payer: string; tx: string; tinybar: string }, now = Date.now()): { added: number } | null {
+  return db.transaction(() => {
+    const k = db.prepare("SELECT account_id FROM agent_keys WHERE id = ?").get(t.agentId) as { account_id: string };
+    const mc = topupMc(cfg, BigInt(t.tinybar));
+    const ins = db.prepare("INSERT OR IGNORE INTO key_topups (tx_id, agent_id, account_id, payer, amount_tinybar, amount_mc, ts) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(t.tx, t.agentId, k.account_id, t.payer, t.tinybar, mc, now);
+    if (ins.changes !== 1) return null;
+    db.prepare("UPDATE agent_keys SET key_credits_mc = key_credits_mc + ?, bought_total_mc = bought_total_mc + ? WHERE id = ?").run(mc, mc, t.agentId);
+    recordEvent(db, signer, { type: "credits_purchased", account_id: k.account_id as Acc, agent_id: t.agentId, payer: t.payer, tx_id: t.tx, amount_tinybar: t.tinybar, amount_mc: mc }, now);
+    return { added: mc };
+  })();
+}
 
 export function chargeAgent(db: Db, agentId: string, reqId: string, mc: number): void {
   db.prepare("UPDATE agent_keys SET spent_mc = spent_mc + ? WHERE id = ?").run(mc, agentId);

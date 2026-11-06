@@ -484,6 +484,7 @@ a.badge:hover {
   .console-nav {
     order: 3;
     width: 100%;
+    min-width: 0; /* scroll the links inside the pill, never widen the page */
     margin: 0;
   }
   .console-actions .badge-mock {

@@ -14,7 +14,9 @@
     "test:demo": "node --test test/backend-demo.test.ts",
     "demo:privacy": "node scripts/privacy-demo.ts",
     "demo:incentives": "node scripts/incentives-demo.ts",
-    "verify": "node --env-file-if-exists=.env scripts/verify-backend.ts"
+    "verify": "node --env-file-if-exists=.env scripts/verify-backend.ts",
+    "api-key": "node --env-file-if-exists=.env scripts/api-key.ts",
+    "e2e:docs": "node scripts/docs-flow-e2e.ts"
   },
   "dependencies": {
     "@gpupool/arkiv": "workspace:*",

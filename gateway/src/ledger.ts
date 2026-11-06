@@ -1,5 +1,5 @@
 import { addReserve, consumeEarned, creditEarned } from "./incentives.ts";
-import type { CreditSplit, GpupoolConfig, ModelConfig, Route } from "@gpupool/shared";
+import { contentText, type ChatMessage, type CreditSplit, type GpupoolConfig, type ModelConfig, type Route, type Tool } from "@gpupool/shared";
 import type { Db } from "./db.ts";
 import { recordEvent, type Signer } from "./events.ts";
 
@@ -15,21 +15,32 @@ const factorMilli = (m: ModelConfig): number => Math.round(m.model_factor * 1000
 const weightBps = (cfg: GpupoolConfig): number => Math.round(cfg.cost.input_token_weight * BPS);
 
 /**
- * cost_mc = floor(model_factor × (output_tokens + input_token_weight × input_tokens) × 1000).
- * Integer form: floor(factor_milli × (out × 10000 + in × weight_bps) / 10000).
+ * cost_mc = floor(model_factor × locked_multiplier × (out + input_token_weight × in) × 1000).
+ * BigInt intermediates retain exact integer rounding for both holds and settlement.
  */
-export function costMc(cfg: GpupoolConfig, model: ModelConfig, inTokens: number, outTokens: number): number {
-  return Math.floor((factorMilli(model) * (outTokens * BPS + inTokens * weightBps(cfg))) / BPS);
+export function costMc(cfg: GpupoolConfig, model: ModelConfig, inTokens: number, outTokens: number, multiplier = 1): number {
+  if (!Number.isFinite(multiplier) || multiplier < 0.5 || multiplier > 2) throw new Error("invalid price multiplier");
+  const priceBps = Math.round(multiplier * BPS);
+  return Number(BigInt(factorMilli(model)) * (BigInt(outTokens) * BigInt(BPS) + BigInt(inTokens) * BigInt(weightBps(cfg))) * BigInt(priceBps) / BigInt(BPS * BPS));
 }
 
-/** Input tokens before the request runs: ceil(total characters of all message contents / 4). */
-export function estimateInputTokens(messages: { content: string }[]): number {
-  return Math.ceil(messages.reduce((n, m) => n + m.content.length, 0) / 4);
+/** Characters a message adds to the prompt: its text, plus tool-call names and arguments. */
+const messageChars = (m: ChatMessage): number =>
+  contentText(m.content).length +
+  (m.role === "assistant" ? (m.tool_calls ?? []).reduce((n, t) => n + t.function.name.length + t.function.arguments.length, 0) : 0);
+
+/**
+ * Input tokens before the request runs: ceil(characters / 4) over all message text, tool calls and
+ * the tool definitions (they are part of the prompt the model reads).
+ */
+export function estimateInputTokens(messages: ChatMessage[], tools: Tool[] = []): number {
+  const chars = messages.reduce((n, m) => n + messageChars(m), 0) + (tools.length ? JSON.stringify(tools).length : 0);
+  return Math.ceil(chars / 4);
 }
 
 /** Hold (SPEC §5.3 step 4) = the cost formula with max_tokens output and the estimated input. */
-export function holdMc(cfg: GpupoolConfig, model: ModelConfig, maxTokens: number, estInputTokens: number): number {
-  return costMc(cfg, model, estInputTokens, maxTokens);
+export function holdMc(cfg: GpupoolConfig, model: ModelConfig, maxTokens: number, estInputTokens: number, multiplier = 1): number {
+  return costMc(cfg, model, estInputTokens, maxTokens, multiplier);
 }
 
 /**
@@ -95,6 +106,37 @@ export function releaseHold(db: Db, accountId: string, amount: number): void {
   db.prepare("UPDATE balances SET held_mc = MAX(held_mc - ?, 0) WHERE account_id = ?").run(amount, accountId);
 }
 
+/** An API key's own bought credits not spent or held. */
+export function keyAvailableMc(db: Db, agentId: string): number {
+  const r = db.prepare("SELECT key_credits_mc - key_held_mc AS n FROM agent_keys WHERE id = ?").get(agentId) as { n: number } | undefined;
+  return r?.n ?? 0;
+}
+
+/**
+ * Hold a request on a key: its own bought credits first, the rest on the account (`tryHold`).
+ * All or nothing. Returns the part held on the key, or null when the account part does not fit.
+ */
+class HoldFailed extends Error {}
+export function tryHoldForKey(db: Db, accountId: string, agentId: string, amount: number, now = Date.now()): number | null {
+  try {
+    return db.transaction((): number => {
+      const fromKey = Math.min(amount, Math.max(0, keyAvailableMc(db, agentId)));
+      if (fromKey > 0) db.prepare("UPDATE agent_keys SET key_held_mc = key_held_mc + ? WHERE id = ?").run(fromKey, agentId);
+      if (amount - fromKey > 0 && !tryHold(db, accountId, amount - fromKey, now)) throw new HoldFailed(); // rolls the key hold back
+      return fromKey;
+    })();
+  } catch (e) {
+    if (e instanceof HoldFailed) return null;
+    throw e;
+  }
+}
+
+/** Give back a key request's hold: `keyHeld` to the key, the rest to the account. */
+export function releaseKeyHold(db: Db, accountId: string, agentId: string, hold: number, keyHeld: number): void {
+  db.prepare("UPDATE agent_keys SET key_held_mc = MAX(key_held_mc - ?, 0) WHERE id = ?").run(keyHeld, agentId);
+  releaseHold(db, accountId, hold - keyHeld);
+}
+
 export type SettleInput = {
   reqId: string;
   accountId: string;
@@ -105,9 +147,12 @@ export type SettleInput = {
   route: Route | null;
   promptHash: string;
   respHash: string;
+  priceMultiplier?: number;
+  /** API key request: `held` of `hold` sits on the key's own bought credits. */
+  key?: { agentId: string; held: number };
 };
 
-export type SettleResult = { cost: number; split: CreditSplit };
+export type SettleResult = { cost: number; split: CreditSplit; fromKey: number };
 
 /**
  * Settle a successful credit request in ONE transaction:
@@ -120,20 +165,29 @@ export type SettleResult = { cost: number; split: CreditSplit };
 export function settle(db: Db, cfg: GpupoolConfig, signer: Signer, s: SettleInput, now = Date.now()): SettleResult {
   return db.transaction((): SettleResult => {
     const b = db.prepare("SELECT starter_mc, starter_expires_at, earned_mc, held_mc FROM balances WHERE account_id = ?").get(s.accountId) as BalanceRow;
-    const raw = costMc(cfg, s.model, s.inTokens, s.outTokens);
+    const raw = costMc(cfg, s.model, s.inTokens, s.outTokens, s.priceMultiplier ?? 1);
     const starter = starterValid(b, now);
-    let cost = Math.min(raw, s.hold);
-    if (cost > starter + b.earned_mc) {
-      console.warn(`settle ${s.reqId}: cost ${cost} mc > balance ${starter + b.earned_mc} mc (starter expired during the request?); charging the balance`);
-      cost = starter + b.earned_mc;
+    const keyHeld = s.key?.held ?? 0;
+    // A key pays from its own bought credits first (they are held, so they are there), then the account.
+    const capped = Math.min(raw, s.hold);
+    const fromKey = Math.min(capped, keyHeld);
+    let fromAccount = capped - fromKey;
+    if (fromAccount > starter + b.earned_mc) {
+      console.warn(`settle ${s.reqId}: cost ${fromAccount} mc > balance ${starter + b.earned_mc} mc (starter expired during the request?); charging the balance`);
+      fromAccount = starter + b.earned_mc;
     }
+    const cost = fromKey + fromAccount;
     if (raw > s.hold) console.warn(`settle ${s.reqId}: actual cost ${raw} mc > hold ${s.hold} mc (input estimate too low); charged the hold`);
-    const fromStarter = Math.min(starter, cost);
-    const fromEarned = cost - fromStarter;
+    const fromStarter = Math.min(starter, fromAccount);
+    const fromEarned = fromAccount - fromStarter;
     db.prepare(
       `UPDATE balances SET held_mc = MAX(held_mc - @hold, 0), starter_mc = starter_mc - @fs, earned_mc = earned_mc - @fe,
          spent_total_mc = spent_total_mc + @cost WHERE account_id = @id`,
-    ).run({ hold: s.hold, fs: fromStarter, fe: fromEarned, cost, id: s.accountId });
+    ).run({ hold: s.hold - keyHeld, fs: fromStarter, fe: fromEarned, cost: fromAccount, id: s.accountId });
+    if (s.key) {
+      db.prepare(`UPDATE agent_keys SET key_held_mc = MAX(key_held_mc - @held, 0), key_credits_mc = key_credits_mc - @k,
+         key_spent_mc = key_spent_mc + @k WHERE id = @id`).run({ held: keyHeld, k: fromKey, id: s.key.agentId });
+    }
 
     const owner = db.prepare("SELECT account_id FROM nodes WHERE node_id = ?");
     const ownerOf = (nodeId: string) => (owner.get(nodeId) as { account_id: string } | undefined)?.account_id ?? null;
@@ -152,6 +206,7 @@ export function settle(db: Db, cfg: GpupoolConfig, signer: Signer, s: SettleInpu
     ).run(s.inTokens, s.outTokens, cost, JSON.stringify(split), s.respHash, s.reqId);
     recordEvent(db, signer, {
       type: "request_settled",
+      price_multiplier: s.priceMultiplier ?? 1,
       req_id: s.reqId,
       account_id: s.accountId,
       model: s.model.model_id,
@@ -160,10 +215,11 @@ export function settle(db: Db, cfg: GpupoolConfig, signer: Signer, s: SettleInpu
       cost_mc: cost,
       split,
       pay: "credits",
+      ...(s.key ? { key_mc: fromKey } : {}),
       prompt_hash: s.promptHash as `0x${string}`,
       resp_hash: s.respHash as `0x${string}`,
     }, now);
-    return { cost, split };
+    return { cost, split, fromKey };
   })();
 }
 

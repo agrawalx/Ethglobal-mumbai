@@ -88,6 +88,8 @@ export const GatewayEnv = z.preprocess(
     PARALLAX_ALLOWED_PEERS_FILE: opt,
     /** Post-MVP P5.8/P5.9: the hook's route log (absolute path). Set only when the pool runs pool/hooks. */
     PARALLAX_ROUTE_LOG: opt,
+    /** Tool calling: "emulate" = tools in the prompt, `<tool_call>` text parsed back (Qwen3); "native" = pass through. */
+    TOOLS_MODE: z.enum(["emulate", "native"]).default("emulate"),
     /** SPEC §16.1 many pools: JSON {"pool-id": "http://127.0.0.1:3002", ...}; other pools use POOL_COORDINATOR_URL. */
     POOL_COORDINATORS: opt,
     /** Same map as a file (pool/pools-up.sh writes it for "auto" pools); read on each routing decision. */

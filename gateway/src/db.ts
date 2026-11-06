@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
  * tinybar decimal strings, times are Unix ms. No migrations (dev phase): when SCHEMA_VERSION
  * changes, delete the database file and restart.
  */
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 17;
 
 export const TABLES = [
   "provider_pools", "provider_members", "provider_enrollments",
@@ -36,6 +36,7 @@ export const TABLES = [
   "penalties",
   "availability_epochs",
   "agent_keys",
+  "key_topups",
 ] as const;
 
 const SCHEMA = `
@@ -90,6 +91,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   hb_model       TEXT,
   hb_layers      TEXT,                               -- JSON [start, end) or NULL
   hb_tok_s       REAL,
+  hb_max_seq     INTEGER,
   -- post-MVP P5 heartbeat fields
   hb_peer_id         TEXT,                           -- Parallax peer ID (P5.4 admission, P5.8/P5.9)
   hb_lan_ip          TEXT,                           -- P5.6
@@ -135,6 +137,7 @@ CREATE TABLE IF NOT EXISTS requests (
   in_tokens            INTEGER,
   out_tokens           INTEGER,
   cost_mc              INTEGER,
+  price_multiplier     REAL,
   split                TEXT,                         -- JSON CreditSplit
   payout_snapshot      TEXT,                         -- x402 provider attribution frozen at request start
   route                TEXT,                         -- JSON Route (node → layers); NULL = unknown (SPEC §5.5)
@@ -149,6 +152,7 @@ CREATE TABLE IF NOT EXISTS requests (
   agent_id             TEXT,                         -- §16.3: agent key that sent the request (human-backed)
   sampling_seed       INTEGER,
   sampling_settings   TEXT,
+  max_tokens           INTEGER,                      -- answer cap the gateway picked (budget.ts); learns per user
   ts                   INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS ledger_events (
@@ -331,10 +335,24 @@ CREATE TABLE IF NOT EXISTS agent_keys (               -- §16.3 Agent Pass (MVP 
   account_id   TEXT NOT NULL REFERENCES accounts(id),
   name         TEXT NOT NULL,
   secret_hash  TEXT NOT NULL,                         -- sha256 of the secret part; the token is shown once
-  budget_mc    INTEGER NOT NULL CHECK (budget_mc >= 0),
-  spent_mc     INTEGER NOT NULL DEFAULT 0,
+  budget_mc    INTEGER CHECK (budget_mc IS NULL OR budget_mc >= 0), -- NULL = no cap (whole balance)
+  spent_mc     INTEGER NOT NULL DEFAULT 0,          -- everything this key spent (bought + account)
+  -- Credits bought with HBAR for this key only (x402 top-ups). The cap (budget_mc) limits account credits only.
+  key_credits_mc   INTEGER NOT NULL DEFAULT 0 CHECK (key_credits_mc >= 0),
+  key_held_mc      INTEGER NOT NULL DEFAULT 0 CHECK (key_held_mc >= 0),
+  bought_total_mc  INTEGER NOT NULL DEFAULT 0,
+  key_spent_mc     INTEGER NOT NULL DEFAULT 0,      -- part of spent_mc paid from key_credits_mc
   created_at   INTEGER NOT NULL,
   revoked_at   INTEGER
+);
+CREATE TABLE IF NOT EXISTS key_topups (               -- x402 HBAR → key credits; the HBAR stays in the treasury
+  tx_id          TEXT PRIMARY KEY,                    -- Hedera tx: one top-up per payment, never twice
+  agent_id       TEXT NOT NULL REFERENCES agent_keys(id),
+  account_id     TEXT NOT NULL REFERENCES accounts(id),
+  payer          TEXT NOT NULL,
+  amount_tinybar TEXT NOT NULL,
+  amount_mc      INTEGER NOT NULL,
+  ts             INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS transcripts (
   req_id      TEXT PRIMARY KEY REFERENCES requests(req_id),
