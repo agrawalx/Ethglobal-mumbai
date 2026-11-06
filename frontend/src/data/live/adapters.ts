@@ -59,7 +59,7 @@ export function payoutsFromWire(raw: unknown): { epochs: Epoch[]; payouts: Payou
   return { epochs: [], payouts: r.payouts.map((p) => ({ ...p, payout_address: r.payout_address as Payout['payout_address'], proof: p.proof as Payout['proof'] })) };
 }
 
-const keyOf = (k: AgentKey): ApiKey => ({ id: k.agent_id, name: k.name, cap: k.budget_mc === null ? null : k.budget_mc / 1000, spent: k.spent_mc / 1000, revoked: k.revoked, created_at: k.created_at, last_used_at: k.last_used_at });
+const keyOf = (k: AgentKey): ApiKey => ({ id: k.agent_id, name: k.name, cap: k.budget_mc === null ? null : k.budget_mc / 1000, spent: k.spent_mc / 1000, revoked: k.revoked, created_at: k.created_at, last_used_at: k.last_used_at, bought: k.key_credits_mc / 1000, boughtTotal: k.bought_total_mc / 1000 });
 export const keysFromWire = (raw: unknown): ApiKey[] => AgentKeyListResponse.parse(raw).agents.map(keyOf);
 export function newKeyFromWire(raw: unknown): NewApiKey {
   const k = AgentKeyCreateResponse.parse(raw);

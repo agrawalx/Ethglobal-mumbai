@@ -17,6 +17,7 @@ assert.equal(receiptFromWire(r).account_id,r.account_id);
 assert.deepEqual(payoutsFromWire(fixture('payouts-response')).epochs,[]);
 assert.throws(()=>meFromWire({balance:{starter:10000}}));
 const kl=fixture('agent-key-list-response');assert.equal(keysFromWire(kl)[0].spent,kl.agents[0].spent_mc/1000);assert.equal(keysFromWire(kl)[0].cap,kl.agents[0].budget_mc/1000);
+assert.equal(keysFromWire(kl)[0].bought,kl.agents[0].key_credits_mc/1000);assert.equal(keysFromWire(kl)[0].boughtTotal,kl.agents[0].bought_total_mc/1000);
 const kc=fixture('agent-key-create-response');assert.equal(newKeyFromWire(kc).cap,null);assert.equal(newKeyFromWire(kc).token,kc.token);
 const kr=fixture('agent-requests-response');assert.equal(keyRequestsFromWire(kr)[0].cost,kr.requests[0].cost_mc/1000);assert.equal(keyRequestsFromWire(kr)[1].cost,null);
 assert.throws(()=>keysFromWire({agents:[{agent_id:'bad'}]}));

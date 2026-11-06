@@ -48,7 +48,8 @@ export type NodeLink = { node_id: string; pool_id: string; node_sig: string; ts:
 export type MirrorResult = { found: boolean; consensus_ts?: string; message?: string };
 
 /** An API key (gateway agent key): spends this account's credits, up to `cap` (null = whole balance). Credits, not mc. */
-export type ApiKey = { id: string; name: string; cap: number | null; spent: number; revoked: boolean; created_at: number; last_used_at: number | null };
+/** `bought` = credits bought for this key with testnet HBAR, not spent yet; only this key spends them, before the account's. */
+export type ApiKey = { id: string; name: string; cap: number | null; spent: number; revoked: boolean; created_at: number; last_used_at: number | null; bought: number; boughtTotal: number };
 /** Returned once, at creation: `Authorization: Bearer <token>`. */
 export type NewApiKey = ApiKey & { token: string };
 /** One request made with a key (newest first). `max_tokens` = the answer cap the gateway picked. */

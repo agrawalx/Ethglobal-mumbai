@@ -445,7 +445,7 @@ export const mockApi: PoolApi = {
   async createKey(token, name, cap) {
     await latency();
     const id = `agt_${hex(8, rand)}`;
-    const k: NewApiKey = { id, name, cap, spent: 0, revoked: false, created_at: Date.now(), last_used_at: null, token: `gpa_${id}_${hex(64, rand)}` };
+    const k: NewApiKey = { id, name, cap, spent: 0, revoked: false, created_at: Date.now(), last_used_at: null, bought: 0, boughtTotal: 0, token: `gpa_${id}_${hex(64, rand)}` };
     keysOf(token).push(k);
     return clone(k);
   },

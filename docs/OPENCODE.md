@@ -55,6 +55,30 @@ Any OpenAI client works the same way: use base URL `<gateway>/v1` and the key as
 | The pool's context is small (4096 on Macs), and OpenCode resends the whole session each turn. | The gateway fits prompt + answer into the pool's live context: the smallest `max_seq` its fresh nodes report (`router.contextLength`, cached 10 s). When any pool has not reported one, or Arkiv fails, it falls back to `context_length` in shared config (4096 now). Steps:<br>1. compact the tools;<br>2. cut big tool results to head + tail;<br>3. drop the oldest turns, keeping the system prompt and the last user turn with its tool chain.<br>The `x-gpupool-trimmed` header gives the number of messages cut. If the prompt still does not fit, the response is 400 `context_length_exceeded` with the numbers. | `gateway/src/context.ts` |
 | OpenCode asks for `max_tokens` 32000, so the hold would fail every time. | For credit requests the gateway picks the answer cap:<br>`min(model max, room left in the context, learned need, what the balance pays)`<br>• the learned need is the p90 of the user's (or key's) last 50 answers × 1.25, at least 256;<br>• an answer that was cut off doubles the next cap.<br>The `x-gpupool-max-tokens` header gives the cap. A 403 comes only when the balance cannot pay 64 tokens. x402 requests keep the per-tier limit (400 above 2048). | `gateway/src/budget.ts`, `billing.ts` |
 
+## Key credits and HBAR top-ups (Hedera testnet)
+
+- **See a key's credits:** `GET /v1/credits` with `Authorization: Bearer gpa_…` (key only; a World session gets 403). It returns:
+  - the key's own bought credits;
+  - the account credits it may use (the cap and what is left of it);
+  - `spendable_mc`;
+  - the top-up rate.
+
+  The Keys page shows "Bought left" per key.
+- **Buy credits for one key:** `POST /v1/credits/topup {hbar}` with the key, paid with x402 in **testnet HBAR only**. **1 HBAR = 10 credits** (`topup.credits_per_hbar` in shared config), from 1 to 1000 HBAR per top-up.
+  - The 402 asks for exactly `hbar × 1e8` tinybar.
+  - Each Hedera transaction is credited once (`key_topups.tx_id`).
+  - An HCS `credits_purchased` event records each top-up.
+  - The HBAR stays in the treasury and is not epoch payout income.
+- **CLI:** `cd agent-client && pnpm topup --hbar 5` (or `--check`).
+  - Put the payer's Hedera Portal testnet account (`AGENT_ACCOUNT_ID`, `AGENT_PRIVATE_KEY`, DER or hex) and `GPUPOOL_API_KEY` in `agent-client/.env`.
+  - The private key never leaves that machine. It is not in the browser and not on the gateway.
+- **Spending order:** a key spends its bought credits first, then the account's starter and then earned credits.
+  - The key's cap limits account credits only, never bought credits.
+  - One hold covers both parts. A failed request gives both back.
+  - `request_settled.key_mc` says how much came from the key.
+  - Node shares are the usual 90/5/5 of the whole cost.
+  - The account's `spent_total` counts account credits only.
+
 ## Errors OpenCode can see
 
 | Status | Code | Meaning |

@@ -26,8 +26,13 @@ const MODEL = config.models.find((m) => m.model_id === "Qwen/Qwen3-14B-FP8") ?? 
 const OUT_LIMIT = MODEL.x402_prices[MODEL.x402_prices.length - 1]!.max_tokens;
 const IN_WEIGHT = config.cost.input_token_weight;
 
-/** Gateway base for clients outside the browser (same origin when VITE_GATEWAY_URL is empty). */
-const apiBase = () => `${(env.gatewayUrl || location.origin).replace(/\/$/, "")}/v1`;
+/** Gateway origin for clients outside the browser (same origin when VITE_GATEWAY_URL is empty). */
+const gatewayOrigin = () => (env.gatewayUrl || location.origin).replace(/\/$/, "");
+const apiBase = () => `${gatewayOrigin()}/v1`;
+const TOPUP = config.topup;
+const TOPUP_CMD = `cd agent-client
+pnpm topup --check      # this key's credits
+pnpm topup --hbar 5     # pay 5 testnet HBAR → +${5 * TOPUP.credits_per_hbar} credits on this key`;
 
 function opencodeJson(contextLength: number) {
   return JSON.stringify(
@@ -75,6 +80,7 @@ function KeyRow({ k, token, onRevoked, onReceipt, now }: { k: ApiKey; token: str
         <td>{fmtAgo(k.created_at, now)}</td>
         <td>{k.last_used_at ? fmtAgo(k.last_used_at, now) : <span className="faint">never</span>}</td>
         <td className="num mono">{cr(k.spent)}</td>
+        <td className="num mono">{k.boughtTotal > 0 ? cr(k.bought) : <span className="faint">0</span>}</td>
         <td className="num mono">{k.cap === null ? <span className="faint">no cap</span> : cr(k.cap)}</td>
         <td className="num">
           <span className="key-actions">
@@ -93,14 +99,14 @@ function KeyRow({ k, token, onRevoked, onReceipt, now }: { k: ApiKey; token: str
       </tr>
       {err && (
         <tr>
-          <td colSpan={6}>
+          <td colSpan={7}>
             <ErrorBox error={err} />
           </td>
         </tr>
       )}
       {open && (
         <tr className="key-usage">
-          <td colSpan={6}>
+          <td colSpan={7}>
             {usage.loading && !usage.data ? (
               <Loading h={48} />
             ) : usage.error ? (
@@ -329,6 +335,27 @@ export default function Keys() {
         </section>
       </div>
 
+      <section className="panel tile section-gap" aria-labelledby="keys-topup-h">
+        <span className="mono-label">
+          <Icon name="key" size={12} /> Top up · Hedera testnet
+        </span>
+        <h2 id="keys-topup-h">Buy credits for one key with testnet HBAR.</h2>
+        <p className="muted">
+          1 HBAR = {TOPUP.credits_per_hbar} credits, {TOPUP.min_hbar}–{fmtNum(TOPUP.max_hbar, 0)} HBAR at a time. Bought credits belong to that key only. It spends them before your account credits, and its cap does not limit them. You pay with x402 from your own{" "}
+          <a href="https://portal.hedera.com" target="_blank" rel="noreferrer">Hedera Portal</a> testnet account. Your private key stays on your computer: the script signs there and the gateway only sees the signed transfer.
+        </p>
+        <ol className="key-steps muted">
+          <li>
+            In <code className="mono">agent-client/.env</code>, set <code className="mono">GATEWAY_URL={gatewayOrigin()}</code>, <code className="mono">GPUPOOL_API_KEY</code> (the key to top up), and your Portal account: <code className="mono">AGENT_ACCOUNT_ID=0.0.…</code>, <code className="mono">AGENT_PRIVATE_KEY</code> (the DER key).
+          </li>
+          <li>Run the top-up. It shows the key's credits before and after, and the HashScan link of the payment.</li>
+        </ol>
+        <CodeBox code={TOPUP_CMD} />
+        <p className="faint table-note">
+          See a key's credits from anywhere: <code className="mono">curl -H "Authorization: Bearer $GPUPOOL_API_KEY" {gatewayOrigin()}/v1/credits</code>
+        </p>
+      </section>
+
       <section className="panel section-gap section-bottom" aria-labelledby="keys-list-h">
         <div className="panel-head">
           <h2 id="keys-list-h" className="section-title">
@@ -352,6 +379,7 @@ export default function Keys() {
                   <th>Created</th>
                   <th>Last used</th>
                   <th className="num">Spent</th>
+                  <th className="num">Bought left</th>
                   <th className="num">Cap</th>
                   <th className="num">
                     <span className="sr-only">Actions</span>

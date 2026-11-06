@@ -418,6 +418,8 @@ The coordinator runs both roles: `pool/scheduler.env` (`ROLE=scheduler`, ports 5
 | `AGENT_ACCOUNT_ID` / `AGENT_PRIVATE_KEY` | Pays with x402 |
 | `AGENT_BUDGET_HBAR` | Spending cap (the agent stops before a payment would exceed it) |
 | `HEDERA_NETWORK` | `testnet` |
+| `GPUPOOL_API_KEY` | `pnpm topup`: the API key (`gpa_…`) to buy credits for (1 testnet HBAR = 10 credits); `AGENT_ACCOUNT_ID` / `AGENT_PRIVATE_KEY` = the payer's Hedera Portal testnet account |
+| `AGENT_KEY_TYPE` | `ecdsa` (default) or `ed25519`; only for a raw 64-hex `AGENT_PRIVATE_KEY` (a DER key carries its type) |
 
 ### gateway/.env.provider (CLI only; copy gateway/provider.env.example)
 | Key | Purpose |

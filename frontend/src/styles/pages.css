@@ -542,3 +542,9 @@
 .key-table {
   position: relative; /* keeps the visually hidden header label inside the scroll box */
 }
+
+/* Long env lines and URLs in the key steps wrap on phones. */
+.key-steps code,
+.table-note code {
+  overflow-wrap: anywhere;
+}
