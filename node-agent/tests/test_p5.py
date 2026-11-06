@@ -144,3 +144,12 @@ def test_env_value_and_restart_with_dht_prefix(tmp_path, monkeypatch):
     env.write_text(f"GATEWAY_URL=http://10.0.0.1:8080\nPOOL_ID=auto\nPOOL_DIR={tmp_path}\n")
     monkeypatch.delenv("IS_COORDINATOR", raising=False)
     assert restart_command(load(env), dht_prefix="gp-xyz")[-2:] == ["--dht-prefix", "gp-xyz"]
+
+
+def test_swap_watch_only_on_unified_memory():
+    w = system.SwapWatch(growth_mb=100, window_s=300)
+    # A CUDA (Linux) node never reports swap pressure, even when host swap grows.
+    assert system.mem_pressure(w, serving=True, system_name="Linux") == "ok"
+    # macOS keeps the swap watch.
+    w.sample(1000, True, now=0.0)
+    assert w.sample(1500, True, now=1.0) == "swap_growing"

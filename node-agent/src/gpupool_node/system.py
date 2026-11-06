@@ -186,6 +186,15 @@ print(json.dumps({"backend":backend,"memory_gb":round(memory,1),"elapsed_ms":ela
             "output_hash": output_hash, "result_hash": "0x" + result_hash}
 
 
+def mem_pressure(swap: "SwapWatch", serving: bool, system_name: str | None = None) -> str | None:
+    """P5.7 swap watch, for unified-memory (macOS / MLX) nodes only. On CUDA nodes the weights and KV
+    cache live in VRAM, so host swap (browser, gateway, other apps) does not slow inference and must
+    not take the pool out of routing: report "ok"."""
+    if (system_name or platform.system()) != "Darwin":
+        return "ok"
+    return swap.sample(swap_used_mb(), serving)
+
+
 class SwapWatch:
     """"swap_growing" when swap use rose by more than `growth_mb` within `window_s` while serving."""
 

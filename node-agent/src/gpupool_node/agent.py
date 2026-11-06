@@ -185,7 +185,7 @@ def run(cfg: Config, acct: LocalAccount) -> None:
             state["served_pending"] += sessions.take()
             lan_ip = system.current_lan_ip(cfg.gateway_url)
             serving = parallax.node_running()
-            extra = {"lan_ip": lan_ip, "mem_pressure": swap.sample(system.swap_used_mb(), serving), "usable_mem_gb": usable,
+            extra = {"lan_ip": lan_ip, "mem_pressure": system.mem_pressure(swap, serving), "usable_mem_gb": usable,
                      "served_sessions": state["served_pending"] if cfg.notify_port else None, "restart_ack": state["restart_ack"],
                      "rtt_ms": state["rtt"], "challenge_result": state["challenge_result"]}
             resp, a, running = send_heartbeat(cfg, acct, client, extra)
