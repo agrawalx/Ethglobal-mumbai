@@ -1,6 +1,7 @@
 import type { GpupoolConfig, LayerRange, ModelConfig, PoolStateResponse, Route } from "@gpupool/shared";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
+import { poolReliability } from "./reliability.ts";
 import { isRestarting } from "./pools.ts";
 
 /**
@@ -54,9 +55,9 @@ export function poolState(db: Db, cfg: Config, poolId: string, now = Date.now())
   const restarting = isRestarting(db, cfg, poolId, now);
   for (const m of net.models) {
     const map = poolLayerMap(db, net, poolId, m, now);
-    if (map) return { pool_id: poolId, models: [m.model_id], members, status: restarting ? "loading" : "ready", layer_map: map, restarting };
+    if (map) return { pool_id: poolId, models: [m.model_id], members, status: restarting ? "loading" : "ready", layer_map: map, restarting, reliability: poolReliability(db, cfg, poolId, now) };
   }
   // No valid map: list the config models the fresh nodes report (so the listing still says what it loads).
   const models = [...new Set(fresh.map((n) => configModelFor(net, n.hb_model)?.model_id).filter((x): x is string => !!x))];
-  return { pool_id: poolId, models, members, status: members.length > 0 ? "loading" : "offline", layer_map: null, restarting };
+  return { pool_id: poolId, models, members, status: members.length > 0 ? "loading" : "offline", layer_map: null, restarting, reliability: poolReliability(db, cfg, poolId, now) };
 }

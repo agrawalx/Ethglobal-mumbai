@@ -174,6 +174,29 @@ CREATE TABLE IF NOT EXISTS pools (                 -- post-MVP P5.5 clean restar
   model        TEXT,                                 -- §16.1 formation: model of an "auto" pool
   formed_at    INTEGER
 );
+-- SPEC §9.2 pool reliability: the pool is the reputation identity the router scores.
+CREATE TABLE IF NOT EXISTS pool_request_outcomes (   -- one row per request routed to the pool
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  pool_id  TEXT NOT NULL,
+  ok       INTEGER NOT NULL,                         -- 1 = served, 0 = failed (client aborts excluded)
+  ts       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS pool_request_outcomes_pool_ts ON pool_request_outcomes (pool_id, ts);
+CREATE TABLE IF NOT EXISTS pool_up_slots (           -- heartbeat-interval slots in which the pool was complete
+  pool_id  TEXT NOT NULL,
+  slot_ts  INTEGER NOT NULL,                         -- wall clock, floored to HEARTBEAT_SECONDS
+  PRIMARY KEY (pool_id, slot_ts)
+);
+CREATE TABLE IF NOT EXISTS pool_reliability (
+  pool_id          TEXT PRIMARY KEY,
+  first_seen       INTEGER NOT NULL,                 -- ms; uptime is counted from here (inside the window)
+  requests_routed  INTEGER NOT NULL DEFAULT 0,
+  requests_ok      INTEGER NOT NULL DEFAULT 0,
+  slots_expected   INTEGER NOT NULL DEFAULT 0,
+  slots_up         INTEGER NOT NULL DEFAULT 0,
+  score            REAL,                             -- null until refreshed; reads fall back to initial_score
+  updated_at       INTEGER
+);
 CREATE TABLE IF NOT EXISTS node_rtt (                -- §16.1 formation: measured delay a → b
   a    TEXT NOT NULL,
   b    TEXT NOT NULL,

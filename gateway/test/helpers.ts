@@ -36,7 +36,7 @@ export function testDirectory(cfg: Config, db: Db, poolId = "pool-router-test", 
     pools: async () => [],
     nodes: async () => [],
     models: async () => cfg.net.models.map((m) => ({ ...m, type: "gpupool.model" as const })),
-    readyPools: async (model) => [{ type: "gpupool.pool", pool_id: poolId, models: [model],
+    readyPools: async (model) => [{ type: "gpupool.pool", reliability: 0.8, pool_id: poolId, models: [model],
       members: (db.prepare("SELECT node_id FROM nodes WHERE pool_id = ?").all(poolId) as { node_id: string }[]).map((n) => n.node_id),
       status: "ready", coordinator_url_hash: keccak256(toBytes(cfg.env.POOL_COORDINATOR_URL)), layer_map: null }],
   };

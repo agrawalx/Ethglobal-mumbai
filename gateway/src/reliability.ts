@@ -56,3 +56,60 @@ export function countRouted(db: Db, cfg: Config, route: Route | null, ok: boolea
     }
   })();
 }
+
+// ---------- SPEC §9.2 pool reliability (the pool is the identity the router scores) ----------
+
+const poolSeen = (db: Db, poolId: string, now: number): void => {
+  db.prepare("INSERT OR IGNORE INTO pool_reliability (pool_id, first_seen) VALUES (?, ?)").run(poolId, now);
+};
+
+/** Rebuild one pool's score: 0.7 × success rate of requests routed to it + 0.3 × share of slots it was complete. */
+export function refreshPoolReliability(db: Db, cfg: Config, poolId: string, now = Date.now()): number {
+  const r = cfg.net.reliability;
+  const since = now - r.window_days * 86_400_000;
+  const interval = cfg.env.HEARTBEAT_SECONDS * 1000;
+  poolSeen(db, poolId, now);
+  const row = db.prepare("SELECT first_seen FROM pool_reliability WHERE pool_id = ?").get(poolId) as { first_seen: number };
+  const from = Math.max(since, row.first_seen);
+  // Completed slots up to now; the current slot counts only once it was observed complete.
+  const firstSlot = Math.ceil(from / interval) * interval;
+  const currentSlot = Math.floor(now / interval) * interval;
+  const up = (db.prepare("SELECT count(*) AS n, coalesce(max(slot_ts), -1) AS latest FROM pool_up_slots WHERE pool_id = ? AND slot_ts >= ? AND slot_ts <= ?")
+    .get(poolId, firstSlot, currentSlot) as { n: number; latest: number });
+  const expected = Math.max(0, (currentSlot - firstSlot) / interval) + (up.latest === currentSlot ? 1 : 0);
+  const req = db.prepare("SELECT count(*) AS routed, coalesce(sum(ok), 0) AS ok FROM pool_request_outcomes WHERE pool_id = ? AND ts > ? AND ts <= ?")
+    .get(poolId, since, now) as { routed: number; ok: number };
+  const success = req.routed ? req.ok / req.routed : r.initial_score;
+  const uptime = expected ? Math.min(1, up.n / expected) : r.initial_score;
+  const score = Math.round((r.success_weight * success + r.uptime_weight * uptime) * 1e12) / 1e12;
+  db.prepare(`UPDATE pool_reliability SET requests_routed = ?, requests_ok = ?, slots_expected = ?, slots_up = ?, score = ?, updated_at = ?
+    WHERE pool_id = ?`).run(req.routed, req.ok, expected, up.n, score, now, poolId);
+  return score;
+}
+
+/** Record whether a request routed to `poolId` was served. Client aborts must not be counted. */
+export function countPool(db: Db, cfg: Config, poolId: string, ok: boolean, now = Date.now()): void {
+  db.transaction(() => {
+    poolSeen(db, poolId, now);
+    db.prepare("INSERT INTO pool_request_outcomes (pool_id, ok, ts) VALUES (?, ?, ?)").run(poolId, ok ? 1 : 0, now);
+    db.prepare("DELETE FROM pool_request_outcomes WHERE pool_id = ? AND ts <= ?").run(poolId, now - cfg.net.reliability.window_days * 86_400_000);
+    refreshPoolReliability(db, cfg, poolId, now);
+  })();
+}
+
+/** Mark the current heartbeat slot as "pool complete" (every member fresh, layers cover the model once). */
+export function recordPoolUp(db: Db, cfg: Config, poolId: string, now = Date.now()): void {
+  const interval = cfg.env.HEARTBEAT_SECONDS * 1000;
+  db.transaction(() => {
+    poolSeen(db, poolId, now);
+    db.prepare("INSERT OR IGNORE INTO pool_up_slots (pool_id, slot_ts) VALUES (?, ?)").run(poolId, Math.floor(now / interval) * interval);
+    db.prepare("DELETE FROM pool_up_slots WHERE pool_id = ? AND slot_ts < ?").run(poolId, now - cfg.net.reliability.window_days * 86_400_000 - interval);
+  })();
+}
+
+/** The pool's current score (refreshed on read so missed slots count); a never-seen pool starts at initial_score. */
+export function poolReliability(db: Db, cfg: Config, poolId: string, now = Date.now()): number {
+  const seen = db.prepare("SELECT 1 FROM pool_reliability WHERE pool_id = ?").get(poolId);
+  if (!seen) return cfg.net.reliability.initial_score;
+  return refreshPoolReliability(db, cfg, poolId, now);
+}

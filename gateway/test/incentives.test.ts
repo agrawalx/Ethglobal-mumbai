@@ -15,6 +15,7 @@ import {
   payAvailability, recordPoolWait, reserveMc, runPenalties, unlockDue, upgradeCredential,
 } from "../src/incentives.ts";
 import type { Directory } from "../src/router.ts";
+import { countPool } from "../src/reliability.ts";
 import { balance, signer, testAccount, TEST_JWT_SECRET } from "./helpers.ts";
 
 /** SPEC §16.3 incentives and reputation (src/incentives.ts, SPEC §8.8). */
@@ -279,7 +280,7 @@ async function apiSetup(env: Record<string, string> = {}) {
   const url = `http://127.0.0.1:${(pool.address() as AddressInfo).port}`;
   const cfg: Config = loadConfig({ POOL_COORDINATOR_URL: url, DATABASE_PATH: ":memory:", JWT_SECRET: TEST_JWT_SECRET, ...env });
   const db = openDb(":memory:");
-  const listing = (id: string) => ({ type: "gpupool.pool" as const, pool_id: id, models: [MODEL], status: "ready" as const, coordinator_url_hash: urlHash(url), layer_map: null,
+  const listing = (id: string) => ({ type: "gpupool.pool" as const, reliability: 0.8, pool_id: id, models: [MODEL], status: "ready" as const, coordinator_url_hash: urlHash(url), layer_map: null,
     members: (db.prepare("SELECT node_id FROM nodes WHERE pool_id = ?").all(id) as { node_id: string }[]).map((n) => n.node_id) });
   const directory: Directory = { models: async () => [], pools: async () => [listing("p1"), listing("p2")], nodes: async () => [], readyPools: async () => [listing("p1"), listing("p2")] };
   const app = createApp({ cfg, db, signer, directory, onComplete: () => {} });
@@ -329,7 +330,8 @@ test("routing preferences: pin a pool, minimum reliability; private pools; banne
   assert.equal((await s.chat(s.human.auth, { "x-gpupool-pool": "p2" })).status, 503, "p2 is private");
   assert.equal((await s.chat(s.provider.auth, { "x-gpupool-pool": "p2" })).status, 200, "the pool's own node owner may use it");
   assert.equal((await s.chat(s.human.auth, { "x-gpupool-pool": "bad id!" })).status, 400);
-  s.db.prepare("UPDATE node_reliability SET score = 0.6").run();
+  // SPEC §9.2: the POOL's record decides (6 served, 4 failed → ≈ 0.66), not a node's score.
+  for (const pool of ["p1", "p2"]) for (let i = 0; i < 10; i++) countPool(s.db, s.cfg, pool, i < 6);
   assert.equal((await s.chat(s.human.auth, { "x-gpupool-min-reliability": "0.9" })).status, 503, "no pool reaches 0.9");
   assert.equal((await s.chat(s.human.auth, { "x-gpupool-min-reliability": "0.5", "x-gpupool-pool": "p1" })).status, 200);
   assert.equal((await s.chat(s.human.auth, { "x-gpupool-min-reliability": "2" })).status, 400);

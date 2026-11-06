@@ -4,7 +4,8 @@ import { HeartbeatResponse, NodeHeartbeat, NodeRegisterRequest, NODE_SIGNATURE_H
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { errorResponse } from "./errors.ts";
-import { recordHeartbeat } from "./reliability.ts";
+import { recordHeartbeat, recordPoolUp } from "./reliability.ts";
+import { poolState } from "./route.ts";
 import { recordEvent, type Signer } from "./events.ts";
 import { orderRestart, restartId, writeAllowedPeers } from "./pools.ts";
 import { isBanned, nodeCap } from "./incentives.ts";
@@ -116,6 +117,8 @@ export function heartbeatHandler(db: Db, cfg: Config, signer: Signer, isPoolIdle
       const rtt = db.prepare("INSERT INTO node_rtt (a, b, ms, ts) VALUES (?, ?, ?, ?) ON CONFLICT(a, b) DO UPDATE SET ms = excluded.ms, ts = excluded.ts");
       for (const [peer, ms] of Object.entries(hb.rtt_ms ?? {})) if (peer !== hb.node_id) rtt.run(hb.node_id, peer, ms, now);
       recordHeartbeat(db, cfg, hb.node_id, hb.online, now);
+      // SPEC §9.2 pool uptime: this slot counts for the pool if every member is fresh and the layers cover the model once.
+      if (node.pool_id !== "auto" && poolState(db, cfg, node.pool_id, now).status === "ready") recordPoolUp(db, cfg, node.pool_id, now);
       // P5.9: what the node says it served (Parallax --notify-url), kept for the cross-check window.
       if (hb.served_sessions) {
         db.prepare("INSERT INTO node_served (node_id, peer_id, sessions, ts) VALUES (?, ?, ?, ?)").run(hb.node_id, hb.peer_id, hb.served_sessions, now);

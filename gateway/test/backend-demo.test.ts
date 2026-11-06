@@ -94,7 +94,7 @@ for (const run of [1,2]) test(`MVP backend demo local run ${run}: identity → t
     }
     const state=PoolStateResponse.parse(await (await app.request(`/pools/${POOL}`)).json());
     assert.equal(state.status,'ready'); assert.equal(state.members.length,3);
-    pools.push({expires:directoryNow+120_000,value:{type:'gpupool.pool',pool_id:POOL,models:[MODEL],members:state.members,status:'ready',layer_map:state.layer_map,coordinator_url_hash:keccak256(toBytes(cfg.env.POOL_COORDINATOR_URL))}});
+    pools.push({expires:directoryNow+120_000,value:{type:'gpupool.pool',pool_id:POOL,models:[MODEL],members:state.members,status:'ready',layer_map:state.layer_map,reliability:state.reliability,coordinator_url_hash:keccak256(toBytes(cfg.env.POOL_COORDINATOR_URL))}});
     assert.equal(ModelsResponse.parse(await (await app.request('/v1/models')).json()).data[0]!.source,'arkiv');
     assert.equal(NetworkResponse.parse(await (await app.request('/network')).json()).nodes.length,3);
     const receipts: Receipt[]=[];

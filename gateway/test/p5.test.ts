@@ -54,7 +54,7 @@ async function setup(withHooks = false) {
   const cfg = loadConfig(env);
   const db = openDb(":memory:");
   const urlHash = keccak256(toBytes(cfg.env.POOL_COORDINATOR_URL));
-  const listing = () => ({ type: "gpupool.pool" as const, pool_id: POOL, models: [MODEL], status: "ready" as const, coordinator_url_hash: urlHash, layer_map: null,
+  const listing = () => ({ type: "gpupool.pool" as const, reliability: 0.8, pool_id: POOL, models: [MODEL], status: "ready" as const, coordinator_url_hash: urlHash, layer_map: null,
     members: (db.prepare("SELECT node_id FROM nodes WHERE pool_id = ?").all(POOL) as { node_id: string }[]).map((n) => n.node_id) });
   const directory: Directory = {
     models: async () => cfg.net.models.map((m) => ({ ...m, type: "gpupool.model" as const })),

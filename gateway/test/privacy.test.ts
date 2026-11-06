@@ -45,7 +45,7 @@ async function setup(owners: ("me" | "stranger")[], env: Record<string, string> 
   const url = `http://127.0.0.1:${(pool.address() as AddressInfo).port}`;
   const cfg = loadConfig({ POOL_COORDINATOR_URL: url, DATABASE_PATH: ":memory:", JWT_SECRET: TEST_JWT_SECRET, TRANSCRIPT_KEY: KEY, ...env });
   const db = openDb(":memory:");
-  const listing = () => ({ type: "gpupool.pool" as const, pool_id: "pool-x", models: [MODEL], status: "ready" as const, coordinator_url_hash: urlHash(url), layer_map: null,
+  const listing = () => ({ type: "gpupool.pool" as const, reliability: 0.8, pool_id: "pool-x", models: [MODEL], status: "ready" as const, coordinator_url_hash: urlHash(url), layer_map: null,
     members: (db.prepare("SELECT node_id FROM nodes").all() as { node_id: string }[]).map((n) => n.node_id) });
   const directory: Directory = { models: async () => [], pools: async () => [listing()], nodes: async () => [], readyPools: async () => [listing()] };
   const app = createApp({ cfg, db, signer, directory, onComplete: () => {} });
