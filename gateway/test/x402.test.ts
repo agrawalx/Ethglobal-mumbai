@@ -156,3 +156,32 @@ test("x402 + failover: paid once, first attempt fails, retry answers; one settle
   assert.deepEqual(ev.type === "x402_payment" && ev.route, receipt.route);
   db.close();
 });
+
+test("API key top-up through the real x402 server: 402 asks exactly hbar × 1e8 tinybar in HBAR; paid → 10 credits per HBAR on that key", async () => {
+  const { app, db, cfg } = setup();
+  const { testAccount } = await import("./helpers.ts");
+  const { createAgentKey } = await import("../src/incentives.ts");
+  const user = await testAccount(db, cfg);
+  const key = createAgentKey(db, signer, user.accountId, "opencode", null);
+  const topup = (headers: Record<string, string> = {}) => app.request("/v1/credits/topup", {
+    method: "POST", headers: { "content-type": "application/json", accept: "application/json", authorization: `Bearer ${key.token}`, ...headers }, body: JSON.stringify({ hbar: 5 }) });
+  const unpaid = await topup();
+  assert.equal(unpaid.status, 402);
+  const reqs = requirementsOf(unpaid);
+  assert.equal(reqs.accepts.length, 1, "HBAR only");
+  assert.deepEqual({ asset: reqs.accepts[0].asset, amount: reqs.accepts[0].amount, payTo: reqs.accepts[0].payTo }, { asset: "0.0.0", amount: "500000000", payTo: "0.0.11331600" });
+  assert.match(reqs.resource.url, /\/v1\/credits\/topup$/);
+  const payload = { x402Version: 2, resource: reqs.resource, accepted: reqs.accepts[0], payload: { transaction: "AAAA" } };
+  const paid = await topup({ "PAYMENT-SIGNATURE": Buffer.from(JSON.stringify(payload)).toString("base64") });
+  assert.equal(paid.status, 200, await paid.clone().text());
+  assert.ok(paid.headers.get("PAYMENT-RESPONSE"));
+  const body = await paid.json() as { added_mc: number; payer: string; tx_id: string; credits: { key_credits_mc: number } };
+  assert.deepEqual({ added: body.added_mc, payer: body.payer, tx: body.tx_id, credits: body.credits.key_credits_mc }, { added: 50_000, payer: PAYER, tx: TX, credits: 50_000 });
+  // The facilitator answers with the same tx again: never credited twice.
+  const replay = await topup({ "PAYMENT-SIGNATURE": Buffer.from(JSON.stringify(payload)).toString("base64") });
+  assert.equal(replay.status, 400);
+  assert.equal((db.prepare("SELECT key_credits_mc FROM agent_keys WHERE id = ?").get(key.agent_id) as { key_credits_mc: number }).key_credits_mc, 50_000);
+  // Chat x402 pricing is unchanged by the second route.
+  assert.equal(requirementsOf(await send(app, { model: MODEL, messages: [{ role: "user", content: "hi" }], max_tokens: 100 })).accepts[0].amount, "2000000");
+  db.close();
+});

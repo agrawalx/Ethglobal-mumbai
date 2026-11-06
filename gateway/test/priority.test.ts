@@ -42,7 +42,7 @@ test("gateway queues by real account ratio, x402=1; cancelled/queued requests do
     const app = createApp({ cfg, db, signer, directory, onComplete: () => {}, x402: { charge: async () => {
       charges++;
       return { payer: "0.0.1234", tx: "0.0.1234@1793929496.997341480", amountTinybar: "2000000", asset: "hbar", amountRaw: "2000000", headers: {} };
-    } } });
+    }, topup: async () => { throw new Error("unused"); } } });
     const send = (label: string, auth: Record<string, string>, signal?: AbortSignal) => app.request("/v1/chat/completions", {
       method: "POST", headers: { "content-type": "application/json", ...auth }, signal,
       body: JSON.stringify({ model: MODEL, messages: [{ role: "user", content: label }] }),

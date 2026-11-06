@@ -19,8 +19,8 @@ import { createPoolQueue, type PoolQueue } from "./queue.ts";
 import { arkivDirectory, createRouter, type Directory, type Router } from "./router.ts";
 import { createStallTracker } from "./stall.ts";
 import { HASH_SALT_HEADER } from "./privacy.ts";
-import { AgentKeyCreateRequest, AgentKeyCreateResponse, AgentKeyListResponse, AgentRequestsResponse, CollusionFlagsResponse } from "@gpupool/shared";
-import { agentFromToken, agentRequests, collusionFlags, createAgentKey, isBanned, listAgentKeys, revokeAgentKey } from "./incentives.ts";
+import { AgentKeyCreateRequest, AgentKeyCreateResponse, AgentKeyListResponse, AgentRequestsResponse, CollusionFlagsResponse, CreditTopupRequest, CreditTopupResponse, KeyCreditsResponse } from "@gpupool/shared";
+import { agentFromToken, agentRequests, collusionFlags, createAgentKey, creditTopup, isBanned, keyCredits, listAgentKeys, revokeAgentKey } from "./incentives.ts";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { PoolPlanResponse } from "@gpupool/shared";
 import { poolPlan } from "./formation.ts";
@@ -92,6 +92,33 @@ export function createApp({ cfg, db, signer, x402 = null, worldFetch, directory,
     const acc = c.get("accountId")!;
     if (isBanned(db, acc)) return errorResponse(c, 403, "unauthorized", "this account is banned");
     return c.json(AgentKeyCreateResponse.parse(createAgentKey(db, signer, acc, body.data.name, body.data.budget_mc ?? null)));
+  });
+  // API key credits: the key's own bought credits plus what it may spend from the account.
+  // Key tokens only (Bearer gpa_…); a World session gets 403 here.
+  const keyOnly = session(secret, true, (t) => agentFromToken(db, t));
+  app.get("/v1/credits", keyOnly, (c) => {
+    const agentId = c.get("agentId");
+    if (!agentId) return errorResponse(c, 403, "unauthorized", "use an API key: Authorization: Bearer gpa_…");
+    return c.json(KeyCreditsResponse.parse(keyCredits(db, cfg.net, agentId)));
+  });
+  // Top-up: x402 testnet HBAR → credits only this key can spend (1 HBAR = topup.credits_per_hbar).
+  app.post("/v1/credits/topup", keyOnly, async (c) => {
+    const agentId = c.get("agentId");
+    if (!agentId) return errorResponse(c, 403, "unauthorized", "use an API key: Authorization: Bearer gpa_…");
+    if (isBanned(db, c.get("accountId")!)) return errorResponse(c, 403, "unauthorized", "this account is banned");
+    const body = CreditTopupRequest.safeParse(await c.req.json().catch(() => undefined));
+    if (!body.success) return errorResponse(c, 400, "bad_request", body.error.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`).join("; "));
+    const { min_hbar, max_hbar } = cfg.net.topup;
+    if (body.data.hbar < min_hbar || body.data.hbar > max_hbar) return errorResponse(c, 400, "bad_request", `hbar must be from ${min_hbar} to ${max_hbar}`);
+    if (!x402) return errorResponse(c, 402, "payment_required", "x402 is not configured on this gateway");
+    const tinybar = BigInt(Math.round(body.data.hbar * 1e8)).toString();
+    const paid = await x402.topup(c, tinybar);
+    if (paid instanceof Response) return paid;
+    const credited = creditTopup(db, cfg.net, signer, { agentId, payer: paid.payer, tx: paid.tx, tinybar });
+    console.log(JSON.stringify({ msg: "key_topup", agentId, payer: paid.payer, tx: paid.tx, tinybar, added_mc: credited?.added ?? 0 }));
+    if (!credited) return errorResponse(c, 400, "bad_request", `payment ${paid.tx} was already credited`);
+    for (const [k, v] of Object.entries(paid.headers)) c.header(k, v);
+    return c.json(CreditTopupResponse.parse({ agent_id: agentId, payer: paid.payer, tx_id: paid.tx, amount_tinybar: tinybar, added_mc: credited.added, credits: keyCredits(db, cfg.net, agentId) }));
   });
   app.get("/agents", session(secret, true), (c) => c.json(AgentKeyListResponse.parse({ agents: listAgentKeys(db, c.get("accountId")!) })));
   app.get("/agents/:id/requests", session(secret, true), (c) => {

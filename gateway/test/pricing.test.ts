@@ -191,7 +191,7 @@ test("x402 keeps its fixed HBAR tiers: no floating price header, no multiplier o
     const router = createRouter(cfg, db, testDirectory(cfg, db));
     router.pricing.quote = (m) => ({ credits_per_1k_in: m.model_factor * 400, credits_per_1k_out: m.model_factor * 2000, multiplier: 2, quoted_at: 1 });
     globalThis.fetch = fakeUpstream({ prompt_tokens: 4, completion_tokens: 2 }).fetch;
-    const x402 = { charge: async () => ({ payer: "0.0.9", tx: "0.0.9@1.1", amountTinybar: "2000000", asset: "hbar" as const, amountRaw: "2000000", headers: {} }) };
+    const x402 = { charge: async () => ({ payer: "0.0.9", tx: "0.0.9@1.1", amountTinybar: "2000000", asset: "hbar" as const, amountRaw: "2000000", headers: {} }), topup: async () => { throw new Error("unused"); } };
     const app = createApp({ cfg, db, signer, router, x402, onComplete: () => {} });
     const res = await app.request("/v1/chat/completions", chat({}, "hello"));
     assert.equal(res.status, 200);

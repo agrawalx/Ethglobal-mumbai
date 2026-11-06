@@ -6,7 +6,7 @@ import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { errorResponse } from "./errors.ts";
 import { recordEvent, type Signer } from "./events.ts";
-import { availableMc, estimateInputTokens, holdMc, releaseHold, settle, tryHold } from "./ledger.ts";
+import { availableMc, estimateInputTokens, holdMc, keyAvailableMc, releaseHold, releaseKeyHold, settle, tryHold, tryHoldForKey } from "./ledger.ts";
 import { contributionRatio } from "./accounts.ts";
 import { countRouted } from "./reliability.ts";
 import { agentBudgetLeft, chargeAgent, recordPoolWait } from "./incentives.ts";
@@ -234,7 +234,10 @@ export function makePrepare(d: BillingDeps): Prepare {
       if (accountId) {
         // Answer cap for this user (budget.ts): never more than the balance (and key budget) can pay.
         const inTokens = estimateInputTokens(req.messages, req.tools);
-        const spendable = Math.min(availableMc(db, accountId, now), agentId ? agentBudgetLeft(db, agentId) : Infinity);
+        // A key spends its own bought credits first, then the account's credits within its cap.
+        const keyMc = agentId ? keyAvailableMc(db, agentId) : 0;
+        const fromAccount = Math.max(0, Math.min(availableMc(db, accountId, now), agentId ? agentBudgetLeft(db, agentId) : Infinity));
+        const spendable = keyMc + fromAccount;
         const asked = req.max_tokens ?? req.max_completion_tokens ?? null;
         const pick = pickMaxTokens({ cfg: cfg.net, model, ceiling: maxTokens, asked, learned: learnedNeed(db, accountId, agentId), availableMc: spendable, inTokens, priceMultiplier: price.multiplier });
         if (pick.maxTokens === null) {
@@ -242,16 +245,22 @@ export function makePrepare(d: BillingDeps): Prepare {
         }
         maxTokens = pick.maxTokens;
         const hold = holdMc(cfg.net, model, maxTokens, inTokens, price.multiplier);
-        if (agentId && hold > agentBudgetLeft(db, agentId)) {
-          return errorResponse(c, 403, "insufficient_credits", `agent budget left ${agentBudgetLeft(db, agentId)} mc; this request needs a hold of ${hold} mc`);
+        if (agentId && hold - keyMc > agentBudgetLeft(db, agentId)) {
+          return errorResponse(c, 403, "insufficient_credits", `key credits ${keyMc} mc + cap left ${agentBudgetLeft(db, agentId)} mc; this request needs a hold of ${hold} mc`);
         }
-        if (!tryHold(db, accountId, hold, now)) {
+        let keyHeld = 0;
+        if (agentId) {
+          const held = tryHoldForKey(db, accountId, agentId, hold, now);
+          if (held === null) return errorResponse(c, 403, "insufficient_credits", `this request needs a hold of ${hold} mc; key credits ${keyAvailableMc(db, agentId)} mc + account ${availableMc(db, accountId, now)} mc`);
+          keyHeld = held;
+        } else if (!tryHold(db, accountId, hold, now)) {
           return errorResponse(c, 403, "insufficient_credits", `this request needs a hold of ${hold} mc; available ${availableMc(db, accountId, now)} mc`);
         }
+        const release = () => (agentId ? releaseKeyHold(db, accountId, agentId, hold, keyHeld) : releaseHold(db, accountId, hold));
         try {
           insertRequest(db, cfg, { reqId, accountId, model: model.model_id, payType: "credits", route: cur.route, promptHash: pHash, prompt, seed: req.seed!, settings: samplingSettings, salt, privacy: privacy ?? null, maxTokens, priceMultiplier: price.multiplier }, now);
         } catch (e) {
-          releaseHold(db, accountId, hold);
+          release();
           throw e;
         }
         return {
@@ -268,21 +277,21 @@ export function makePrepare(d: BillingDeps): Prepare {
                 // Commit billing, the transcript and its reliability outcome together. A later
                 // database failure must not leave a charged request marked as failed.
                 db.transaction(() => {
-                  const settled = settle(db, cfg.net, signer, { reqId, accountId, model, hold, inTokens: comp.usage!.prompt_tokens, outTokens: comp.usage!.completion_tokens, route, promptHash: pHash, respHash: respHashOf(comp.text), priceMultiplier: price.multiplier });
+                  const settled = settle(db, cfg.net, signer, { reqId, accountId, model, hold, inTokens: comp.usage!.prompt_tokens, outTokens: comp.usage!.completion_tokens, route, promptHash: pHash, respHash: respHashOf(comp.text), priceMultiplier: price.multiplier, ...(agentId ? { key: { agentId, held: keyHeld } } : {}) });
                   if (agentId) chargeAgent(db, agentId, reqId, settled.cost);
                   db.prepare("UPDATE transcripts SET response = ? WHERE req_id = ?").run(seal(cfg, comp.text), reqId);
                   countRouted(db, cfg, route, true);
                 })();
               } else {
                 db.transaction(() => {
-                  releaseHold(db, accountId, hold);
+                  release();
                   markFailed(db, cfg, reqId, blameRoute(route, comp.ok ? [] : lateNodes(db, cfg, route)), comp, failureCounted);
                 })();
               }
             } catch (e) {
               // The settle transaction rolled back: give the hold back so credits are not stuck.
               console.error(`billing ${reqId}: settle failed, hold released, request marked failed: ${(e as Error).message}`);
-              releaseHold(db, accountId, hold);
+              release();
               db.prepare("UPDATE requests SET status = 'failed' WHERE req_id = ?").run(reqId);
             }
             d.observe?.(comp);

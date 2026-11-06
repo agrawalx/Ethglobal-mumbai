@@ -117,7 +117,7 @@ test("no pools / Arkiv outage → 503 + Retry-After before a credit hold, paymen
     let charges = 0;
     for (const unavailable of [async () => [], async () => { throw new Error("RPC unavailable"); }]) {
       const app = createApp({ cfg, db, signer, directory: { ...fake, readyPools: unavailable },
-        x402: { charge: async () => { charges++; throw new Error("must not charge"); } } });
+        x402: { charge: async () => { charges++; throw new Error("must not charge"); }, topup: async () => { throw new Error("unused"); } } });
       for (const auth of [account.auth, {}]) {
         const response = await app.request("/v1/chat/completions", { method: "POST", headers: { "content-type": "application/json", ...auth },
           body: JSON.stringify({ model: MODEL, messages: [{ role: "user", content: "hello" }] }) });
