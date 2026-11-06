@@ -11,6 +11,9 @@ export const hederaTestnet = {
 
 /* WalletConnect is added only when a project id is configured (none yet), so injected wallets only. */
 export const wagmiConfig = createConfig({
+  // Defer reconnection/storage hydration to Wagmi's mount effect instead of mutating
+  // the wallet store during Hydrate's render (React 19 / StrictMode console mounts).
+  ssr: true,
   chains: [hederaTestnet],
   connectors: [injected()],
   transports: { [hederaTestnet.id]: http(env.hederaRpc) },

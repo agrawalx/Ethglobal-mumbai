@@ -39,6 +39,11 @@ export const ArkivPool = z.object({
   coordinator_url_hash: Hex32,
   /** Null while the pool has no valid layer map (status is then not "ready"). */
   layer_map: Route.nullable(),
+  /**
+   * Pool reliability (SPEC §9.2): 0.7 × pool success rate + 0.3 × pool uptime, computed by the
+   * gateway for the pool as one identity. Published for consumers; the router uses the gateway's own value.
+   */
+  reliability: z.number().min(0).max(1),
   context_length: z.number().int().positive().optional(),
 });
 export type ArkivPool = z.infer<typeof ArkivPool>;

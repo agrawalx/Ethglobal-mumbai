@@ -76,6 +76,8 @@ def pool_entity(cfg: Config, client: httpx.Client, url_hash: str | None = None) 
     return {"type": "gpupool.pool", "pool_id": cfg.pool_id, "models": s["models"], "members": s["members"], "status": s["status"],
             # §16.1 many pools: the gateway knows each pool's private coordinator URL and sends its hash.
             "coordinator_url_hash": url_hash or "0x" + keccak(text=cfg.coordinator_url).hex().removeprefix("0x"), "layer_map": s["layer_map"],
+            # SPEC §9.2: the pool's own reliability, computed by the gateway (the router uses the gateway's value).
+            "reliability": s["reliability"],
             **({"context_length": s["context_length"]} if s.get("context_length") else {})}
 
 

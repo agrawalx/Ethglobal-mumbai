@@ -7,9 +7,10 @@ import Database from "better-sqlite3";
  * tinybar decimal strings, times are Unix ms. No migrations (dev phase): when SCHEMA_VERSION
  * changes, delete the database file and restart.
  */
-export const SCHEMA_VERSION = 16;
+export const SCHEMA_VERSION = 17;
 
 export const TABLES = [
+  "provider_pools", "provider_members", "provider_enrollments",
   "accounts",
   "balances",
   "nodes",
@@ -39,6 +40,25 @@ export const TABLES = [
 ] as const;
 
 const SCHEMA = `
+CREATE TABLE IF NOT EXISTS provider_pools (
+  pool_id TEXT PRIMARY KEY, owner_account TEXT NOT NULL, name TEXT NOT NULL, model TEXT NOT NULL,
+  expected_members INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'preparing', generation INTEGER NOT NULL DEFAULT 0,
+  dht_prefix TEXT NOT NULL, lan_secret TEXT NOT NULL, snapshots TEXT, scheduler_addr TEXT, start_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS provider_members (
+  id TEXT PRIMARY KEY, pool_id TEXT NOT NULL REFERENCES provider_pools(pool_id), account_id TEXT NOT NULL,
+  role TEXT NOT NULL, approved INTEGER NOT NULL DEFAULT 0, revoked INTEGER NOT NULL DEFAULT 0,
+  node_id TEXT UNIQUE, payout_address TEXT NOT NULL, token_hash TEXT UNIQUE, token_expires_at INTEGER,
+  stage TEXT NOT NULL DEFAULT 'waiting', message TEXT NOT NULL DEFAULT '', ip TEXT, gpu TEXT, mem_gb REAL,
+  bytes_done INTEGER NOT NULL DEFAULT 0, bytes_total INTEGER NOT NULL DEFAULT 0, last_seen INTEGER,
+  funding_raw TEXT, funding_hash TEXT, funded_at INTEGER,
+  UNIQUE(pool_id, account_id)
+);
+CREATE TABLE IF NOT EXISTS provider_enrollments (
+  code_hash TEXT PRIMARY KEY, member_id TEXT NOT NULL REFERENCES provider_members(id), expires_at INTEGER NOT NULL,
+  consumed_at INTEGER
+);
 CREATE TABLE IF NOT EXISTS accounts (
   id               TEXT PRIMARY KEY,                 -- acc_…
   world_nullifier  TEXT NOT NULL UNIQUE,             -- never leaves the gateway
@@ -177,6 +197,29 @@ CREATE TABLE IF NOT EXISTS pools (                 -- post-MVP P5.5 clean restar
   writer_node  TEXT,                                 -- §16.1 election: node that writes the gpupool.pool listing
   model        TEXT,                                 -- §16.1 formation: model of an "auto" pool
   formed_at    INTEGER
+);
+-- SPEC §9.2 pool reliability: the pool is the reputation identity the router scores.
+CREATE TABLE IF NOT EXISTS pool_request_outcomes (   -- one row per request routed to the pool
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  pool_id  TEXT NOT NULL,
+  ok       INTEGER NOT NULL,                         -- 1 = served, 0 = failed (client aborts excluded)
+  ts       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS pool_request_outcomes_pool_ts ON pool_request_outcomes (pool_id, ts);
+CREATE TABLE IF NOT EXISTS pool_up_slots (           -- heartbeat-interval slots in which the pool was complete
+  pool_id  TEXT NOT NULL,
+  slot_ts  INTEGER NOT NULL,                         -- wall clock, floored to HEARTBEAT_SECONDS
+  PRIMARY KEY (pool_id, slot_ts)
+);
+CREATE TABLE IF NOT EXISTS pool_reliability (
+  pool_id          TEXT PRIMARY KEY,
+  first_seen       INTEGER NOT NULL,                 -- ms; uptime is counted from here (inside the window)
+  requests_routed  INTEGER NOT NULL DEFAULT 0,
+  requests_ok      INTEGER NOT NULL DEFAULT 0,
+  slots_expected   INTEGER NOT NULL DEFAULT 0,
+  slots_up         INTEGER NOT NULL DEFAULT 0,
+  score            REAL,                             -- null until refreshed; reads fall back to initial_score
+  updated_at       INTEGER
 );
 CREATE TABLE IF NOT EXISTS node_rtt (                -- §16.1 formation: measured delay a → b
   a    TEXT NOT NULL,

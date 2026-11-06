@@ -8,7 +8,7 @@ import { errorResponse } from "./errors.ts";
 import { recordEvent, type Signer } from "./events.ts";
 import { availableMc, estimateInputTokens, holdMc, keyAvailableMc, releaseHold, releaseKeyHold, settle, tryHold, tryHoldForKey } from "./ledger.ts";
 import { contributionRatio } from "./accounts.ts";
-import { countRouted } from "./reliability.ts";
+import { countPool, countRouted } from "./reliability.ts";
 import { agentBudgetLeft, chargeAgent, recordPoolWait } from "./incentives.ts";
 import { exactRoute } from "./pools.ts";
 import { learnedNeed, MIN_ANSWER, pickMaxTokens } from "./budget.ts";
@@ -80,10 +80,13 @@ function lateNodes(db: Db, cfg: Config, route: Route | null, now = Date.now()): 
  * A failed request costs nothing; the nodes on the route get a reliability penalty unless the client
  * aborted. `counted` = the failover hook already recorded this route's failure.
  */
-function markFailed(db: Db, cfg: Config, reqId: string, route: Route | null, comp: Completion, counted = false) {
+function markFailed(db: Db, cfg: Config, reqId: string, poolId: string, route: Route | null, comp: Completion, counted = false) {
   db.transaction(() => {
     db.prepare("UPDATE requests SET status = 'failed' WHERE req_id = ?").run(reqId);
-    if (comp.reason !== "client_aborted" && !counted) countRouted(db, cfg, route, false);
+    if (comp.reason !== "client_aborted" && !counted) {
+      countRouted(db, cfg, route, false);
+      countPool(db, cfg, poolId, false); // SPEC §9.2: the pool failed, whatever its route
+    }
   })();
 }
 
@@ -173,6 +176,7 @@ export function makePrepare(d: BillingDeps): Prepare {
       const failover: Failover = async ({ reason, streamedTokens }) => {
         attempts.push({ pool_id: cur.poolId, route: cur.route, outcome: reason, streamed_tokens: streamedTokens, late_nodes: lateNodes(db, cfg, cur.route) });
         countRouted(db, cfg, blameRoute(cur.route, lateNodes(db, cfg, cur.route)), false);
+        countPool(db, cfg, cur.poolId, false);
         failureCounted = true;
         let next: SelectedPool | null = null;
         try {
@@ -281,11 +285,12 @@ export function makePrepare(d: BillingDeps): Prepare {
                   if (agentId) chargeAgent(db, agentId, reqId, settled.cost);
                   db.prepare("UPDATE transcripts SET response = ? WHERE req_id = ?").run(seal(cfg, comp.text), reqId);
                   countRouted(db, cfg, route, true);
+                  countPool(db, cfg, cur.poolId, true);
                 })();
               } else {
                 db.transaction(() => {
                   release();
-                  markFailed(db, cfg, reqId, blameRoute(route, comp.ok ? [] : lateNodes(db, cfg, route)), comp, failureCounted);
+                  markFailed(db, cfg, reqId, cur.poolId, blameRoute(route, comp.ok ? [] : lateNodes(db, cfg, route)), comp, failureCounted);
                 })();
               }
             } catch (e) {
@@ -319,6 +324,7 @@ export function makePrepare(d: BillingDeps): Prepare {
                 db.prepare("UPDATE requests SET status = 'ok', in_tokens = ?, out_tokens = ?, resp_hash = ? WHERE req_id = ?").run(comp.usage!.prompt_tokens, comp.usage!.completion_tokens, respHash, reqId);
                 db.prepare("UPDATE transcripts SET response = ? WHERE req_id = ?").run(seal(cfg, comp.text), reqId);
                 countRouted(db, cfg, route, true);
+                countPool(db, cfg, cur.poolId, true);
                 recordEvent(db, signer, {
                   type: "x402_payment",
                   req_id: reqId as `req_${string}`,
@@ -339,7 +345,7 @@ export function makePrepare(d: BillingDeps): Prepare {
             } else {
               // Paid but not served: the payment stays in the treasury (refunds are out of scope).
               console.warn(`x402 ${reqId}: paid (${paid.tx}) but the pool failed (${comp.reason}); recorded as failed, no refund`);
-              markFailed(db, cfg, reqId, blameRoute(route, comp.ok ? [] : lateNodes(db, cfg, route)), comp, failureCounted);
+              markFailed(db, cfg, reqId, cur.poolId, blameRoute(route, comp.ok ? [] : lateNodes(db, cfg, route)), comp, failureCounted);
             }
           } catch (e) {
             console.error(`billing ${reqId}: x402 record failed: ${(e as Error).message}`);

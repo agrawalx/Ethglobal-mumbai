@@ -6,8 +6,10 @@ import { configModelFor, poolLayerMap, poolContextLength } from "./route.ts";
 import { createPricing } from "./pricing.ts";
 import type { PoolQueue } from "./queue.ts";
 import { isRestarting, routeDispute, swappingMembers } from "./pools.ts";
+import { poolReliability } from "./reliability.ts";
 import { coordinatorFor, coordinatorMap, urlHash as hashUrl } from "./formation.ts";
 import type { PrivacyMode } from "./privacy.ts";
+import { providerCoordinator, providerAvailable } from "./provider-state.ts";
 
 /** Read-only Arkiv boundary; tests inject readers without contacting the network. */
 export type Directory = {
@@ -70,7 +72,9 @@ export function createRouter(cfg: Config, db: Db, directory: Directory, queue?: 
     const minTs = now - cfg.net.router.pool_heartbeat_max_age_s * 1000;
     const out = new Map<string, SelectedPool>();
     for (const p of pools) {
-      const coordinatorUrl = coordinatorFor(cfg, p.pool_id, coordinators);
+      const provider = providerCoordinator(db, p.pool_id);
+      if (provider && !providerAvailable(db, p.pool_id)) continue;
+      const coordinatorUrl = provider ?? coordinatorFor(cfg, p.pool_id, coordinators);
       if (p.status !== "ready" || !p.models.includes(model.model_id) || p.coordinator_url_hash !== hashUrl(coordinatorUrl) || p.members.length === 0) continue;
       // SPEC §16.3: pinning, private pools, banned owners.
       if (opts.pin && p.pool_id !== opts.pin) continue;
@@ -92,7 +96,8 @@ export function createRouter(cfg: Config, db: Db, directory: Directory, queue?: 
          LEFT JOIN node_reliability r ON r.node_id = n.node_id WHERE n.node_id = ? AND n.pool_id = ?`,
       ).get(id, p.pool_id) as { hb_ts: number | null; hb_online: number | null; hb_model: string | null; hb_hw_verified: number | null; score: number | null } | undefined);
       if (members.some((n) => !n || n.hb_hw_verified === 0 || !n.hb_online || n.hb_ts === null || n.hb_ts < minTs || n.hb_ts > now + 60_000 || configModelFor(cfg.net, n.hb_model)?.model_id !== model.model_id)) continue;
-      const reliability = Math.min(...members.map((n) => n!.score ?? cfg.net.reliability.initial_score));
+      // SPEC §9.2: the pool is the reputation identity (its own success rate + uptime), not its weakest node.
+      const reliability = poolReliability(db, cfg, p.pool_id, now);
       const count = active.get(p.pool_id) ?? 0;
       const load = count / (count + 1);
       // Use signed heartbeats for the receipt, never the public listing's claimed layer map.
@@ -143,12 +148,8 @@ export function createRouter(cfg: Config, db: Db, directory: Directory, queue?: 
         stats: directory.stats ? await directory.stats() : [],
         nodes,
         pools: pools.map((pool) => {
-          const scores = pool.members.map((id) => {
-            const local = db.prepare("SELECT r.score FROM nodes n JOIN node_reliability r ON r.node_id = n.node_id WHERE n.node_id = ? AND n.pool_id = ?").get(id, pool.pool_id) as { score: number } | undefined;
-            return local?.score ?? nodes.find((n) => n.node_id === id && n.pool_id === pool.pool_id)?.reliability ?? cfg.net.reliability.initial_score;
-          });
           const count = active.get(pool.pool_id) ?? 0;
-          return { ...pool, reliability: scores.length ? Math.min(...scores) : cfg.net.reliability.initial_score, load: count / (count + 1),
+          return { ...pool, reliability: poolReliability(db, cfg, pool.pool_id), load: count / (count + 1),
             route_dispute: routeDispute(db, cfg, pool.pool_id), restarting: isRestarting(db, cfg, pool.pool_id) };
         }),
       };

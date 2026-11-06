@@ -6,6 +6,7 @@ import { loadConfig } from "../src/config.ts";
 import { openDb } from "../src/db.ts";
 import { createApp } from "../src/app.ts";
 import { createRouter, type Directory } from "../src/router.ts";
+import { countPool, poolReliability, recordPoolUp, refreshPoolReliability } from "../src/reliability.ts";
 import { poolContextLength, poolState } from "../src/route.ts";
 import { balance, signer, testAccount, testDirectory, TEST_JWT_SECRET, TEST_NODE } from "./helpers.ts";
 
@@ -77,26 +78,46 @@ test("router rejects offline, wrong-model, unknown URL, unregistered, wrong-pool
   } finally { db.close(); }
 });
 
-test("score uses minimum member reliability and active request load; release is idempotent", async () => {
+test("score uses the pool's own reliability (SPEC §9.2) and active request load; release is idempotent", async () => {
   const { cfg, db, fake, model } = setup();
   try {
     const a = (await fake.readyPools(MODEL))[0]!;
     const bNode = "0x" + "b".repeat(40);
     db.prepare(`INSERT INTO nodes (node_id, account_id, pool_id, gpu, mem_gb, registered_at, hb_ts, hb_online, hb_model, hb_layers)
       VALUES (?, 'acc_router', 'pool-b', 'fixture', 8, ?, ?, 1, ?, '[0,40]')`).run(bNode, Date.now(), Date.now(), MODEL);
-    db.prepare("INSERT INTO node_reliability (node_id, score, updated_at) VALUES (?, 0.9, ?), (?, 0.6, ?)").run(TEST_NODE, Date.now(), bNode, Date.now());
+    const now = Date.now();
+    // Pool A served its requests; pool B failed half of them.
+    for (let i = 0; i < 4; i++) countPool(db, cfg, a.pool_id, true, now - 1000);
+    for (let i = 0; i < 4; i++) countPool(db, cfg, "pool-b", i % 2 === 0, now - 1000);
     const b = { ...a, pool_id: "pool-b", members: [bNode] };
     const router = createRouter(cfg, db, { ...fake, readyPools: async () => [b, a, a] });
     assert.equal((await router.select(model))?.poolId, a.pool_id);
     assert.equal((await router.models()).data.find((m) => m.id === MODEL)?.pools, 2);
     const release = router.start(a.pool_id);
-    assert.equal((await router.select(model))?.poolId, b.pool_id);
+    assert.equal((await router.select(model))?.poolId, b.pool_id); // busy A (load 0.5) loses to idle B
     release(); release();
     assert.equal((await router.select(model))?.poolId, a.pool_id);
-    // A second member with lower reliability determines the pool score.
-    db.prepare("UPDATE nodes SET pool_id = ? WHERE node_id = ?").run(a.pool_id, bNode);
-    const minRouter = createRouter(cfg, db, { ...fake, readyPools: async () => [{ ...a, members: [TEST_NODE, bNode] }] });
-    assert.equal((await minRouter.select(model))?.score, 0.6);
+    // A weak member node no longer sets the pool score: the pool keeps its own record.
+    db.prepare("INSERT INTO node_reliability (node_id, score, updated_at) VALUES (?, 0.1, ?)").run(TEST_NODE, now);
+    const score = (await router.select(model))?.score;
+    assert.equal(score, poolReliability(db, cfg, a.pool_id));
+    assert.ok(score! > 0.9, `pool score ${score} must not drop to the node's 0.1`);
+  } finally { db.close(); }
+});
+
+test("pool reliability: 0.7 × pool success + 0.3 × pool uptime; new pool starts at initial score", () => {
+  const { cfg, db } = setup();
+  try {
+    const interval = cfg.env.HEARTBEAT_SECONDS * 1000;
+    const t0 = Math.floor(Date.now() / interval) * interval;
+    assert.equal(poolReliability(db, cfg, "pool-new", t0), cfg.net.reliability.initial_score);
+    // 3 of 4 requests served; complete in 5 of 10 slots.
+    countPool(db, cfg, "pool-r", true, t0); countPool(db, cfg, "pool-r", true, t0); countPool(db, cfg, "pool-r", true, t0); countPool(db, cfg, "pool-r", false, t0);
+    for (let k = 0; k < 10; k += 2) recordPoolUp(db, cfg, "pool-r", t0 + k * interval);
+    const score = refreshPoolReliability(db, cfg, "pool-r", t0 + 10 * interval + 1);
+    const row = db.prepare("SELECT requests_routed, requests_ok, slots_expected, slots_up FROM pool_reliability WHERE pool_id = 'pool-r'").get() as Record<string, number>;
+    assert.deepEqual(row, { requests_routed: 4, requests_ok: 3, slots_expected: 10, slots_up: 5 });
+    assert.equal(score, Math.round((0.7 * 0.75 + 0.3 * 0.5) * 1e12) / 1e12);
   } finally { db.close(); }
 });
 

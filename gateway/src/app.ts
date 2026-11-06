@@ -26,6 +26,9 @@ import { PoolPlanResponse } from "@gpupool/shared";
 import { poolPlan } from "./formation.ts";
 import { verificationAppealHandler, verificationReadHandler } from "./verification.ts";
 import { agentRegistration } from "./erc8004.ts";
+import { providerRoutes } from "./providers.ts";
+import { ProviderRelay } from "./provider-relay.ts";
+import { providerAvailable } from "./provider-state.ts";
 
 export type Deps = {
   cfg: Config;
@@ -39,6 +42,7 @@ export type Deps = {
   queue?: PoolQueue;
   /** Observer, runs after billing for every completion. */
   onComplete?: OnComplete;
+  providerRelay?: ProviderRelay;
 };
 
 export const newReqId = (): string => `req_${Date.now().toString(36)}${randomBytes(8).toString("hex")}`;
@@ -51,7 +55,7 @@ type RequestRow = {
   cost_mc: number | null; split: string | null; route: string | null; prompt_hash: string; resp_hash: string | null; hcs_seq: number | null; attempts: string | null; route_source: "heartbeat" | "scheduler" | null; privacy: "trusted-ends" | "trusted-all" | null; ts: number;
 };
 
-export function createApp({ cfg, db, signer, x402 = null, worldFetch, directory, router: injectedRouter, queue: injectedQueue, onComplete = logCompletion }: Deps): Hono<AppEnv> {
+export function createApp({ cfg, db, signer, x402 = null, worldFetch, directory, router: injectedRouter, queue: injectedQueue, onComplete = logCompletion, providerRelay = new ProviderRelay() }: Deps): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
   const secret = cfg.env.JWT_SECRET;
   const queue = injectedQueue ?? createPoolQueue(cfg.net.router.max_concurrent_per_pool);
@@ -75,7 +79,12 @@ export function createApp({ cfg, db, signer, x402 = null, worldFetch, directory,
     ? c.json(agentRegistration(cfg)) : errorResponse(c, 503, "internal", "agent registration needs PUBLIC_URL"));
 
   // Session if an Authorization header is present (invalid → 401), else x402 (SPEC §5.3 step 2).
-  app.post("/v1/chat/completions", session(secret, false, (t) => agentFromToken(db, t)), chatHandler(cfg, makePrepare({ cfg, db, signer, x402, router, queue, observe: onComplete }), stall, (m) => router.contextLength(m)));
+  app.post("/v1/chat/completions", session(secret, false, (t) => agentFromToken(db, t)), chatHandler(cfg, makePrepare({ cfg, db, signer, x402, router, queue, observe: onComplete }), stall, (url, init) => {
+    if (url.protocol !== "provider:") return fetch(url, init);
+    if (!providerAvailable(db, url.hostname)) return Promise.reject(new Error("Provider coordinator is offline"));
+    return providerRelay.forward(url.hostname, "/v1/chat/completions", JSON.parse(String(init.body)), init.signal ?? undefined);
+  }, (m) => router.contextLength(m)));
+  app.route("/provider", providerRoutes(db, cfg, signer, providerRelay, directory ?? arkivDirectory(cfg)));
 
   app.post("/auth/world/rp-signature", rpSignatureHandler(cfg));
   app.post("/auth/world/verify", verifyHandler(db, cfg, signer, worldFetch));

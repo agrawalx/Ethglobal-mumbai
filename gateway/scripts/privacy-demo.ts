@@ -52,7 +52,7 @@ const dbPath = join(dir, "gateway.sqlite");
 const transcriptKey = "5e".repeat(32); // demo key only
 const cfg = loadConfig({ POOL_COORDINATOR_URL: poolUrl, DATABASE_PATH: dbPath, JWT_SECRET: TEST_JWT_SECRET, TRANSCRIPT_KEY: transcriptKey });
 const db = openDb(dbPath);
-const listing = () => ({ type: "gpupool.pool" as const, pool_id: "pool-demo", models: [MODEL], status: "ready" as const, coordinator_url_hash: urlHash(poolUrl), layer_map: null,
+const listing = () => ({ type: "gpupool.pool" as const, reliability: 0.8, pool_id: "pool-demo", models: [MODEL], status: "ready" as const, coordinator_url_hash: urlHash(poolUrl), layer_map: null,
   members: (db.prepare("SELECT node_id FROM nodes").all() as { node_id: string }[]).map((n) => n.node_id) });
 const directory: Directory = { models: async () => [], pools: async () => [listing()], nodes: async () => [], readyPools: async () => [listing()] };
 const app = createApp({ cfg, db, signer, directory, onComplete: () => {} });

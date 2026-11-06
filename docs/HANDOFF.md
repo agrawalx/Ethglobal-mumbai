@@ -276,6 +276,13 @@ verification pending. Gateway SQLite schema is 6: recreate the development DB.
 
 ## 8. Environment keys
 
+Self-service onboarding is `/getting-started`; read `docs/PROVIDER-ONBOARDING.md`.
+Native helpers use a central gateway through scoped outbound relays, not the older SSH
+bootstrap's co-located gateway. `PUBLIC_URL` must be the reachable HTTPS API URL. New optional
+central-only keys: `PROVIDER_ARKIV_FUNDER_KEY` (dedicated Rabdi gas wallet) and
+`PROVIDER_ARKIV_GRANT_WEI` (default 0.01 tGLM, maximum 1 per node, 0 disables).
+SQLite is schema 13. Helpers never receive World/HCS/treasury/settler/funder keys.
+
 Pool onboarding can now use `pool/kickstart.sh setup <manifest>` with the gateway on the
 coordinator. See `docs/POOL-KICKSTART.md` and `pool/pool.example.json`. The manifest discovers
 Ethernet IPs from enrolled SSH hosts; no new process env keys are introduced. Generated

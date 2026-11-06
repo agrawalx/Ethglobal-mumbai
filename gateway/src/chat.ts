@@ -96,13 +96,14 @@ export function continuationBody(req: ChatCompletionRequest, maxTokens: number, 
 
 type Attempt = { upstream: Response; abort: AbortController };
 type OpenError = { message: string; stalled: boolean };
+export type PoolFetch = (url: URL, init: RequestInit) => Promise<Response>;
 
 /**
  * Open one upstream request. `headerMs` bounds the time to the response headers only, never the
  * generation: POOL_TIMEOUT_MS for non-streaming (Parallax sends headers after the whole answer),
  * the first-token limit for streaming (Parallax sends stream headers at once; P5.1).
  */
-async function openUpstream(url: string, body: Record<string, unknown>, stream: boolean, headerMs: number, clientSignal: AbortSignal): Promise<Attempt | OpenError> {
+async function openUpstream(url: string, body: Record<string, unknown>, stream: boolean, headerMs: number, clientSignal: AbortSignal, poolFetch: PoolFetch): Promise<Attempt | OpenError> {
   const abort = new AbortController();
   const onClient = () => abort.abort();
   if (clientSignal.aborted) abort.abort();
@@ -110,7 +111,7 @@ async function openUpstream(url: string, body: Record<string, unknown>, stream: 
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; abort.abort(new Error("pool timeout")); }, headerMs);
   try {
-    const upstream = await fetch(new URL("/v1/chat/completions", url), {
+    const upstream = await poolFetch(new URL("/v1/chat/completions", url), {
       method: "POST",
       headers: { "content-type": "application/json", accept: stream ? "text/event-stream" : "application/json" },
       body: JSON.stringify(body),
@@ -135,7 +136,7 @@ const isOpenError = (a: Attempt | OpenError): a is OpenError => !("upstream" in 
 /** The live pool context for a model; undefined = not reported, use the config value. */
 export type ContextFor = (model: ModelConfig) => Promise<number | undefined>;
 
-export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker, contextFor?: ContextFor) {
+export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker, poolFetch: PoolFetch = (url, init) => fetch(url, init), contextFor?: ContextFor) {
   return async (c: Context): Promise<Response> => {
     const reqId = c.get("reqId") as string;
 
@@ -210,7 +211,7 @@ export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker, 
     // Before any byte reaches the client, a failed attempt can start again from the beginning.
     let first: Attempt;
     for (;;) {
-      const a = await openUpstream(target.url, tag(upstreamBody(req, maxTokens, toolsMode)), !!req.stream, headerMs, clientSignal);
+      const a = await openUpstream(target.url, tag(upstreamBody(req, maxTokens, toolsMode)), !!req.stream, headerMs, clientSignal, poolFetch);
       if (!isOpenError(a)) { first = a; break; }
       if (clientSignal.aborted) {
         complete(null, "", false, "client_aborted");
@@ -242,7 +243,7 @@ export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker, 
         }
         // Nothing was sent to the client yet: a new attempt starts from the beginning.
         if (await nextTarget(failure.reason, 0)) {
-          const a = await openUpstream(target.url, tag(upstreamBody(req, maxTokens, toolsMode)), false, headerMs, clientSignal);
+          const a = await openUpstream(target.url, tag(upstreamBody(req, maxTokens, toolsMode)), false, headerMs, clientSignal, poolFetch);
           if (!isOpenError(a)) { attempt = a; continue; }
           failure = { reason: "pool_error", message: a.message, text: "" };
         }
@@ -258,7 +259,7 @@ export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker, 
       reopen: async (reason, partial, streamedTokens) => {
         // Retry until an attempt opens or the failover budget is used up.
         while (await nextTarget(reason, streamedTokens)) {
-          const a = await openUpstream(target.url, tag(continuationBody(req, maxTokens, partial, streamedTokens, toolsMode)), true, headerMs, clientSignal);
+          const a = await openUpstream(target.url, tag(continuationBody(req, maxTokens, partial, streamedTokens, toolsMode)), true, headerMs, clientSignal, poolFetch);
           if (!isOpenError(a)) return a;
           reason = a.stalled ? "stalled" : "pool_error";
         }

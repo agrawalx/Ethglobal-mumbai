@@ -44,7 +44,7 @@ async function setup(listings: Listing[], env: Record<string, string> = {}) {
   const cfg = loadConfig({ POOL_COORDINATOR_URL: fakeUrl(0), DATABASE_PATH: ":memory:", JWT_SECRET: TEST_JWT_SECRET, ...env });
   const db = openDb(":memory:");
   const members = (pool: string) => (db.prepare("SELECT node_id FROM nodes WHERE pool_id = ?").all(pool) as { node_id: string }[]).map((n) => n.node_id);
-  const toListing = (l: Listing) => ({ type: "gpupool.pool" as const, pool_id: l.pool_id, models: [MODEL], status: "ready" as const, coordinator_url_hash: urlHash(l.url), layer_map: null, members: members(l.pool_id) });
+  const toListing = (l: Listing) => ({ type: "gpupool.pool" as const, reliability: 0.8, pool_id: l.pool_id, models: [MODEL], status: "ready" as const, coordinator_url_hash: urlHash(l.url), layer_map: null, members: members(l.pool_id) });
   const directory: Directory = {
     models: async () => cfg.net.models.map((m) => ({ ...m, type: "gpupool.model" as const })),
     pools: async () => listings.map(toListing), nodes: async () => [], readyPools: async () => listings.map(toListing),

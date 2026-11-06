@@ -14,7 +14,7 @@ SDK 1.0 has typed columns (`defineSchema`) and no free payload field. Our encodi
 | Entity | Indexed str columns | payload (JSON) | Writer | Expiry (`shared/config` `arkiv_ttl_s`) |
 |---|---|---|---|---|
 | `gpupool.node` | type, owner_account, node_id, pool_id, gpu, status | mem_gb, layers, tok_s, reliability | node agent (node key) | 120 s, re-set every 30 s |
-| `gpupool.pool` | type, pool_id, status, model0..model3 | members, coordinator_url_hash, layer_map (null while no valid map; from gateway `GET /pools/:pool_id`) | coordinator (pool key) | 120 s, re-set every 30 s |
+| `gpupool.pool` | type, pool_id, status, model0..model3 | members, coordinator_url_hash, layer_map (null while no valid map; from gateway `GET /pools/:pool_id`), reliability (pool score, SPEC §9.2, from the same endpoint) | coordinator (pool key) | 120 s, re-set every 30 s |
 | `gpupool.model` | type, model_id | mlx_variant, size_gb, model_factor, license | admin (gateway key) | 30 days |
 | `gpupool.account_stats` | type, account_id | earned_mc, spent_mc, ratio, reliability | gateway | 1 day, updated every 10 min |
 

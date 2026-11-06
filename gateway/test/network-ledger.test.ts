@@ -12,7 +12,7 @@ import { signer, testDirectory } from "./helpers.ts";
 const cfg = loadConfig({ DATABASE_PATH: ':memory:', POOL_COORDINATOR_URL: 'http://127.0.0.1:3001' });
 const example = (name: string) => JSON.parse(readFileSync(new URL(`../../shared/examples/${name}`, import.meta.url), 'utf8'));
 
-test("/network returns every Arkiv pool status and owner-signed node record, with minimum reliability and no private URL", async () => {
+test("/network returns every Arkiv pool status and owner-signed node record, with pool reliability (not min node) and no private URL", async () => {
   const db = openDb(':memory:');
   try {
     const pool: ArkivPool = example('arkiv-pool.json');
@@ -27,7 +27,8 @@ test("/network returns every Arkiv pool status and owner-signed node record, wit
     const result = NetworkResponse.parse(await response.json());
     assert.equal(result.source, 'arkiv');
     assert.equal(result.pools.length, 2);
-    assert.equal(result.pools[0]!.reliability, 0.4);
+    // SPEC §9.2: the pool's own record (none yet → initial score), not its weakest node's 0.4.
+    assert.equal(result.pools[0]!.reliability, cfg.net.reliability.initial_score);
     assert.equal(result.pools[0]!.load, 0);
     assert.equal(result.pools[1]!.status, 'loading');
     assert.equal(result.nodes.length, 3);

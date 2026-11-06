@@ -11,7 +11,7 @@ export default defineConfig(({ mode }) => {
   // (Accept: text/html) is served the app instead of being proxied.
   const page = (req: { headers: { accept?: string } }) => (req.headers.accept?.includes("text/html") ? "/index.html" : undefined);
   const gateway = { target, changeOrigin: true, bypass: page };
-  const proxy = { "^/(v1|auth|me|nodes|requests|network|ledger|payouts)(/|\\?|$)": gateway };
+  const proxy = { "^/(v1|auth|me|nodes|requests|network|ledger|payouts|provider)(/|\\?|$)": gateway };
   return {
     plugins: [react()],
     resolve: {

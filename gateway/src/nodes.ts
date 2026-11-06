@@ -4,12 +4,14 @@ import { HeartbeatResponse, NodeHeartbeat, NodeRegisterRequest, NODE_SIGNATURE_H
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { errorResponse } from "./errors.ts";
-import { recordHeartbeat } from "./reliability.ts";
+import { recordHeartbeat, recordPoolUp } from "./reliability.ts";
+import { poolState } from "./route.ts";
 import { recordEvent, type Signer } from "./events.ts";
 import { orderRestart, restartId, writeAllowedPeers } from "./pools.ts";
 import { isBanned, nodeCap } from "./incentives.ts";
 import { coordinatorFor, dhtPrefix, formPools, poolWriter, probeList, urlHash } from "./formation.ts";
 import { challengeForHeartbeat, recordChallengeReply } from "./verification.ts";
+import { providerCoordinator, providerPool } from "./provider-state.ts";
 
 /** shared/README.md "Signatures": the exact string the node key signs at registration. */
 export const registerMessage = (nodeId: string, poolId: string, ts: number): string => `gpupool-register:${nodeId}:${poolId}:${ts}`;
@@ -25,12 +27,15 @@ const issues = (e: { issues: { path: PropertyKey[]; message: string }[] }) =>
  * Re-registering the same node by the same account updates it (idempotent). A node owned by
  * another account → 409. Sets the payout address (required once) → payout_address_set event.
  */
-export function registerHandler(db: Db, cfg: Config, signer: Signer) {
+export function registerHandler(db: Db, cfg: Config, signer: Signer, supplied?: NodeRegisterRequest) {
   return async (c: Context): Promise<Response> => {
     const accountId = c.get("accountId") as string;
-    const parsed = NodeRegisterRequest.safeParse(await c.req.json().catch(() => undefined));
+    const parsed = NodeRegisterRequest.safeParse(supplied ?? await c.req.json().catch(() => undefined));
     if (!parsed.success) return errorResponse(c, 400, "bad_request", issues(parsed.error));
     const r = parsed.data;
+    if (providerPool(db, r.pool_id) && !db.prepare("SELECT id FROM provider_members WHERE pool_id=? AND account_id=? AND node_id=? AND approved=1 AND revoked=0").get(r.pool_id, accountId, r.node_id)) {
+      return errorResponse(c, 403, "unauthorized", "Join this pool through provider onboarding and obtain coordinator approval");
+    }
     const now = Date.now();
     if (r.ts > now + HEARTBEAT_SKEW_MS || now - r.ts > REGISTER_MAX_AGE_MS) return errorResponse(c, 400, "bad_request", "registration link is older than 24 hours (run gpupool-node init again)");
     let sigOk = false;
@@ -101,6 +106,7 @@ export function heartbeatHandler(db: Db, cfg: Config, signer: Signer, isPoolIdle
     if (Math.abs(now - hb.ts) > HEARTBEAT_SKEW_MS) return errorResponse(c, 400, "bad_request", "heartbeat ts is more than 60 s from gateway time");
     const node = db.prepare("SELECT account_id, pool_id, auto_pool FROM nodes WHERE node_id = ?").get(hb.node_id) as { account_id: string; pool_id: string; auto_pool: number } | undefined;
     if (!node) return errorResponse(c, 404, "not_found", "node is not registered (open the gpupool-node init link)");
+    if (providerPool(db, node.pool_id) && !db.prepare("SELECT id FROM provider_members WHERE pool_id=? AND node_id=? AND approved=1 AND revoked=0").get(node.pool_id, hb.node_id)) return errorResponse(c, 403, "unauthorized", "Pool membership was revoked");
     if (isBanned(db, node.account_id)) return errorResponse(c, 403, "unauthorized", "the owner of this node is banned (SPEC §16.3)");
     // An "auto" node may still say "auto" until it has seen its assigned pool.
     if (node.pool_id !== hb.pool_id && !(node.auto_pool === 1 && hb.pool_id === "auto")) return errorResponse(c, 400, "bad_request", `node is registered in pool ${node.pool_id}, heartbeat says ${hb.pool_id}`);
@@ -116,6 +122,8 @@ export function heartbeatHandler(db: Db, cfg: Config, signer: Signer, isPoolIdle
       const rtt = db.prepare("INSERT INTO node_rtt (a, b, ms, ts) VALUES (?, ?, ?, ?) ON CONFLICT(a, b) DO UPDATE SET ms = excluded.ms, ts = excluded.ts");
       for (const [peer, ms] of Object.entries(hb.rtt_ms ?? {})) if (peer !== hb.node_id) rtt.run(hb.node_id, peer, ms, now);
       recordHeartbeat(db, cfg, hb.node_id, hb.online, now);
+      // SPEC §9.2 pool uptime: this slot counts for the pool if every member is fresh and the layers cover the model once.
+      if (node.pool_id !== "auto" && poolState(db, cfg, node.pool_id, now).status === "ready") recordPoolUp(db, cfg, node.pool_id, now);
       // P5.9: what the node says it served (Parallax --notify-url), kept for the cross-check window.
       if (hb.served_sessions) {
         db.prepare("INSERT INTO node_served (node_id, peer_id, sessions, ts) VALUES (?, ?, ?, ?)").run(hb.node_id, hb.peer_id, hb.served_sessions, now);
@@ -150,7 +158,7 @@ export function heartbeatHandler(db: Db, cfg: Config, signer: Signer, isPoolIdle
       ok: true, owner_account: node.account_id, reliability: score ?? cfg.net.reliability.initial_score,
       restart_id: inPool ? restartId(db, poolId) : 0,
       pool_writer: inPool && poolWriter(db, cfg, poolId, now) === hb.node_id,
-      coordinator_url_hash: inPool ? urlHash(coordinatorFor(cfg, poolId)) : null,
+      coordinator_url_hash: inPool ? urlHash(providerCoordinator(db, poolId) ?? coordinatorFor(cfg, poolId)) : null,
       assigned_pool: auto,
       probe: node.auto_pool === 1 && !inPool ? probeList(db, cfg, hb.node_id, now) : [],
       challenge,

@@ -176,7 +176,7 @@ that locked multiplier, including across retries and load changes. Charges never
 exceed the hold. The signed `request_settled` HCS event includes the multiplier.
 x402's existing fixed HBAR tiers are unchanged: x402 requests get no `x-gpupool-price` header and store no multiplier (the receipt shows null).
 
-SQLite schema is 15. Use a fresh development database. No live database was changed.
+SQLite schema is 17 (after merging main). Use a fresh development database. No live database was changed.
 
 Person 1 integration points: `router.pricing.quote(model)` gives a copy of the current
 quote; `SelectedPool.context_length` gives that pool's optional runtime limit; `router.contextLength(model)` (the minimum over ready pools) now drives context fitting in `chat.ts`, and the Keys page shows the live price, multiplier and pool context from `/v1/models`, falling back to config.

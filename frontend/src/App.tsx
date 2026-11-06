@@ -19,6 +19,7 @@ const titles: Record<RouteName, string> = {
   network: "Network",
   ledger: "Ledger",
   payouts: "Payouts",
+  provider: "Getting Started",
   notfound: "Not found",
 };
 

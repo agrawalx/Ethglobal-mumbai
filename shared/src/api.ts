@@ -486,6 +486,8 @@ export const PoolStateResponse = z.object({
   layer_map: Route.nullable(),
   /** P5.5: a clean restart is running (not every member has acknowledged it yet). */
   restarting: z.boolean(),
+  /** SPEC §9.2 pool reliability (the pool writer publishes it in the gpupool.pool listing). */
+  reliability: z.number().min(0).max(1),
   /** Minimum max_seq of the members (tokens); absent until nodes report it. */
   context_length: z.number().int().positive().optional(),
 });
