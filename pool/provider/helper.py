@@ -256,7 +256,17 @@ def seed_coordinator_cache(root, parallax, repo):
     return "main"
 
 
+def coordinator_repos(model_config, backend):
+    """(repo, required) pairs: the coordinator's own format first and required, the other format optional."""
+    gpu, mlx = model_config["model_id"], model_config.get("mlx_variant")
+    own, other = (mlx, gpu) if backend == "mlx" and mlx else (gpu, mlx)
+    return [(own, True)] + ([(other, False)] if other else [])
+
+
 def download_from_pool(root, config, repo, report, existing_caches=()):
+    if repo not in config["snapshots"]:
+        raise RuntimeError(f"The coordinator has no copy of {repo} for this laptop's backend. "
+                           f"Download it on the coordinator (hf download {repo}), then click Retry setup")
     model = config["snapshots"][repo]
     folder = root / "hf/hub" / ("models--" + repo.replace("/", "--"))
     snapshot = folder / "snapshots" / model["revision"]
@@ -492,10 +502,12 @@ def main():
         host.configure(payload)
         if info["role"] == "coordinator":
             models = {}
-            for repo in [current["model_config"]["model_id"], current["model_config"]["mlx_variant"]]:
-                if not repo: continue
-                report("downloading", "Downloading and verifying " + repo)
+            for repo, required in coordinator_repos(current["model_config"], facts["backend"]):
                 revision = seed_coordinator_cache(root, parallax, repo)
+                # The other backend's format is shared only when it is already cached here: an all-Mac
+                # pool must not download the ~30 GB GPU copy. A member that needs a missing format stops with a clear error.
+                if not required and revision == "main": continue
+                report("downloading", "Downloading and verifying " + repo)
                 os.environ.pop("HF_HUB_OFFLINE", None)
                 models[repo] = host.download({**payload, "repo": repo, "revision": revision})
             cache = cache_server(facts["ip"], current, models)

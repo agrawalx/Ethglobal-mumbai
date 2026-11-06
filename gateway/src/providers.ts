@@ -251,7 +251,9 @@ export function providerRoutes(db: Db, cfg: Config, signer: Signer, relay: Provi
     if (member.role !== "coordinator") return fail(c, 403, "Coordinator only");
     const snapshots = ProviderSnapshots.safeParse(await c.req.json().catch(() => null));
     const pool = providerPool(db, member.pool_id)!, model = cfg.model(pool.model)!;
-    if (!snapshots.success || !snapshots.data[model.model_id] || (model.mlx_variant && !snapshots.data[model.mlx_variant])) return fail(c, 400, "Both GPU and MLX snapshots are required");
+    // The coordinator shares its own format and the other one only if it has it cached (an all-Mac pool has no GPU copy).
+    // A member whose format is missing stops with a clear error in its helper.
+    if (!snapshots.success || !(snapshots.data[model.model_id] || (model.mlx_variant && snapshots.data[model.mlx_variant]))) return fail(c, 400, "A GPU or MLX model snapshot is required");
     for (const [repo, snapshot] of Object.entries(snapshots.data)) {
       if (![model.model_id, model.mlx_variant].includes(repo) || !snapshot.files["config.json"] || !Object.keys(snapshot.files).some(n => n.endsWith(".safetensors"))) return fail(c, 400, "Unexpected model snapshot");
       if (Object.keys(snapshot.files).some(n => n.startsWith("/") || n.split("/").includes("..") || n.includes("\\"))) return fail(c, 400, "Unsafe model path");

@@ -187,6 +187,9 @@ test("start waits for every approved helper, then real signed heartbeats gate re
     const second = await pair(s, secondOwner);
     const model = cfg.net.models[1]!.model_id;
     const snapshot = { revision: "a".repeat(40), files: { "config.json": { size: 2, sha256: "b".repeat(64) }, "model.safetensors": { size: 3, sha256: "c".repeat(64) } } };
+    // No snapshot at all is refused; an MLX-only coordinator (all-Mac pool, no GPU copy) is accepted.
+    assert.equal((await s.app.request("/provider/helper/snapshots", post({}, coordinator.credential.token))).status, 400);
+    assert.equal((await s.app.request("/provider/helper/snapshots", post({ [cfg.net.models[1]!.mlx_variant!]: snapshot }, coordinator.credential.token))).status, 200);
     const snapshots = await s.app.request("/provider/helper/snapshots", post({ [model]: snapshot, [cfg.net.models[1]!.mlx_variant!]: snapshot }, coordinator.credential.token));
     assert.equal(snapshots.status, 200);
     await s.app.request("/provider/helper/progress", post({ stage: "prepared", ip: "10.0.0.1" }, coordinator.credential.token));

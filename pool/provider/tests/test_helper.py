@@ -103,4 +103,22 @@ class ProviderHelperTests(unittest.TestCase):
         self.assertEqual(seen, ["bad", "good"])
         self.assertEqual(logs, ["Inference relay: upstream failed"])
 
+class SnapshotFormatTests(unittest.TestCase):
+    model = {"model_id": "Qwen/Qwen3-30B-A3B-Instruct-2507-FP8", "mlx_variant": "lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-8bit"}
+
+    def test_mac_coordinator_requires_only_mlx(self):
+        self.assertEqual(helper.coordinator_repos(self.model, "mlx"),
+                         [(self.model["mlx_variant"], True), (self.model["model_id"], False)])
+
+    def test_gpu_coordinator_requires_gpu_format(self):
+        self.assertEqual(helper.coordinator_repos(self.model, "cuda"),
+                         [(self.model["model_id"], True), (self.model["mlx_variant"], False)])
+        self.assertEqual(helper.coordinator_repos({"model_id": "x/y", "mlx_variant": None}, "mlx"), [("x/y", True)])
+
+    def test_member_missing_format_has_clear_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, "coordinator has no copy of x/gpu"):
+                helper.download_from_pool(Path(directory), {"snapshots": {"x/mlx": {}}}, "x/gpu", lambda *a: None)
+
+
 if __name__ == "__main__": unittest.main()
