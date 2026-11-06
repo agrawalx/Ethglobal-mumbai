@@ -25,6 +25,19 @@
         { "max_tokens": 2048, "price_tinybar": "6000000" }
       ],
       "context_length": 4096
+    },
+    {
+      "model_id": "Qwen/Qwen3-30B-A3B-Instruct-2507-FP8",
+      "mlx_variant": "lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-8bit",
+      "size_gb": 32.5,
+      "num_layers": 48,
+      "model_factor": 1.5,
+      "license": "apache-2.0",
+      "x402_prices": [
+        { "max_tokens": 512, "price_tinybar": "1500000" },
+        { "max_tokens": 2048, "price_tinybar": "4500000" }
+      ],
+      "context_length": 4096
     }
   ],
   "cost": { "input_token_weight": 0.2, "default_max_tokens": 512 },

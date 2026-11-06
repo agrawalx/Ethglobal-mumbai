@@ -88,6 +88,7 @@ The pool runner starts one Parallax pool with 3 nodes. It uses the settings that
 | Setting | Value | Reason |
 |---|---|---|
 | Model | `Qwen/Qwen3-14B-FP8` (Macs load `Qwen/Qwen3-14B-MLX-8bit`) | Tested. No single node can run it. |
+| Model (MoE demo) | `Qwen/Qwen3-30B-A3B-Instruct-2507-FP8` (Macs load `lmstudio-community/Qwen3-30B-A3B-Instruct-2507-MLX-8bit`), 48 layers, ≈ 32.5 GB: 4–5 × 16 GB Macs + the RTX 4060 | In the catalog; pool load test pending (`docs/MOE-30B-HANDOFF.md`). |
 | Network name | `--dht-prefix <private-name>` | The default name is shared with all Parallax users. |
 | Ports | Fixed `--tcp-port` / `--udp-port` per node (5100 scheduler, 5101+ nodes) | Firewall rules need fixed ports. |
 | Address | `--announce-maddrs /ip4/<lan-ip>/...` | Stops Docker bridge addresses being advertised. |
@@ -304,7 +305,7 @@ The router does not select nodes inside the pool. Parallax does that.
 - In the MVP, the pool has one pipeline. Each request goes through all nodes in the pool.
 - Parallax `GET /cluster/status_json` has **no** layer ranges (only libp2p peer IDs and status). So each **node agent reports its own layer range** in its signed heartbeat (`NodeHeartbeat.layers`).
 - The node agent reads the range from its local Parallax node log (Parallax is not changed). It uses the last of these lines: `Join scheduler response: {… 'start_layer': S, 'end_layer': E …}`, `Layer allocation changed! … New: [S, E)`, `Reloading executor with layers [S, E)`.
-- The gateway builds the pool's layer map from the latest **fresh** heartbeats (30 s or newer) of the pool's registered nodes. The map is valid only if the ranges cover `[0, num_layers)` of the model **exactly once** (no gaps, no overlaps). `num_layers` is in the model config (Qwen3-14B = 40, Qwen3-8B = 36).
+- The gateway builds the pool's layer map from the latest **fresh** heartbeats (30 s or newer) of the pool's registered nodes. The map is valid only if the ranges cover `[0, num_layers)` of the model **exactly once** (no gaps, no overlaps). `num_layers` is in the model config (Qwen3-14B = 40, Qwen3-8B = 36, Qwen3-30B-A3B = 48).
 - The route of a request is the valid layer map when the request starts.
 - If the map is not valid, the route is **unknown** (`null`). The gateway logs a warning. The node shares of that request go to the network reserve (credits), or stay in the treasury (x402).
 - **Post-MVP P5.8 (exact route):** with the hooks and `PARALLAX_ROUTE_LOG`, the gateway sends `gpupool_req_id`; at completion it maps the logged `routing_table` (peer IDs) to registered nodes through their heartbeat `peer_id` and layer ranges. If the result is a valid layer map, it is the request's route (`route_source = scheduler`); else the heartbeat map stays (`route_source = heartbeat`). The x402 payout snapshot follows the route.
@@ -408,6 +409,7 @@ cost_mc  = floor(model_factor × (output_tokens + 0.2 × input_tokens) × 1000)
 |---|---|
 | Qwen3-8B (8-bit / FP8) | 1.0 |
 | Qwen3-14B (8-bit / FP8) | 1.75 |
+| Qwen3-30B-A3B-Instruct-2507 (8-bit / FP8, mixture of experts: 30.5B total, 3.3B active per token) | 1.5 |
 
 The admin sets the factors in a configuration file.
 
