@@ -54,7 +54,7 @@ We build an open GPU pool network. People bring computers (gaming laptops, MacBo
 ### 2.3 Parallax facts (from source, commit `162354a`, Lattica 1.0.21, SGLang 0.5.12)
 
 - `parallax run -m <model> -n <nodes>` starts the scheduler (HTTP `127.0.0.1:3001`). `parallax join` starts a node.
-- Useful HTTP: `POST /v1/chat/completions`, `GET /cluster/status_json` (nodes, layer ranges), `GET /v1/models`.
+- Useful HTTP: `POST /v1/chat/completions`, `GET /cluster/status_json` (nodes and status; **no layer ranges**, see §9), `GET /v1/models`.
 - Model catalog is fixed in `src/backend/server/static_config.py`; each GPU model maps to an MLX variant for Macs.
 - Node memory: `--param-mem-ratio` (default 0.65), `--kvcache-mem-ratio` (0.25). Mac MLX actual KV: `--kv-cache-memory-fraction`.
 - Placement prefers the fewest stages; a model that fits on one node is not split.
@@ -76,6 +76,10 @@ We build an open GPU pool network. People bring computers (gaming laptops, MacBo
 | Ports | Scheduler 5100, Linux node 5101, Mac nodes 5102, 5103 (TCP+UDP) |
 | Private network name | `gpupool-x7k2` |
 | Agent bridge | Relay on Linux `127.0.0.1:8765`, room `ethglobal`, agents `claude` (Linux) and `codex` (Mac). Code: `~/agent-bridge-src/agent-bridge`. Mac connects by SSH tunnel with a restricted key (`~/.ssh/authorized_keys`, `from=` must list the Mac IP). |
+| Hedera testnet (public IDs) | Operator = treasury `0.0.11331600`; settler `0.0.11332602` (`0x14ff4f7615ef8e3cca82adf879f3be4051780a94`); agent `0.0.11332604`; provider payout accounts `0.0.11332605`–`0.0.11332607`; HCS topic `gpupool-ledger` = `0.0.11332608`. Keys in git-ignored `keys.txt` and `.env` files. |
+| `EpochPayout` (testnet) | `0x22aafc9cbdafd4e5a7e7eae47b27cad48ad8b82c` = `0.0.11332808`, settler `0x14ff…0a94`, `claimDelay` 60 s, `sweepDelay` 7 days. Deploy tx `0x66ac3aeb794a2c739c61960ac336e351c0e44eaad54be2685873d221707163db`. Verified on Sourcify (exact match): https://hashscan.io/testnet/contract/0.0.11332808 |
+| Arkiv wallets (public) | Gateway `0xfeb19eb223236427a31b2d909851025abc55db1b`; coordinator pool key `0x181aff3abf57d640bd9d10f4cb03471c55e9094e` (`~/.gpupool/pool.key`); Linux node key `0x4f24a8795047c2bb0d0c542780dc1d91f7f8cdc1` (`~/.gpupool/node.key`). Mac node keys: created by `gpupool-node init`. |
+| World app (public) | App `app_3defa81f175967a96109b1a628927bb6`, RP `rp_831104fa5fd04dd5`, action `gpupool-account`, staging. |
 
 ### 3.1 Known-good commands
 
@@ -166,7 +170,7 @@ Each step has an owner stream (see `docs/SPEC.md` §2.1 and the parallel plan in
 | Step | Stream | Work | Done when |
 |---|---|---|---|
 | 2.1 | C Identity | World login: `/auth/world/rp-signature`, `/auth/world/verify`, accounts table, starter credits, JWT; IDKit widget in frontend | Success, duplicate-rejected, and cancel paths work |
-| 2.2 | B Gateway | Credit ledger: hold, settle, split (90/5/5), self-request rule, receipts; route from `/cluster/status_json` | Balances change correctly in a test |
+| 2.2 | B Gateway | Credit ledger: hold, settle, split (90/5/5), self-request rule, receipts; route from node heartbeats (SPEC §5.5) | Balances change correctly in a test |
 | 2.3 | D Hedera | HCS event writer (async, signed); `ledger_events.hcs_seq` filled | Events visible on HashScan |
 | 2.4 | D Hedera | x402 in the gateway for requests without a session; agent client (budget cap) | Agent gets answers; payments recorded |
 | 2.5 | A + F | Node agent: key, registration link, Arkiv node listing (extend every 30 s), heartbeat to gateway; coordinator writes `gpupool.pool` | Stopped node disappears from Arkiv after expiry |
@@ -222,9 +226,11 @@ Each component has a `.env.example`. Copy it to `.env` and fill it. Summary:
 | Key | Purpose |
 |---|---|
 | `PORT` | Gateway HTTP port (e.g. 8080) |
+| `HOST` | Bind address (default `0.0.0.0`; the gateway is the public entry point) |
 | `PUBLIC_URL` | URL that the requester laptop uses (e.g. `http://10.73.185.71:8080`) |
 | `POOL_COORDINATOR_URL` | Parallax scheduler API (`http://127.0.0.1:3001`) |
 | `DATABASE_PATH` | SQLite file path |
+| `POOL_TIMEOUT_MS` | Time to the pool response headers, ms (default `600000`; generation after the headers is not timed) |
 | `JWT_SECRET` | Signs session tokens |
 | `GATEWAY_SIGNING_KEY` | ed25519 private key; signs receipts and HCS events |
 | `CORS_ORIGINS` | Frontend origin(s) |
@@ -242,8 +248,8 @@ Each component has a `.env.example`. Copy it to `.env` and fill it. Summary:
 | `HEDERA_JSON_RPC_URL` | `https://testnet.hashio.io/api` |
 | `HEDERA_CHAIN_ID` | `296` |
 | `TREASURY_ACCOUNT_ID` / `TREASURY_PRIVATE_KEY` | Receives x402; funds epoch payouts |
-| `X402_FACILITATOR_URL` | e.g. `https://x402.org/facilitator` (confirm Hedera support) |
-| `X402_NETWORK` | Hedera testnet network ID used by the x402 library |
+| `X402_FACILITATOR_URL` | `https://x402.org/facilitator` (supports `hedera:testnet`, confirmed; see `scripts/x402-poc/README.md`) |
+| `X402_NETWORK` | `hedera:testnet` (CAIP-2 ID of `@x402/hedera` 2.30) |
 | `X402_PAY_TO` | Treasury account |
 | `SETTLER_PRIVATE_KEY` | Calls `postEpoch` |
 | `PAYOUT_CONTRACT_ADDRESS` | Deployed `EpochPayout` |
@@ -267,6 +273,8 @@ Each component has a `.env.example`. Copy it to `.env` and fill it. Summary:
 | `EXTRA_FLAGS` | e.g. Mac `--kv-cache-memory-fraction 0.25 --max-sequence-length 4096` |
 | `CUDA_HOME` | CUDA nodes only |
 
+The coordinator runs both roles: `pool/scheduler.env` (`ROLE=scheduler`, ports 5100) and `pool/node.env` (`ROLE=node`, 5101). `pool/*.env` is git-ignored.
+
 ### node-agent/.env
 | Key | Purpose |
 |---|---|
@@ -275,6 +283,9 @@ Each component has a `.env.example`. Copy it to `.env` and fill it. Summary:
 | `POOL_ID` | Pool this node belongs to |
 | `IS_COORDINATOR` | `true` on the coordinator (writes `gpupool.pool`) |
 | `POOL_KEY_PATH` | Coordinator only: pool listing key |
+| `FRONTEND_URL` | Base of the registration link printed by `gpupool-node init` |
+| `COORDINATOR_URL` | Coordinator only: hashed into `gpupool.pool.coordinator_url_hash` (default `http://127.0.0.1:3001`) |
+| `PARALLAX_NODE_LOG` | Parallax node log the agent reads its layer range from (default `pool/logs/node.log`) |
 | `ARKIV_RPC_URL` / `ARKIV_CHAIN_ID` / `ARKIV_ACCESS_KEY` | Arkiv access |
 | `HEARTBEAT_SECONDS` / `ARKIV_EXTEND_SECONDS` | `10` / `30` |
 
@@ -285,13 +296,33 @@ Each component has a `.env.example`. Copy it to `.env` and fill it. Summary:
 | `DEPLOYER_PRIVATE_KEY` | Deploys the contract (ECDSA) |
 | `SETTLER_ADDRESS` | EVM address allowed to post epochs |
 | `CLAIM_DELAY_SECONDS` | `0`–`300` for the demo |
+| `SWEEP_DELAY_SECONDS` | Settler can sweep unclaimed HBAR back after this (default `604800`, 7 days) |
+
+### arkiv/.env (CLI `arkiv/src/cli.ts`; the node agent calls it)
+| Key | Purpose |
+|---|---|
+| `ARKIV_RPC_URL` / `ARKIV_CHAIN_ID` | Rabdi RPC / `7794095` |
+| `ARKIV_ACCESS_KEY` | hub.arkiv.network access key (appended to the RPC URL path) |
+| `ARKIV_PRIVATE_KEY` or `ARKIV_KEY_PATH` | Writer key (hex) or a key file (node agent: `NODE_KEY_PATH`; coordinator: `POOL_KEY_PATH`). Needs tGLM from the faucet. |
+| `ARKIV_EXTEND_SECONDS` | `30` |
+
+### scripts/x402-poc/.env
+| Key | Purpose |
+|---|---|
+| `PORT` | PoC server port (`8090`) |
+| `X402_FACILITATOR_URL` / `X402_NETWORK` / `X402_PAY_TO` | Same as gateway |
+| `X402_POC_MODEL` / `X402_POC_MAX_TOKENS` | Which shared-config price tier `/echo` charges |
+| `X402_POC_URL` | URL the client pays |
+| `AGENT_ACCOUNT_ID` / `AGENT_PRIVATE_KEY` / `AGENT_BUDGET_HBAR` / `HEDERA_NETWORK` | Same as agent-client |
+| `AGENT_KEY_TYPE` | `ecdsa` (default) or `ed25519` |
+| `HASHSCAN_URL` | `https://hashscan.io/testnet` |
 
 ### agent-client/.env
 | Key | Purpose |
 |---|---|
 | `GATEWAY_URL` | Gateway URL |
 | `AGENT_ACCOUNT_ID` / `AGENT_PRIVATE_KEY` | Pays with x402 |
-| `AGENT_BUDGET_HBAR` | Spending cap |
+| `AGENT_BUDGET_HBAR` | Spending cap (the agent stops before a payment would exceed it) |
 | `HEDERA_NETWORK` | `testnet` |
 
 ### frontend/.env.local
@@ -314,9 +345,12 @@ Each component has a `.env.example`. Copy it to `.env` and fill it. Summary:
 
 | Question | Who/how |
 |---|---|
-| Exact x402 Hedera package and API; which facilitator supports Hedera testnet | Hedera docs/booth |
+| ~~Exact x402 Hedera package and API; which facilitator supports Hedera testnet~~ **Resolved:** `@x402/{core,hono,fetch,hedera}` 2.30.0 (x402 v2), network `hedera:testnet`, HBAR asset `0.0.0`, amounts in tinybars; x402.org facilitator supports it (no API key, pays fees). Details: `scripts/x402-poc/README.md`. Settled live: tx `0.0.9185802@1793929496.997341480`. | Done (step 1.6) |
 | Testnet USDC availability (MVP uses HBAR) | Hedera booth |
-| Arkiv extend/update API names | Arkiv docs (`/writing/expiration/`) |
-| `selfieCheck` availability in IDKit v4 staging; duplicate handling | World booth |
+| ~~Arkiv extend/update API names~~ **Resolved:** SDK 1.0.1: `createEntity`, `patchEntity`, `extendEntity` (sets expiry from now), `deleteEntity`, `executeBatch`, `select().from().where().fetch()`. No payload/annotations any more. Details: `arkiv/friction.md`, `arkiv/schema.md`. | Done (step 1.4) |
+| Orb and `selfieCheck` availability in IDKit v4 staging; duplicate handling | **Partly resolved (step 2.1):** IDKit 4.6.0 has `selfieCheck` and Orb (`proof_of_human`); the verify API accepts a reused nullifier with HTTP 200 ("nullifier reuse"), so our UNIQUE nullifier is the duplicate guard. Open: does World App refuse a second proof for the same action (repeat login)? Staging needs the simulator. Details: `gateway/README.md` "World ID". |
+| Does one human get the **same nullifier** for Orb and Selfie Check? (If not, one human can make two accounts.) | World booth |
 | World Agent Pass definition (post-MVP) | World workshop |
 | Partner-pick rule (Hedera + World + Arkiv = 3) | ETHGlobal |
+| ~~`/cluster/status_json` has no layer ranges~~ **Resolved (step 2.2/2.5):** each node agent reads its own range from its Parallax node log (`Join scheduler response` / `Layer allocation changed` / `Reloading executor` lines) and reports it in its signed heartbeat; the gateway builds the layer map from fresh heartbeats and accepts it only if it covers `[0, num_layers)` exactly once (SPEC §5.5). No peer ID map is needed. | Done |
+| Does Parallax honour `stream_options.include_usage`? If not, streaming requests have no `usage` to settle (they end `no_usage` and cost nothing). | Live test (needs the 3-node pool) |
