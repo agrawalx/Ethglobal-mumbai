@@ -69,7 +69,11 @@ export function createRouter(cfg: Config, db: Db, directory: Directory) {
       }
       if ((db.prepare("SELECT count(*) AS n FROM nodes WHERE pool_id = ? AND banned = 1").get(p.pool_id) as { n: number }).n > 0) continue;
       // Post-MVP P5.5 / P5.7: never route into a pool that is restarting or has a swapping member.
-      if (isRestarting(db, cfg, p.pool_id, now) || swappingMembers(db, cfg, p.pool_id, now).length > 0) continue;
+      const swapping = swappingMembers(db, cfg, p.pool_id, now);
+      if (isRestarting(db, cfg, p.pool_id, now) || swapping.length > 0) {
+        console.warn(JSON.stringify({ msg: "pool_skipped", pool_id: p.pool_id, restarting: swapping.length === 0, swapping }));
+        continue;
+      }
       // Every advertised member must be registered in THIS pool, online, and fresh.
       const members = p.members.map((id) => db.prepare(
         `SELECT n.hb_ts, n.hb_online, n.hb_model, n.hb_hw_verified, r.score FROM nodes n
