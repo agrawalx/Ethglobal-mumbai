@@ -1,0 +1,23 @@
+{
+  "name": "@gpupool/agent-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/agent.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@gpupool/shared": "workspace:*",
+    "@x402/core": "2.30.0",
+    "@x402/fetch": "2.30.0",
+    "@x402/hedera": "2.30.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "^7.0.2"
+  }
+}
