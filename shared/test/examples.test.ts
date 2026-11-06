@@ -24,6 +24,7 @@ const EXAMPLES: Record<string, z.ZodType> = {
   "ok-response.json": S.OkResponse,
   "heartbeat-response.json": S.HeartbeatResponse,
   "pool-state-response.json": S.PoolStateResponse,
+  "pool-plan-response.json": S.PoolPlanResponse,
   "receipt.json": S.Receipt,
   "network-response.json": S.NetworkResponse,
   "ledger-events-response.json": S.LedgerEventsResponse,
@@ -43,6 +44,18 @@ const EXAMPLES: Record<string, z.ZodType> = {
   "hcs-payout-address-set.json": S.PayoutAddressSetEvent,
   "hcs-epoch-closed.json": S.EpochClosedEvent,
   "hcs-payout-claimed.json": S.PayoutClaimedEvent,
+  "hcs-verification-result.json": S.VerificationResultEvent,
+  "hcs-verification-appeal.json": S.VerificationAppealEvent,
+  "hcs-verification-final.json": S.VerificationFinalEvent,
+  "hcs-hardware-challenge.json": S.HardwareChallengeEvent,
+  "hcs-verification-canary.json": S.VerificationCanaryEvent,
+  "hcs-credits-clawed-back.json": S.CreditsClawedBackEvent,
+  "hcs-account-banned.json": S.AccountBannedEvent,
+  "hcs-availability-reward.json": S.AvailabilityRewardEvent,
+  "hcs-agent-key-created.json": S.AgentKeyCreatedEvent,
+  "agent-key-create-response.json": S.AgentKeyCreateResponse,
+  "agent-key-list-response.json": S.AgentKeyListResponse,
+  "collusion-flags-response.json": S.CollusionFlagsResponse,
 };
 
 test("every example file has a schema, and every schema entry has a file", () => {
@@ -70,15 +83,24 @@ test("HCS examples parse as LedgerEvent and stay under 1 KB", () => {
 
 test("ledger event types are exactly SPEC §8.6", () => {
   assert.deepEqual([...S.LEDGER_EVENT_TYPES].sort(), [
+    "account_banned",
     "account_created",
+    "agent_key_created",
+    "availability_reward",
+    "credits_clawed_back",
     "credits_expired",
     "epoch_closed",
     "payout_address_set",
     "payout_claimed",
     "request_settled",
     "starter_grant",
+    "hardware_challenge",
+    "verification_appeal",
+    "verification_canary",
+    "verification_final",
+    "verification_result",
     "x402_payment",
-  ]);
+  ].sort());
 });
 
 test("config file matches GpupoolConfig", () => {

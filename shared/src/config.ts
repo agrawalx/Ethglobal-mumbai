@@ -59,6 +59,71 @@ export const GpupoolConfig = z.object({
   router: z.object({
     pool_heartbeat_max_age_s: z.number().int().positive(),
     retry_after_s: z.number().int().positive(),
+    /** SPEC §16.1 batching: requests that run at once per pool (MVP = 1). Parallax batches them (--max-batch-size). */
+    max_concurrent_per_pool: z.number().int().positive(),
+  }),
+  /** SPEC §16.1 automatic pool formation: nodes registered in pool "auto" are grouped by measured delay. */
+  pool_formation: z.object({
+    max_rtt_ms: z.number().positive(),
+    min_nodes: z.number().int().positive(),
+    /** Ask nodes to measure delay to each other at most this often. */
+    probe_every_s: z.number().int().positive(),
+  }),
+  /**
+   * Post-MVP P5.1/P5.2 (docs/POST_MVP_PLAN.md): stream stall detection and gateway failover.
+   * Stall limit after the first token = max(stall_min_ms, stall_p95_factor × p95 gap between
+   * tokens of the pool). Before the first token: first_token_base_ms + ms_per_input_token × input.
+   * continuation = resume a broken stream with the partial answer as the final assistant message
+   * (vLLM `continue_final_message`); false = no mid-stream failover.
+   */
+  resilience: z.object({
+    stall_min_ms: z.number().int().positive(),
+    stall_p95_factor: z.number().positive(),
+    first_token_base_ms: z.number().int().positive(),
+    first_token_ms_per_input_token: z.number().nonnegative(),
+    max_failovers: z.number().int().nonnegative(),
+    continuation: z.boolean(),
+    /** P5.5: at most one ordered pool restart per this many seconds (cool-down before re-placing again). */
+    restart_cooldown_s: z.number().int().positive(),
+    /** P5.5: a restart not acknowledged by every member within this time stops blocking the router. */
+    restart_timeout_s: z.number().int().positive(),
+    /** P5.9 cross-check window and tolerance: dispute if |reported − routed| / routed > ratio with ≥ min routed. */
+    route_check_window_s: z.number().int().positive(),
+    route_dispute_ratio: z.number().positive(),
+    route_check_min_requests: z.number().int().positive(),
+  }),
+  /** SPEC §16.3 incentives. */
+  incentives: z.object({
+    /** Earned credits stay locked (can be taken back for fraud) this long before they can be spent. */
+    vesting_s: z.number().int().nonnegative(),
+    /** Unlocked earned credits expire after this many days (oldest first). */
+    earned_expiry_days: z.number().int().positive(),
+    /** A final fraud verdict penalizes only route nodes whose group-test risk is at least this. */
+    penalty_min_risk: z.number().min(0).max(1),
+    /** Node cap after the account is proven (start cap = max_nodes_per_account). */
+    node_cap_proven: z.number().int().positive(),
+    proven_after_days: z.number().int().nonnegative(),
+    proven_min_reliability: z.number().min(0).max(1),
+    proven_min_requests: z.number().int().nonnegative(),
+    /** Credentials that may reach the proven cap (World). */
+    proven_credentials: z.array(z.enum(["orb", "passport", "selfie"])).min(1),
+    collusion: z.object({
+      window_days: z.number().int().positive(),
+      /** Flag when one requester gives more than this share of an owner's earnings. */
+      max_pair_share: z.number().min(0).max(1),
+      /** Ignore pairs below this many mc. */
+      min_pair_mc: z.number().int().nonnegative(),
+      /** Accounts created this close together that only trade with each other. */
+      twin_window_s: z.number().int().positive(),
+    }),
+    availability: z.object({
+      epoch_s: z.number().int().positive(),
+      /** A pool "needs capacity" when a request waited at least this long in its queue in the epoch. */
+      min_wait_ms: z.number().int().nonnegative(),
+      reward_mc_per_min: z.number().int().nonnegative(),
+      /** At most this much per epoch, and never more than the network reserve holds. */
+      max_per_epoch_mc: z.number().int().nonnegative(),
+    }),
   }),
   /** SPEC §11.2 expiries, in seconds. */
   arkiv_ttl_s: z.object({

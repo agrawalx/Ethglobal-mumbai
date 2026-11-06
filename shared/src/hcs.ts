@@ -82,6 +82,8 @@ export const CreditsExpiredEvent = z.object({
   type: z.literal("credits_expired"),
   account_id: AccountId,
   amount_mc: Millicredits,
+  /** SPEC §8.2 starter credits (MVP) or §16.3 earned credits older than earned_expiry_days. */
+  kind: z.enum(["starter", "earned"]).default("starter"),
 });
 
 export const PayoutAddressSetEvent = z.object({
@@ -115,6 +117,97 @@ export const PayoutClaimedEvent = z.object({
   claim_tx: Hex32,
 });
 
+/** Model verification audit record. It never changes billing, provider earnings, or reliability. */
+export const VerificationResultEvent = z.object({
+  ...base,
+  type: z.literal("verification_result"),
+  verification_id: z.string().min(1).max(80),
+  req_id: RequestId,
+  pool_id: z.string().min(1).max(80),
+  route_hash: Hex32,
+  score: z.number().finite().nonnegative(),
+  threshold: z.number().finite().nonnegative(),
+  verdict: z.enum(["pass", "flag"]),
+});
+
+export const VerificationAppealEvent = z.object({
+  ...base,
+  type: z.literal("verification_appeal"),
+  verification_id: z.string().min(1).max(80),
+  appeal_id: z.string().min(1).max(80),
+  account_id: AccountId,
+});
+
+export const VerificationFinalEvent = z.object({
+  ...base,
+  type: z.literal("verification_final"),
+  verification_id: z.string().min(1).max(80),
+  req_id: RequestId,
+  verdict: z.enum(["pass", "flag"]),
+});
+
+export const HardwareChallengeEvent = z.object({
+  ...base,
+  type: z.literal("hardware_challenge"),
+  challenge_id: z.string().min(1).max(80),
+  node_id: EvmAddress,
+  result: z.enum(["passed", "failed", "expired"]),
+  backend: z.enum(["cuda", "mlx", "cpu", "unavailable"]).nullable(),
+  memory_gb: z.number().nonnegative().nullable(),
+  elapsed_ms: z.number().int().nonnegative().nullable(),
+});
+
+export const VerificationCanaryEvent = z.object({
+  ...base,
+  type: z.literal("verification_canary"),
+  canary_id: z.string().min(1).max(80),
+  pool_id: z.string().min(1).max(80),
+  model: ModelId,
+  route_hash: Hex32,
+  score: z.number().finite().nonnegative(),
+  threshold: z.number().finite().nonnegative(),
+  verdict: z.enum(["pass", "flag"]),
+});
+
+// ---------- SPEC §16.3 incentives ----------
+
+/** Locked (unvested) credits taken back after a final fraud verdict; they go to the network reserve. */
+export const CreditsClawedBackEvent = z.object({
+  ...base,
+  type: z.literal("credits_clawed_back"),
+  account_id: AccountId,
+  amount_mc: Millicredits,
+  /** The final verification that proves the fraud. */
+  evidence_id: z.string().min(1).max(80),
+});
+
+/** The World nullifier of this account may no longer run nodes. */
+export const AccountBannedEvent = z.object({
+  ...base,
+  type: z.literal("account_banned"),
+  account_id: AccountId,
+  evidence_id: z.string().min(1).max(80),
+});
+
+/** Standby credits from the network reserve for a node that was online while its pool had a queue. */
+export const AvailabilityRewardEvent = z.object({
+  ...base,
+  type: z.literal("availability_reward"),
+  account_id: AccountId,
+  node_id: EvmAddress,
+  amount_mc: Millicredits,
+  epoch_start: z.number().int().nonnegative(),
+});
+
+/** A human-backed agent key (World Agent Pass, MVP form): the human's credits, with a budget. */
+export const AgentKeyCreatedEvent = z.object({
+  ...base,
+  type: z.literal("agent_key_created"),
+  account_id: AccountId,
+  agent_id: z.string().regex(/^agt_[A-Za-z0-9]+$/),
+  budget_mc: Millicredits,
+});
+
 export const LedgerEvent = z.discriminatedUnion("type", [
   AccountCreatedEvent,
   StarterGrantEvent,
@@ -124,6 +217,15 @@ export const LedgerEvent = z.discriminatedUnion("type", [
   PayoutAddressSetEvent,
   EpochClosedEvent,
   PayoutClaimedEvent,
+  VerificationResultEvent,
+  VerificationAppealEvent,
+  VerificationFinalEvent,
+  HardwareChallengeEvent,
+  VerificationCanaryEvent,
+  CreditsClawedBackEvent,
+  AccountBannedEvent,
+  AvailabilityRewardEvent,
+  AgentKeyCreatedEvent,
 ]);
 export type LedgerEvent = z.infer<typeof LedgerEvent>;
 export type LedgerEventType = LedgerEvent["type"];

@@ -179,6 +179,18 @@ export const MeResponse = z.object({
   balance: Balance,
   /** earned_total / max(spent_total, 1). */
   ratio: z.number().nonnegative(),
+  /** SPEC §16.3. */
+  incentives: z.object({
+    /** Earned credits still vesting (not spendable; can be taken back after a final fraud verdict). */
+    locked_mc: Millicredits,
+    /** When the next locked credits unlock (null = none locked). */
+    next_unlock_at: TimestampMs.nullable(),
+    /** Strongest World credential used to log in. */
+    credential: z.enum(["orb", "passport", "selfie"]).nullable(),
+    /** Nodes this account may register now (reputation-based cap). */
+    node_cap: z.number().int().nonnegative(),
+    banned: z.boolean(),
+  }),
   nodes: z.array(
     z.object({
       node_id: EvmAddress,
@@ -191,6 +203,38 @@ export const MeResponse = z.object({
   ),
 });
 export type MeResponse = z.infer<typeof MeResponse>;
+
+// ---------- /agents (SPEC §16.3 World Agent Pass, MVP form; session auth) ----------
+
+/** A human-backed agent key: requests use the human's credits and ratio, up to `budget_mc`. */
+export const AgentKey = z.object({
+  agent_id: z.string().regex(/^agt_[A-Za-z0-9]+$/),
+  name: z.string().min(1).max(64),
+  budget_mc: Millicredits,
+  spent_mc: Millicredits,
+  revoked: z.boolean(),
+  created_at: TimestampMs,
+});
+export type AgentKey = z.infer<typeof AgentKey>;
+export const AgentKeyCreateRequest = z.object({ name: z.string().min(1).max(64), budget_mc: Millicredits });
+export type AgentKeyCreateRequest = z.infer<typeof AgentKeyCreateRequest>;
+/** `token` is shown once: `Authorization: Bearer <token>` on /v1/chat/completions. */
+export const AgentKeyCreateResponse = AgentKey.extend({ token: z.string().regex(/^gpa_agt_[A-Za-z0-9]+_[0-9a-f]{64}$/) });
+export type AgentKeyCreateResponse = z.infer<typeof AgentKeyCreateResponse>;
+export const AgentKeyListResponse = z.object({ agents: z.array(AgentKey) });
+export type AgentKeyListResponse = z.infer<typeof AgentKeyListResponse>;
+
+/** GET /incentives/flags (loopback; operator): collusion flags. Flags only — no automatic penalty. */
+export const CollusionFlagsResponse = z.object({
+  window_days: z.number().int().positive(),
+  flags: z.array(z.object({
+    kind: z.enum(["dominant_requester", "mutual_flow", "twin_accounts"]),
+    accounts: z.array(AccountId).min(2),
+    amount_mc: Millicredits,
+    detail: z.string(),
+  })),
+});
+export type CollusionFlagsResponse = z.infer<typeof CollusionFlagsResponse>;
 
 // ---------- POST /nodes/register (session auth) ----------
 
@@ -230,6 +274,33 @@ export const NodeHeartbeat = z.object({
   model: ModelId.nullable(),
   layers: LayerRange.nullable(),
   tok_s: z.number().nonnegative().nullable(),
+  // ---- post-MVP P5 (docs/POST_MVP_PLAN.md); null = not known ----
+  /** Parallax (Lattica) peer ID of this node's current process. P5.4 admission, P5.8/P5.9 route mapping. */
+  peer_id: z.string().min(1).max(128).nullable().default(null),
+  /** Current LAN IPv4 of the node. P5.6: the agent restarts Parallax when it changes. */
+  lan_ip: z.string().regex(/^\d{1,3}(\.\d{1,3}){3}$/).nullable().default(null),
+  /** P5.7: "swap_growing" = the machine swaps while serving; the router skips the pool. */
+  mem_pressure: z.enum(["ok", "swap_growing"]).nullable().default(null),
+  /** P5.7: memory the node can use for the model after the OS budget, GB. */
+  usable_mem_gb: z.number().nonnegative().nullable().default(null),
+  /** P5.9: distinct Parallax sessions this node processed since its previous heartbeat (--notify-url). */
+  served_sessions: z.number().int().nonnegative().nullable().default(null),
+  /** P5.5: the last pool restart ID this node executed. */
+  restart_ack: z.number().int().nonnegative().nullable().default(null),
+  // ---- SPEC §16.1 automatic pool formation ----
+  /** Parallax TCP port of this node (other nodes measure delay to lan_ip:p2p_port). */
+  p2p_port: z.number().int().min(1).max(65535).nullable().default(null),
+  /** Measured round-trip delay to other nodes, ms (node_id → ms). */
+  rtt_ms: z.record(EvmAddress, z.number().nonnegative()).nullable().default(null),
+  /** P6.4: result of the signed, bounded hardware benchmark challenge. */
+  challenge_result: z.object({
+    challenge_id: z.string().min(1).max(80),
+    backend: z.enum(["cuda", "mlx", "cpu", "unavailable"]),
+    memory_gb: z.number().nonnegative(),
+    elapsed_ms: z.number().int().nonnegative(),
+    output_hash: Hex32,
+    result_hash: Hex32,
+  }).nullable().default(null),
 });
 export type NodeHeartbeat = z.infer<typeof NodeHeartbeat>;
 
@@ -241,6 +312,21 @@ export const HeartbeatResponse = z.object({
   ok: z.literal(true),
   owner_account: AccountId,
   reliability: z.number().min(0).max(1),
+  /**
+   * P5.5 clean restart: the pool's current restart ID (0 = none ordered). The agent restarts its
+   * Parallax process group once when this is greater than its `restart_ack`.
+   */
+  restart_id: z.number().int().nonnegative(),
+  /** SPEC §16.1 coordinator election: this node writes the pool's gpupool.pool listing now. */
+  pool_writer: z.boolean(),
+  /** keccak256 of the pool's private coordinator URL, for the listing (null = pool has no coordinator). */
+  coordinator_url_hash: Hex32.nullable(),
+  /** SPEC §16.1 automatic pool formation: the pool the gateway put this "auto" node in (null = none yet). */
+  assigned_pool: z.object({ pool_id: PoolId, dht_prefix: z.string().min(1), model: ModelId }).nullable(),
+  /** Nodes to measure delay to (empty most of the time). */
+  probe: z.array(z.object({ node_id: EvmAddress, lan_ip: z.string(), port: z.number().int() })),
+  /** P6.4: challenge delivered to the agent; it returns a signed result on the next heartbeat. */
+  challenge: z.object({ challenge_id: z.string().min(1).max(80), seed: Hex32, expires_at: TimestampMs }).nullable().default(null),
 });
 export type HeartbeatResponse = z.infer<typeof HeartbeatResponse>;
 
@@ -259,10 +345,44 @@ export const PoolStateResponse = z.object({
   members: z.array(EvmAddress),
   status: z.enum(["ready", "loading", "offline"]),
   layer_map: Route.nullable(),
+  /** P5.5: a clean restart is running (not every member has acknowledged it yet). */
+  restarting: z.boolean(),
 });
 export type PoolStateResponse = z.infer<typeof PoolStateResponse>;
 
+// ---------- GET /pools/plan (loopback only; pool/pools-up.sh on the gateway host) ----------
+
+/** SPEC §16.1 automatic pool formation: pools formed from "auto" nodes, for starting their schedulers. */
+export const PoolPlanResponse = z.object({
+  pools: z.array(z.object({
+    pool_id: PoolId,
+    model: ModelId,
+    members: z.array(EvmAddress),
+    /** Private network name for this pool's Parallax DHT. */
+    dht_prefix: z.string().min(1),
+  })),
+  /** "auto" nodes not in any pool yet (no low-delay group with enough memory). */
+  waiting: z.array(EvmAddress),
+});
+export type PoolPlanResponse = z.infer<typeof PoolPlanResponse>;
+
 // ---------- GET /requests/:id (receipt) ----------
+
+/**
+ * One try to serve a request (post-MVP P5.2 failover). The last attempt is the one that answered
+ * (or failed). Earlier attempts failed: their nodes get a failure outcome and no share.
+ */
+export const RequestAttempt = z.object({
+  pool_id: PoolId,
+  /** Heartbeat layer map used for this attempt; null = unknown. */
+  route: Route.nullable(),
+  outcome: z.enum(["ok", "stalled", "pool_error", "client_aborted", "no_usage"]),
+  /** Content chunks already sent to the client by this attempt (about 1 token each). */
+  streamed_tokens: z.number().int().nonnegative(),
+  /** Route nodes whose last heartbeat was late when the attempt failed (stall suspects). */
+  late_nodes: z.array(EvmAddress),
+});
+export type RequestAttempt = z.infer<typeof RequestAttempt>;
 
 export const Receipt = z.object({
   req_id: RequestId,
@@ -280,10 +400,16 @@ export const Receipt = z.object({
   split: CreditSplit.nullable(),
   /** Null = route unknown (no valid layer map at request time, SPEC §5.5); node shares went to reserve. */
   route: Route.nullable(),
+  /** P5.8: "scheduler" = the pipeline Parallax really used (hook route log); "heartbeat" = pool layer map. */
+  route_source: z.enum(["heartbeat", "scheduler"]).nullable(),
+  /** Privacy mode of the request (header x-gpupool-privacy); null = normal. Privacy requests store no transcript. */
+  privacy: z.enum(["trusted-ends", "trusted-all"]).nullable(),
   prompt_hash: Hex32,
   resp_hash: Hex32.nullable(),
   /** Null until the HCS write is confirmed. */
   hcs_seq: z.number().int().nonnegative().nullable(),
+  /** Null = served by the first attempt with no failover record (post-MVP P5.2). */
+  attempts: z.array(RequestAttempt).nullable(),
   ts: TimestampMs,
 });
 export type Receipt = z.infer<typeof Receipt>;
@@ -297,6 +423,10 @@ export const NetworkResponse = z.object({
       reliability: z.number().min(0).max(1),
       /** 0..1, from the gateway queue. */
       load: z.number().min(0).max(1),
+      /** P5.9: node-reported served sessions disagree with the scheduler's routes (last hour). */
+      route_dispute: z.boolean(),
+      /** P5.5: a clean restart is running. */
+      restarting: z.boolean(),
     }),
   ),
   nodes: z.array(ArkivNode),

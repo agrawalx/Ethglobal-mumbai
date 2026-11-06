@@ -46,7 +46,7 @@ Next.js needs `transpilePackages: ["@gpupool/shared"]` in `next.config`.
 - Ordered list `[{node_id, layers: [start, end)}]`, half-open. Built by the gateway from node heartbeats (SPEC §5.5). Valid only if it covers `[0, num_layers)` of the model exactly once. `null` = unknown (in `Receipt`, `x402_payment`, `gpupool.pool.layer_map`).
 
 **Hashes**
-- sha256, `0x` + 64 hex (`Hex32`). `prompt_hash` = sha256 of the canonical JSON of the request `messages`; `resp_hash` = sha256 of the UTF-8 response text.
+- sha256, `0x` + 64 hex (`Hex32`), **salted** (privacy): `prompt_hash` = sha256(`<salt>:` + canonical JSON of the request `messages`); `resp_hash` = sha256(`<salt>:` + UTF-8 response text). `salt` = 32 random hex chars per request, kept private in the gateway and returned only to the requester in the response header `x-gpupool-hash-salt`. So nobody can find a short prompt by hashing guesses against the public HCS ledger, but the requester can check their receipt.
 
 **Canonical JSON** (used for HCS event signatures)
 - `canonicalJson()` in `src/canonical.ts`. Keys sorted recursively, no whitespace, UTF-8. Python (byte-equal, tested): `json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`.
