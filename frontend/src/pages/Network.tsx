@@ -7,8 +7,9 @@ import SourceBadge from "../components/SourceBadge";
 import PipelineDiagram from "../components/network/PipelineDiagram";
 import LayerSim from "../components/sim/LayerSim";
 import { Icon } from "../components/Icon";
-import { Empty, ErrorBox, Loading, PoolPill, StatusPill } from "../components/console/Status";
-import { useModels, useNetwork, useNow } from "../hooks/usePool";
+import UnavailableNotice from "../components/UnavailableNotice";
+import { Empty, ErrorBox, Loading, StatusPill, Busy, Spinner } from "../components/console/Status";
+import { useModels, useNetwork, useNow, usePoolAvailability } from "../hooks/usePool";
 import { fmtAgo, fmtLayers, fmtNum, shortHash } from "../lib/format";
 import { nodeColor } from "../lib/nodeColor";
 import { navigate } from "../lib/router";
@@ -83,7 +84,8 @@ function PoolCard({ pool, nodes, offers }: { pool: PoolListing; nodes: NodeListi
   const model = pool.models[0];
   const factor = offers.find((o) => o.model.model_id === model)?.model.model_factor ?? config.models.find((m) => m.model_id === model)?.model_factor;
   const score = pool.reliability * (1 - pool.load);
-  const usable = pool.status === "ready" && !pool.restarting;
+  const availability = usePoolAvailability(pool.pool_id, model);
+  const usable = availability.data?.available === true;
   const layerOf = (id: string) => pool.layer_map.find((h) => h.node_id === id)?.layers ?? null;
   return (
     <article className="pool-card" aria-labelledby={`pool-${pool.pool_id}`}>
@@ -92,7 +94,7 @@ function PoolCard({ pool, nodes, offers }: { pool: PoolListing; nodes: NodeListi
           <h3 id={`pool-${pool.pool_id}`} className="mono">
             {pool.pool_id}
           </h3>
-          <PoolPill status={pool.status} />
+          <span className={`pill ${usable ? "pill-ok" : "pill-warn"}`}>{usable ? "Available for requests" : !model ? "Unavailable" : availability.error ? "Availability unknown" : !availability.data ? <Busy size={10}>Checking availability</Busy> : pool.status === "forming" ? "Preparing" : "Unavailable"}</span>
           {pool.restarting && <span className="pill pill-warn">restarting</span>}
           {pool.route_dispute && (
             <span className="pill pill-warn" title="Node-reported sessions disagree with the scheduler's routes in the last hour. Flag only; no credits change.">
@@ -111,12 +113,13 @@ function PoolCard({ pool, nodes, offers }: { pool: PoolListing; nodes: NodeListi
         <button
           className="button button-blue button-sm"
           disabled={!usable}
-          title={usable ? "Open the playground pinned to this pool" : "The router skips pools that are not ready"}
+          title={usable ? "Open the playground pinned to this pool" : availability.data?.reason ?? "Checking request availability"}
           onClick={() => navigate(`/chat?model=${encodeURIComponent(model)}&pool=${encodeURIComponent(pool.pool_id)}`)}
         >
           Query this pool <Icon name="arrow" size={13} />
         </button>
       </header>
+      <p className="faint" role="status">{!model ? "The pool does not advertise a model." : availability.data ? <>{availability.data.reason} {availability.data.action} Last checked {fmtAgo(availability.data.checked_at)}.</> : availability.error ? availability.error.message : <Busy>Checking request availability…</Busy>} <button className="text-link" onClick={availability.reload}>Check again</button></p>
       <div className="stats pool-stats">
         <div className="stat">
           <span className="mono-label">Members</span>
@@ -169,7 +172,7 @@ export default function Network() {
   const nodes = net?.nodes ?? [];
   const inPool = new Set(pools.flatMap((p) => p.members));
   const loose = nodes.filter((n) => !inPool.has(n.node_id));
-  const ready = pools.filter((p) => p.status === "ready").length;
+  const hasNetwork = !!net && net.updated_at > 0;
 
   return (
     <>
@@ -180,7 +183,8 @@ export default function Network() {
         aside={
           net && (
             <span className="faint">
-              Source: Arkiv <SourceBadge kind="arkiv" /> · updated {fmtAgo(net.updated_at, now)}
+              Source: Arkiv <SourceBadge kind="arkiv" /> · updated {fmtAgo(net.updated_at, now)} ·{" "}
+              <a className="text-link" href="/ledger">Network activity</a>
             </span>
           )
         }
@@ -192,27 +196,27 @@ export default function Network() {
         <div className="stat">
           <span className="mono-label">Pools</span>
           <p className="stat-value">
-            {ready}
-            <small>/ {pools.length} ready</small>
+            {hasNetwork ? pools.length : <Spinner size={22} />}
+            <small>{hasNetwork ? "listed" : "Checking…"}</small>
           </p>
         </div>
         <div className="stat">
           <span className="mono-label">Nodes</span>
           <p className="stat-value">
-            {nodes.filter((n) => n.status === "online").length}
-            <small>/ {nodes.length} online</small>
+            {hasNetwork ? nodes.filter((n) => n.status === "online").length : <Spinner size={22} />}
+            <small>{hasNetwork ? `/ ${nodes.length} online` : "Checking…"}</small>
           </p>
         </div>
         <div className="stat">
           <span className="mono-label">Pooled memory</span>
           <p className="stat-value">
-            {fmtNum(nodes.reduce((s, n) => s + n.mem_gb, 0))}
+            {hasNetwork ? fmtNum(nodes.reduce((s, n) => s + n.mem_gb, 0)) : <Spinner size={22} />}
             <small>GB</small>
           </p>
         </div>
         <div className="stat">
           <span className="mono-label">Models served</span>
-          <p className="stat-value">{offers.filter((o) => o.pools > 0).length}</p>
+          <p className="stat-value">{models.data && !models.error ? offers.filter((o) => o.pools > 0).length : models.error ? "—" : <Spinner size={22} />}</p>
         </div>
       </div>
 
@@ -223,8 +227,8 @@ export default function Network() {
           </h2>
           <span className="faint mono">gpupool.pool</span>
         </div>
-        {!net ? (
-          <Loading h={200} />
+        {!hasNetwork ? (
+          net?.error ? <ErrorBox error={net.error} /> : <Loading h={200} />
         ) : pools.length === 0 ? (
           <Empty>No pool is listed on Arkiv right now, so requests get HTTP 503 and cost nothing. A pool appears here once its members are online and their layer ranges cover the model.</Empty>
         ) : (
@@ -256,7 +260,7 @@ export default function Network() {
           <h2 id="sim-h" className="section-title">
             How a pool splits a model
           </h2>
-          <span className="faint">{pools.some((p) => p.layer_map.length) ? "live layer maps from Arkiv, or a simulated pool" : "simulated pool (no live layer map right now)"}</span>
+          <span className="faint">{pools.some((p) => p.layer_map.length) ? "live layer maps from Arkiv, or a simulated pool" : hasNetwork ? "simulated pool (no live layer map right now)" : <Busy>Checking live layer maps…</Busy>}</span>
         </div>
         <LayerSim pools={pools} nodes={nodes} preferLive={pools.some((p) => p.layer_map.length)} />
       </section>
@@ -274,7 +278,7 @@ export default function Network() {
           ) : !models.data ? (
             <Loading h={120} />
           ) : models.data.length === 0 ? (
-            <Empty>No model has a ready pool right now. /v1/models lists only models a live pool can serve.</Empty>
+            <UnavailableNotice pools={pools} nodes={nodes} loaded={hasNetwork} />
           ) : (
             <div className="table-wrap">
               <table className="table">

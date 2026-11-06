@@ -23,22 +23,39 @@ export default function GettingStarted({ query }: { query: URLSearchParams }) {
     navigate(path);
     if (!session.token) session.openLogin(path);
   }
+  const pools = session.token ? data.data?.pools ?? [] : [];
+  const returning = pools.length > 0 && !mode;
+  const sizeOf = (model: string) => data.data?.models.find(m => m.model_id === model)?.size_gb;
+  const choices = <div className="provider-choices" aria-label="Choose how to contribute">
+    <button className={`provider-choice ${mode === "create" ? "is-selected" : ""}`} onClick={() => choose("create")} aria-pressed={mode === "create"}>
+      <span className="mono-label">01 / START SOMETHING</span><span className="provider-choice-title"><Icon name="pod" size={27} />Create a pool<Icon name="arrow-up" size={22} /></span><span className="muted">Choose a model, invite your members and coordinate the pipeline.</span><span className="provider-choice-note">You become the coordinator</span>
+    </button>
+    <button className={`provider-choice ${mode === "join" ? "is-selected" : ""}`} onClick={() => choose("join")} aria-pressed={mode === "join"}>
+      <span className="mono-label">02 / BRING YOUR COMPUTE</span><span className="provider-choice-title"><Icon name="laptop" size={27} />Join a pool<Icon name="arrow-up" size={22} /></span><span className="muted">Have a Pool ID? Request a place and let your laptop do its part.</span><span className="provider-choice-note">Your own account. Your own earnings.</span>
+    </button>
+  </div>;
+  const flow = <div className="provider-flow" aria-label="Setup steps"><span><Icon name="user-check" size={16} />Verify identity</span><i aria-hidden="true">→</i><span><Icon name="pod" size={16} />Join or create pool</span><i aria-hidden="true">→</i><span><Icon name="file" size={16} />Connect laptop</span><i aria-hidden="true">→</i><span><Icon name="chip" size={16} />Prepare model</span><i aria-hidden="true">→</i><span><Icon name="bolt" size={16} />Serve</span></div>;
+  const form = session.token && mode && data.data && <ProviderForm key={mode} mode={mode} models={data.data.models} done={() => { data.reload(); navigate("/getting-started"); }} />;
+  const login = session.loading ? <Loading /> : mode && !session.token ? <section className="panel provider-login"><Icon name="user-check" size={26} /><div><h2>One human. Your own contribution.</h2><p className="muted">Log in with World ID to {mode === "create" ? "create your pool" : "request membership"}. Your choice stays here after verification.</p></div><button className="button button-blue" onClick={() => session.openLogin(`/getting-started?mode=${mode}`)}>Continue with World ID<Icon name="arrow" size={14} /></button></section> : null;
+  const poolViews = pools.map(pool => <PoolSetup key={pool.pool_id} pool={pool} refresh={data.reload} sizeGb={sizeOf(pool.model)} />);
+
+  // Returning contributor: their pool and machine first; create/join stays one click away.
+  if (returning) return <div className="provider-page">
+    <PageHead label="CONTRIBUTE" title="Your contribution" />
+    {data.error && <ErrorBox error={data.error} retry={data.reload} />}
+    {poolViews}
+    <details className="provider-more"><summary>Create or join another pool</summary>{choices}</details>
+  </div>;
+
   return <div className="provider-page">
-    <PageHead label="PROVIDERS / GETTING STARTED" title={<>Your laptop.<br />A bigger possibility.</>} sub="Bring your compute to the network. Start a pool with your crew, or add your laptop to one that already exists." aside={<span className="provider-hero-mark" aria-hidden="true"><Icon name="pod" size={64} /><span>+ + +</span></span>} />
-    <div className="provider-choices" aria-label="Choose how to contribute">
-      <button className={`provider-choice ${mode === "create" ? "is-selected" : ""}`} onClick={() => choose("create")} aria-pressed={mode === "create"}>
-        <span className="mono-label">01 / START SOMETHING</span><span className="provider-choice-title"><Icon name="pod" size={27} />Create a pool<Icon name="arrow-up" size={22} /></span><span className="muted">Choose a model, invite your members and coordinate the pipeline.</span><span className="provider-choice-note">You become the coordinator</span>
-      </button>
-      <button className={`provider-choice ${mode === "join" ? "is-selected" : ""}`} onClick={() => choose("join")} aria-pressed={mode === "join"}>
-        <span className="mono-label">02 / BRING YOUR COMPUTE</span><span className="provider-choice-title"><Icon name="laptop" size={27} />Join a pool<Icon name="arrow-up" size={22} /></span><span className="muted">Have a Pool ID? Request a place and let your laptop do its part.</span><span className="provider-choice-note">Your own account. Your own earnings.</span>
-      </button>
-    </div>
-    <div className="provider-flow" aria-label="Setup steps"><span><Icon name="user-check" size={16} />Verify with World</span><i aria-hidden="true">→</i><span><Icon name="file" size={16} />Run one command</span><i aria-hidden="true">→</i><span><Icon name="chip" size={16} />Prepare your model</span><i aria-hidden="true">→</i><span><Icon name="bolt" size={16} />Serve together</span></div>
-    {session.loading ? <Loading /> : mode && !session.token ? <section className="panel provider-login"><Icon name="user-check" size={26} /><div><h2>One human. Your own contribution.</h2><p className="muted">Log in with World ID to {mode === "create" ? "create your pool" : "request membership"}. Your choice stays here after verification.</p></div><button className="button button-blue" onClick={() => session.openLogin(`/getting-started?mode=${mode}`)}>Continue with World ID<Icon name="arrow" size={14} /></button></section> : null}
+    <PageHead label="CONTRIBUTE / GETTING STARTED" title={<>Your laptop.<br />A bigger possibility.</>} sub="Bring your compute to the network. Start a pool with your crew, or add your laptop to one that already exists." aside={<span className="provider-hero-mark" aria-hidden="true"><Icon name="pod" size={64} /><span>+ + +</span></span>} />
+    {choices}
+    {login}
     {data.error && <ErrorBox error={data.error} retry={data.reload} />}
     {session.token && data.loading && !data.data && <Loading />}
-    {session.token && mode && data.data && <ProviderForm key={mode} mode={mode} models={data.data.models} done={() => { data.reload(); navigate("/getting-started"); }} />}
-    {session.token && data.data?.pools.map(pool => <PoolSetup key={pool.pool_id} pool={pool} refresh={data.reload} />)}
+    {form}
+    {flow}
+    {poolViews}
     <section className="provider-ground-rules"><div><span className="mono-label">LOCAL COMPUTE</span><p>Connect your crew over Ethernet. The coordinator prepares the model cache; the helpers handle the setup and report progress here.</p></div><div><span className="mono-label">CENTRAL ACCOUNTING</span><p>World identity, credit accounting and payments stay with the marketplace. Your helper receives permission for your node only.</p></div><div><span className="mono-label">OWNER CONTROL</span><p>You approve machine access. Keep Terminal open while serving, and stop your helper whenever you need your laptop back.</p></div></section>
   </div>;
 }

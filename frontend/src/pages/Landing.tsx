@@ -1,4 +1,5 @@
 import { Suspense, lazy, useCallback, useState } from "react";
+import GooeyNav from "../components/GooeyNav";
 import { Brand } from "../components/Shared";
 import { Icon } from "../components/Icon";
 import CrewScene from "../components/CrewScene";
@@ -49,33 +50,31 @@ export default function Landing() {
     <div className="landing">
       <header className="site-header">
         <Brand />
-        <nav
+        <GooeyNav
+          id="main-navigation"
           className={`nav-pill${menu ? " mobile-nav-open" : ""}`}
-          aria-label="Main navigation"
-        >
-          <a
-            className="nav-current"
-            href="#platform"
-            onClick={() => setMenu(false)}
-          >
-            Platform
-          </a>
-          <a href="#how-it-works" onClick={() => setMenu(false)}>
-            How it works
-          </a>
-          <a href="#the-pool" onClick={() => setMenu(false)}>
-            Earn and spend
-          </a>
-          <a href="#simulator" onClick={() => setMenu(false)}>
-            Simulator
-          </a>
-          <a href="/network" onClick={() => setMenu(false)}>
-            Network
-          </a>
-          <a href="/getting-started" onClick={() => setMenu(false)}>
-            Become a provider
-          </a>
-        </nav>
+          items={[
+            { label: "Platform", href: "#platform" },
+            { label: "How it works", href: "#how-it-works" },
+            { label: "Earn and spend", href: "#the-pool" },
+            { label: "Simulator", href: "#simulator" },
+            { label: "Network", href: "/network" },
+            { label: "Become a provider", href: "/getting-started" },
+          ]}
+          theme="dark"
+          size="md"
+          frame
+          particleCount={15}
+          spread={56}
+          animationTime={600}
+          timeVariance={300}
+          gooeyness={0.5}
+          wobble={0.5}
+          hoverEffect
+          onChange={() => {
+            if (menu) window.setTimeout(() => setMenu(false), 700);
+          }}
+        />
         <div className="header-actions">
           <button
             className="button button-blue header-cta"
@@ -87,6 +86,7 @@ export default function Landing() {
             className="icon-button mobile-menu-button"
             aria-label="Toggle navigation"
             aria-expanded={menu}
+            aria-controls="main-navigation"
             onClick={() => setMenu(!menu)}
           >
             <Icon name={menu ? "close" : "menu"} />

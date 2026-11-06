@@ -10,7 +10,7 @@ import ReceiptSheet from "../components/chat/ReceiptSheet";
 import SourceBadge from "../components/SourceBadge";
 import { CodeBox } from "../components/console/CopyButton";
 import { Icon } from "../components/Icon";
-import { Empty, ErrorBox, Loading, StatusPill } from "../components/console/Status";
+import { Empty, ErrorBox, Loading, StatusPill, Spinner, Busy } from "../components/console/Status";
 import { api, SessionExpired } from "../data";
 import { useSession } from "../auth/context";
 import { useAsync } from "../hooks/useAsync";
@@ -84,7 +84,7 @@ function RegisterCard({ link, me, token, onDone }: { link: Link; me: Me; token: 
           <span className="pill pill-ok">already linked to this account</span>
         ) : payout ? (
           <button className="button button-blue" onClick={confirm} disabled={busy || full || me.incentives.banned}>
-            {busy ? "Linking…" : "Confirm node"} <Icon name="check" size={15} />
+            {busy ? <Busy>Linking…</Busy> : "Confirm node"} <Icon name="check" size={15} />
           </button>
         ) : (
           <button
@@ -336,7 +336,7 @@ export default function Account({ query }: { query: URLSearchParams }) {
           </div>
           <p className="muted">When a pool is busy, waiting requests are served in order of ratio, highest first. A low ratio never blocks a request; it only waits longer. AI agents paying with x402 count as 1.</p>
           <p className="faint">
-            Availability rewards: {rewards.data ? <b>{fmtMc(rewardMc)} credits</b> : "…"} in recent ledger events. Nodes that stay online while their pool has a queue earn {inc.availability.reward_mc_per_min} mc a minute from the reserve.
+            Availability rewards: {rewards.data ? <b>{fmtMc(rewardMc)} credits</b> : <Spinner size={11} />} in recent ledger events. Nodes that stay online while their pool has a queue earn {inc.availability.reward_mc_per_min} mc a minute from the reserve.
           </p>
         </section>
 

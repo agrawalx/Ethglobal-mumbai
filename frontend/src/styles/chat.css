@@ -398,3 +398,24 @@
 .pool-pin .text-link {
   font-size: 12.5px;
 }
+
+/* playground: one dominant conversation panel */
+.play-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 12px; margin: 8px 0 18px; }
+.play-head h1 { font-size: 28px; margin: 0; }
+.play-head-aside { display: flex; align-items: center; gap: 18px; }
+.play-balance { color: var(--muted); font-size: 14px; text-decoration: none; }
+.play-balance b { color: var(--text); font-size: 18px; }
+.play { display: grid; gap: 14px; margin-bottom: 20px; }
+.play .chat-log { min-height: 340px; max-height: 60vh; }
+.play-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.play-select { display: inline-flex; align-items: center; gap: 8px; }
+.play-select select { width: auto; min-width: 0; max-width: 100%; padding: 6px 10px; }
+.play-pin, .play-phase { margin: 0; font-size: 13px; }
+.play-error { display: grid; gap: 8px; justify-items: start; }
+.play-result { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; font-size: 13px; }
+.play-foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px; font-size: 12.5px; }
+.play-foot p { margin: 0; }
+.play-options { display: grid; justify-items: end; gap: 8px; }
+.play-options summary { cursor: pointer; list-style: none; }
+.play-options summary::-webkit-details-marker { display: none; }
+.route-note { margin: 0 0 10px; font-size: 12.5px; }

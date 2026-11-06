@@ -64,7 +64,8 @@ export function createRouter(cfg: Config, db: Db, directory: Directory, queue?: 
 
   const ownerOf = (nodeId: string) => (db.prepare("SELECT account_id FROM nodes WHERE node_id = ?").get(nodeId) as { account_id: string } | undefined)?.account_id;
 
-  async function candidates(model: ModelConfig, opts: SelectOptions = {}): Promise<SelectedPool[]> {
+  async function candidates(model: ModelConfig, opts: SelectOptions = {}, rejected?: Map<string, string>): Promise<SelectedPool[]> {
+    const reject = (id: string, reason: string) => { rejected?.set(id, reason); };
     const pools = await directory.readyPools(model.model_id);
     // SPEC §16.1 many pools: each pool has its own private coordinator (scheduler) URL.
     const coordinators = coordinatorMap(cfg);
@@ -73,21 +74,25 @@ export function createRouter(cfg: Config, db: Db, directory: Directory, queue?: 
     const out = new Map<string, SelectedPool>();
     for (const p of pools) {
       const provider = providerCoordinator(db, p.pool_id);
-      if (provider && !providerAvailable(db, p.pool_id)) continue;
+      if (provider && !providerAvailable(db, p.pool_id)) { reject(p.pool_id, "The coordinator relay is unavailable."); continue; }
       const coordinatorUrl = provider ?? coordinatorFor(cfg, p.pool_id, coordinators);
-      if (p.status !== "ready" || !p.models.includes(model.model_id) || p.coordinator_url_hash !== hashUrl(coordinatorUrl) || p.members.length === 0) continue;
+      if (p.status !== "ready") { reject(p.pool_id, "The pool directory listing is not ready."); continue; }
+      if (!p.models.includes(model.model_id)) { reject(p.pool_id, "The pool does not advertise this model."); continue; }
+      if (p.coordinator_url_hash !== hashUrl(coordinatorUrl)) { reject(p.pool_id, "The coordinator address does not match the directory listing."); continue; }
+      if (p.members.length === 0) { reject(p.pool_id, "The pool has no advertised members."); continue; }
       // SPEC §16.3: pinning, private pools, banned owners.
       if (opts.pin && p.pool_id !== opts.pin) continue;
       const priv = privatePools(cfg)[p.pool_id];
       if (priv) {
         const owners = (db.prepare("SELECT DISTINCT account_id FROM nodes WHERE pool_id = ?").all(p.pool_id) as { account_id: string }[]).map((r) => r.account_id);
-        if (!opts.accountId || ![...priv, ...owners].includes(opts.accountId)) continue;
+        if (!opts.accountId || ![...priv, ...owners].includes(opts.accountId)) { reject(p.pool_id, "The pool is private and is not available for public discovery."); continue; }
       }
-      if ((db.prepare("SELECT count(*) AS n FROM nodes WHERE pool_id = ? AND banned = 1").get(p.pool_id) as { n: number }).n > 0) continue;
+      if ((db.prepare("SELECT count(*) AS n FROM nodes WHERE pool_id = ? AND banned = 1").get(p.pool_id) as { n: number }).n > 0) { reject(p.pool_id, "A pool member is blocked."); continue; }
       // Post-MVP P5.5 / P5.7: never route into a pool that is restarting or has a swapping member.
       const swapping = swappingMembers(db, cfg, p.pool_id, now);
       if (isRestarting(db, cfg, p.pool_id, now) || swapping.length > 0) {
         console.warn(JSON.stringify({ msg: "pool_skipped", pool_id: p.pool_id, restarting: swapping.length === 0, swapping }));
+        reject(p.pool_id, swapping.length ? "A pool member is under memory pressure." : "The pool is restarting.");
         continue;
       }
       // Every advertised member must be registered in THIS pool, online, and fresh.
@@ -95,7 +100,11 @@ export function createRouter(cfg: Config, db: Db, directory: Directory, queue?: 
         `SELECT n.hb_ts, n.hb_online, n.hb_model, n.hb_hw_verified, r.score FROM nodes n
          LEFT JOIN node_reliability r ON r.node_id = n.node_id WHERE n.node_id = ? AND n.pool_id = ?`,
       ).get(id, p.pool_id) as { hb_ts: number | null; hb_online: number | null; hb_model: string | null; hb_hw_verified: number | null; score: number | null } | undefined);
-      if (members.some((n) => !n || n.hb_hw_verified === 0 || !n.hb_online || n.hb_ts === null || n.hb_ts < minTs || n.hb_ts > now + 60_000 || configModelFor(cfg.net, n.hb_model)?.model_id !== model.model_id)) continue;
+      if (members.some(n => !n)) { reject(p.pool_id, "A listed member is not registered in this pool."); continue; }
+      if (members.some(n => n?.hb_hw_verified === 0)) { reject(p.pool_id, "A member's hardware has not been verified."); continue; }
+      if (members.some(n => !n?.hb_online)) { reject(p.pool_id, "A member is offline."); continue; }
+      if (members.some(n => n?.hb_ts == null || n.hb_ts < minTs || n.hb_ts > now + 60_000)) { reject(p.pool_id, "A member's heartbeat is missing, stale, or in the future."); continue; }
+      if (members.some(n => configModelFor(cfg.net, n?.hb_model ?? null)?.model_id !== model.model_id)) { reject(p.pool_id, "A member is reporting a different model."); continue; }
       // SPEC §9.2: the pool is the reputation identity (its own success rate + uptime), not its weakest node.
       const reliability = poolReliability(db, cfg, p.pool_id, now);
       const count = active.get(p.pool_id) ?? 0;
@@ -115,6 +124,23 @@ export function createRouter(cfg: Config, db: Db, directory: Directory, queue?: 
 
   return {
     pricing,
+    async availability(poolId: string, modelId: string) {
+      const checked_at = Date.now();
+      const result = (available: boolean, reason: string, action: string) => ({ available, reason, action, checked_at });
+      const model = cfg.model(modelId);
+      if (!model) return result(false, "The model is not configured on the gateway.", "Contact the gateway operator.");
+      const catalog = await directory.models();
+      if (!catalog.some(entry => entry.model_id === modelId)) return result(false, "The model is missing from the marketplace directory.", "Check the model listing and try again.");
+      const rejected = new Map<string, string>();
+      const eligible = await candidates(model, {}, rejected);
+      if (eligible.some(p => p.poolId === poolId)) return result(true, "The gateway can route requests to this pool and model.", "");
+      const reason = rejected.get(poolId);
+      if (reason) return result(false, reason, "Check connection details and try again.");
+      const listing = (await directory.pools()).find(p => p.pool_id === poolId);
+      if (!listing) return result(false, "The pool is not listed in the marketplace directory.", "Check the pool listing and try again.");
+      if (!listing.models.includes(modelId)) return result(false, "The pool does not advertise this model.", "Check the pool model and try again.");
+      return result(false, "The pool is not listed as ready for this model in the marketplace directory.", "Check pool setup and try again.");
+    },
     /** Smallest live context over the ready pools, or undefined when any pool has not reported one. */
     async contextLength(model: ModelConfig): Promise<number | undefined> {
       const hit = contexts.get(model.model_id);

@@ -45,7 +45,7 @@ export default function ReceiptSheet({ receipt, nodes, onClose }: { receipt: Rec
           <dt>Time</dt>
           <dd>{fmtTime(receipt.ts)}</dd>
           <dt>Ledger</dt>
-          <dd>{receipt.hcs_seq != null ? <SourceBadge kind="hcs" seq={receipt.hcs_seq} href={hashscanMessage(env.hcsTopic, receipt.hcs_seq)} /> : <span className="faint">not on HCS yet</span>}</dd>
+          <dd>{receipt.hcs_seq != null ? <SourceBadge kind="hcs" seq={receipt.hcs_seq} href={hashscanMessage(env.hcsTopic, receipt.hcs_seq)} /> : <span className="faint">not on HCS yet</span>}{" "}<a className="text-link" href="/ledger">View in network activity</a></dd>
           {receipt.x402_tx && (
             <>
               <dt>Payment</dt>

@@ -31,3 +31,18 @@ export function useNow(ms = 1000) {
   }, [ms]);
   return now;
 }
+
+/** The gateway applies the same marketplace and routing checks used by model discovery. */
+export function usePoolAvailability(poolId: string | undefined, model: string | undefined) {
+  const key = `${poolId ?? ""}\n${model ?? ""}`;
+  const result = useAsync(async () => {
+    if (!poolId || !model) return { key, value: null };
+    const { env } = await import("../config/env");
+    const { PoolAvailability } = await import("@gpupool/shared");
+    const url = `${env.gatewayUrl.replace(/\/$/, "")}/pools/${encodeURIComponent(poolId)}/availability?model=${encodeURIComponent(model)}`;
+    const response = await fetch(url, { headers: { accept: "application/json" } });
+    if (!response.ok) throw new Error("Could not check request availability. Try again.");
+    return { key, value: PoolAvailability.parse(await response.json()) };
+  }, [poolId, model], { refreshMs: 5000 });
+  return { ...result, data: result.data?.key === key && !result.error ? result.data.value : null };
+}

@@ -14,7 +14,7 @@ export const ProviderMember = z.object({
 export const ProviderPool = z.object({
   pool_id: PoolId, name: z.string(), model: z.string(), expected_members: z.number(), owner_account: z.string(),
   state: z.enum(["preparing", "starting", "ready", "stopped"]), generation: z.number(),
-  coordinator_connected: z.boolean(), discoverable: z.boolean(), members: z.array(ProviderMember),
+  coordinator_connected: z.boolean(), members: z.array(ProviderMember),
 });
 export const ProviderOverview = z.object({
   models: z.array(z.object({ model_id: z.string(), mlx_variant: z.string().nullable(), size_gb: z.number(), num_layers: z.number() })),

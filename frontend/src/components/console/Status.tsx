@@ -19,8 +19,20 @@ export function PoolPill({ status }: { status: "ready" | "forming" | "offline" }
 }
 
 /** Shared loading / error / empty states for panels. */
-export function Loading({ h = 120 }: { h?: number }) {
-  return <div className="skeleton" style={{ minHeight: h }} aria-busy="true" aria-label="Loading" />;
+export function Spinner({ size = 14 }: { size?: number }) {
+  return <span className="spinner" style={{ width: size, height: size }} aria-hidden="true" />;
+}
+/** Inline "working" text with a spinner, for async checks and busy buttons. */
+export function Busy({ children, size }: { children: ReactNode; size?: number }) {
+  return <span className="busy" role="status" aria-live="polite"><Spinner size={size} />{children}</span>;
+}
+export function Loading({ h = 120, label = "Loading…" }: { h?: number; label?: string }) {
+  return (
+    <div className="skeleton skeleton-loader" style={{ minHeight: h }} aria-busy="true" role="status">
+      <Spinner size={20} />
+      <span className="faint">{label}</span>
+    </div>
+  );
 }
 export function ErrorBox({ error, retry }: { error: Error; retry?: () => void }) {
   return (

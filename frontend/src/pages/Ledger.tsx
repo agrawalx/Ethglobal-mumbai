@@ -7,7 +7,7 @@ import { PageHead } from "../components/ConsoleShell";
 import SourceBadge from "../components/SourceBadge";
 import { CodeBox } from "../components/console/CopyButton";
 import { Icon } from "../components/Icon";
-import { Empty, ErrorBox, Loading } from "../components/console/Status";
+import { Empty, ErrorBox, Loading, Busy } from "../components/console/Status";
 import { api } from "../data";
 
 import { useAsync } from "../hooks/useAsync";
@@ -90,7 +90,7 @@ function MirrorCheck({ seq }: { seq: number | null }) {
   const check = useAsync(() => (seq != null && topic ? api.mirror(topic, seq) : Promise.resolve(null)), [seq]);
   if (seq == null) return <span className="faint">Not on HCS yet. The gateway writes to HCS after the request, without blocking it.</span>;
   if (!topic) return <span className="faint">No HCS topic is set (VITE_HCS_TOPIC).</span>;
-  if (check.loading) return <span className="faint">Checking the mirror node…</span>;
+  if (check.loading) return <span className="faint"><Busy>Checking the mirror node…</Busy></span>;
   if (check.error) return <span className="mirror-bad">Mirror node check failed: {check.error.message}</span>;
   return check.data?.found ? (
     <span className="mirror-ok">

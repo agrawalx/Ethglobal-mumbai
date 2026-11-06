@@ -1,3 +1,4 @@
+import { Busy } from "../components/console/Status";
 import { useState } from "react";
 import { Icon } from "../components/Icon";
 import { shortHash } from "../lib/format";
@@ -10,7 +11,7 @@ export default function WalletButton() {
   if (w.connected && w.wrongChain)
     return (
       <button className="wallet-chip is-warn" onClick={() => w.switchToHedera().catch((e: Error) => setErr(e.message))} disabled={w.switching} title={err ?? "Your wallet is on another network"}>
-        <Icon name="wallet" size={14} /> {w.switching ? "Switching…" : "Switch to Hedera"}
+        <Icon name="wallet" size={14} /> {w.switching ? <Busy>Switching…</Busy> : "Switch to Hedera"}
       </button>
     );
   if (w.connected)
@@ -33,7 +34,7 @@ export default function WalletButton() {
         else setErr("No browser wallet found. Install MetaMask.");
       }}
     >
-      <Icon name="wallet" size={14} /> {w.connecting ? "Connecting…" : "Connect wallet"}
+      <Icon name="wallet" size={14} /> {w.connecting ? <Busy>Connecting…</Busy> : "Connect wallet"}
     </button>
   );
 }
