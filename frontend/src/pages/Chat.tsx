@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Me, ModelEntry, Receipt, RouteHop } from "@shared/types";
 import { PageHead } from "../components/ConsoleShell";
 import RouteTrace from "../components/chat/RouteTrace";
+import Markdown from "../components/chat/Markdown";
 import TokMeter from "../components/chat/TokMeter";
 import ReceiptSheet from "../components/chat/ReceiptSheet";
 import InferenceTile from "../components/chat/InferenceTile";
@@ -111,9 +112,19 @@ export default function Chat({ query }: { query: URLSearchParams }) {
   const hold = entry ? holdFor(entry.model_factor, maxTokens, estimateTokens(draft.length ? draft : [{ content: "" }])) : 0;
 
   useEffect(() => () => abort.current?.abort(), []);
+  /* Follow new text only while the reader is at the bottom; scrolling up stops the follow. */
+  const [atBottom, setAtBottom] = useState(true);
+  const onLogScroll = () => {
+    const el = log.current;
+    if (el) setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 48);
+  };
+  const toLatest = () => {
+    log.current?.scrollTo({ top: log.current.scrollHeight, behavior: "smooth" });
+    setAtBottom(true);
+  };
   useEffect(() => {
-    log.current?.scrollTo({ top: log.current.scrollHeight });
-  }, [msgs]);
+    if (atBottom) log.current?.scrollTo({ top: log.current.scrollHeight });
+  }, [msgs, atBottom]);
 
   async function send(text: string) {
     const content = text.trim();
@@ -287,7 +298,8 @@ export default function Chat({ query }: { query: URLSearchParams }) {
           <RouteTrace route={route} nodes={nodes} active={streaming ? active : active === -2 ? -2 : -1} streaming={streaming} />
 
           <section className="panel chat-pane" aria-label="Conversation">
-            <div className="chat-log" ref={log} aria-live="polite">
+            <div className="chat-log-wrap">
+            <div className="chat-log" ref={log} onScroll={onLogScroll} aria-live="polite">
               {msgs.length === 0 ? (
                 <div className="chat-empty">
                   <p className="muted">Ask anything. Or try one of these:</p>
@@ -303,13 +315,23 @@ export default function Chat({ query }: { query: URLSearchParams }) {
                 msgs.map((m, i) => (
                   <div key={i} className={`msg msg-${m.role}`}>
                     <span className="mono-label">{m.role === "user" ? "You" : short(chosen)}</span>
-                    <p>
-                      {m.content}
-                      {streaming && i === msgs.length - 1 && <i className="caret" aria-hidden="true" />}
-                    </p>
+                    {m.role === "assistant" ? (
+                      <div className="msg-body">
+                        <Markdown text={m.content} />
+                        {streaming && i === msgs.length - 1 && <i className="caret" aria-hidden="true" />}
+                      </div>
+                    ) : (
+                      <p>{m.content}</p>
+                    )}
                   </div>
                 ))
               )}
+            </div>
+            {!atBottom && msgs.length > 0 && (
+              <button className="chat-jump" onClick={toLatest}>
+                {streaming ? "New text below" : "Jump to latest"} ↓
+              </button>
+            )}
             </div>
             {error && <ErrorBox error={error} />}
             {receipt && !streaming && (
