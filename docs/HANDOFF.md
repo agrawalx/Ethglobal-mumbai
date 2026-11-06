@@ -1,0 +1,322 @@
+# HANDOFF: Full Context for Implementation Agents
+
+**Read `CLAUDE.md` (rules) and then this file.** It gives a new agent (or teammate) all the context to start work. Then read `docs/SPEC.md` (the MVP specification). `docs/PROPOSAL.md` is the pitch. `docs/research/` has background only.
+
+Writing standard: mostly ASD-STE100 (Simplified Technical English). Commands and code are exact.
+
+---
+
+## 1. Project in one paragraph
+
+We build an open GPU pool network. People bring computers (gaming laptops, MacBooks). Near computers with low delay form a **pool**. A pool runs one AI model that no single computer can run. **Parallax** (GradientHQ, installed as a dependency, not forked) does the distributed inference. We build the layers on top: a **gateway** (OpenAI-compatible API, World ID login, x402 payments, a router that picks a pool for a model, a credit ledger), **Hedera** (HCS ledger log, x402 settlement, an HBAR payout contract), and **Arkiv** (public, self-expiring directory of nodes, pools, and models). The incentive layer is a BitTorrent-style contribution ratio with credits. Reputation measures reliability only.
+
+**Event:** ETHGlobal Mumbai 2026. **Targets:** finalist + Hedera x402 track + World IDKit track + Arkiv track.
+
+---
+
+## 2. What we have proved already (measured, 5–6 Nov 2026)
+
+### 2.1 Results
+
+| # | Result | Evidence |
+|---|---|---|
+| P1 | Parallax runs on the Linux RTX 4060 laptop | Qwen3-0.6B, ~135 tok/s, scheduler + node on one machine |
+| P2 | llama.cpp baseline on the 4060 | Qwen2.5-7B Q4_K_M: 53.5 tok/s generation, 2596 tok/s prefill (98% of the bandwidth limit) |
+| P3 | A Mac joins a Linux scheduler over the LAN | M4 MacBook Air joined with full hardware info, MLX backend |
+| P4 | Request through the Linux scheduler, served by the Mac | Qwen3-8B (MLX 8-bit), 96 tokens in 12.2 s ≈ 7.9 tok/s |
+| P5 | **One model split across Mac + NVIDIA** | **Qwen3-14B: M4 layers [0,29) (MLX 8-bit) + 4060 layers [29,40) (FP8).** Coherent output. Neither machine can run it alone. |
+| P6 | Memory pressure is the cause of stalls on 16 GB Macs | Baseline: 2.7 GiB swap-in during a run, 12 stalls > 400 ms, 3.2 tok/s |
+| P7 | Low-KV fix works | Mac `--kv-cache-memory-fraction 0.25 --max-sequence-length 4096`: swap-in 0.32 GiB, 2 stalls, **5.2–6.0 tok/s**, TTFT 0.65–1.2 s |
+| P8 | Agent bridge between Linux Claude and Mac Codex | WebSocket relay over an SSH tunnel; used for all Mac coordination |
+
+### 2.2 Problems found and their fixes (apply all of them)
+
+| Problem | Fix |
+|---|---|
+| Parallax needs `nvcc` on CUDA nodes (FlashInfer/deep_gemm JIT) | Install into the Parallax venv: `uv pip install --python .venv/bin/python "nvidia-cuda-nvcc==13.0.*" "nvidia-cuda-cccl==13.0.*" "nvidia-nvvm==13.0.*" "nvidia-cuda-crt==13.0.*"`. Create symlinks `nvidia/cu13/lib64 -> lib` and `lib/libcudart.so -> libcudart.so.13`. Export `CUDA_HOME=<venv>/lib/python3.12/site-packages/nvidia/cu13` and add `$CUDA_HOME/bin` to `PATH`. |
+| Parallax uploads package info to Gradient by default | Always pass `-u`. |
+| Default network name `gradient` is shared by every Parallax user on the LAN | Always pass a private `--dht-prefix`. |
+| Scheduler identity persists in `p2p.key` (in the cwd of `parallax run`) | Delete or rotate it to get a new scheduler peer ID. |
+| Docker bridge IPs are advertised | Pass `--announce-maddrs /ip4/<lan-ip>/tcp/<port> /ip4/<lan-ip>/udp/<port>/quic-v1`. |
+| Random ports cannot pass the firewall | Pass fixed `--tcp-port` / `--udp-port`. Open them in `ufw` only for pool member IPs. |
+| **Ghost nodes**: killed parents leave child processes that keep heartbeating | Stop the **whole process group** (`setsid` to start; kill every `parallax/.venv/bin/python` process, including `spawn_main` and `resource_tracker`). |
+| **First node dropped at placement**: a node that waits > 30 s for its layer assignment has a stale heartbeat and is removed at bootstrap | Start all node joins **within 30 s** of each other. (Post-MVP: launcher hook.) |
+| Nodes give up after 5 min without an assignment (`launch.py max_wait_time = 300`) | Same: synchronized joins. |
+| A model download during join fills the link → heartbeat timeouts | Download the model **before** joining; then use `HF_HUB_OFFLINE=1`. |
+| Scheduler needs model config files even when nodes are offline | Do **not** set `HF_HUB_OFFLINE=1` on the scheduler (it downloads small config files). |
+| Mac had a pre-release `httpx 1.0.dev6` → `TypeError` in `p2p/server.py` | Pin `httpx>=0.26,<0.29` (0.28.1 works). |
+| Mac Ethernet adapter reconnect → new DHCP IP; half-dead node | Restart Parallax on IP change; update firewall and `--announce-maddrs`. |
+| After a messy re-placement, forwards hang (stale peer state) | Do a clean synchronized restart of all nodes. |
+| Logprobs are rejected by Parallax (`_validate_supported_sampling_params`) | Do not send `logprobs`. Future verification uses a separate scoring engine. |
+| Qwen3 thinking mode is on by default | Send `"chat_template_kwargs": {"enable_thinking": false}`. |
+| Parallax backend API has no auth, CORS `*`, open `/weight/refit` | Keep port 3001 on `127.0.0.1`. Only the gateway calls it. |
+
+### 2.3 Parallax facts (from source, commit `162354a`, Lattica 1.0.21, SGLang 0.5.12)
+
+- `parallax run -m <model> -n <nodes>` starts the scheduler (HTTP `127.0.0.1:3001`). `parallax join` starts a node.
+- Useful HTTP: `POST /v1/chat/completions`, `GET /cluster/status_json` (nodes, layer ranges), `GET /v1/models`.
+- Model catalog is fixed in `src/backend/server/static_config.py`; each GPU model maps to an MLX variant for Macs.
+- Node memory: `--param-mem-ratio` (default 0.65), `--kvcache-mem-ratio` (0.25). Mac MLX actual KV: `--kv-cache-memory-fraction`.
+- Placement prefers the fewest stages; a model that fits on one node is not split.
+- Leave detection: 30 s heartbeat timeout. Uncovered layers trigger a global rebalance (all nodes reload).
+- No mid-request recovery. See `docs/research/parallax-membership-and-failover.md`.
+- `--notify-url` on nodes posts per-step `{session_id, step_id, block_idx, total_blocks, status}` (post-MVP cross-check).
+
+---
+
+## 3. Environment as of 6 Nov 2026 (check before use; IPs change)
+
+| Item | Value |
+|---|---|
+| Venue LAN | Wired `10.73.0.0/16`, gateway `10.73.0.1`. Venue Wi-Fi is isolated and slow (190–550 ms); do not use it. |
+| Linux laptop (coordinator + node, 4060 8 GB) | `10.73.185.71`, user `yash`, Parallax at `~/parallax` (venv `.venv`), models for llama.cpp in `~/models`, Qwen3-14B-FP8 in HF cache |
+| Mac M4 16 GB (node) | Last IP `10.73.73.218` (changed twice; check with `ifconfig`). Adapter is 100 Mbps. Parallax at `~/Desktop/ETHGlobal/parallax`. 8B MLX cache in `~/.cache/huggingface`; 14B MLX cache in `<parallax>/.cache/huggingface` |
+| Mac M5 16 GB (node 3) | Not set up yet |
+| Windows laptop (no NVIDIA GPU) | `10.73.84.181`. Use as the **requester laptop** for the demo |
+| Ports | Scheduler 5100, Linux node 5101, Mac nodes 5102, 5103 (TCP+UDP) |
+| Private network name | `gpupool-x7k2` |
+| Agent bridge | Relay on Linux `127.0.0.1:8765`, room `ethglobal`, agents `claude` (Linux) and `codex` (Mac). Code: `~/agent-bridge-src/agent-bridge`. Mac connects by SSH tunnel with a restricted key (`~/.ssh/authorized_keys`, `from=` must list the Mac IP). |
+
+### 3.1 Known-good commands
+
+**Scheduler (coordinator, Linux):**
+```bash
+cd ~/parallax && source .venv/bin/activate
+setsid parallax run -m Qwen/Qwen3-14B-FP8 -n 3 -u --dht-prefix gpupool-x7k2 \
+  --tcp-port 5100 --udp-port 5100 \
+  --announce-maddrs /ip4/10.73.185.71/tcp/5100 /ip4/10.73.185.71/udp/5100/quic-v1
+```
+
+**Linux node (4060):**
+```bash
+cd ~/parallax && source .venv/bin/activate
+export CUDA_HOME=$PWD/.venv/lib/python3.12/site-packages/nvidia/cu13 PATH=$CUDA_HOME/bin:$PATH
+HF_HUB_OFFLINE=1 setsid parallax join -u --dht-prefix gpupool-x7k2 --tcp-port 5101 --udp-port 5101 \
+  --announce-maddrs /ip4/10.73.185.71/tcp/5101 /ip4/10.73.185.71/udp/5101/quic-v1
+```
+
+**Mac node (M4 / M5):**
+```bash
+cd ~/Desktop/ETHGlobal/parallax && source .venv/bin/activate
+HF_HOME=<cache with the 14B MLX model> HF_HUB_OFFLINE=1 parallax join -u --dht-prefix gpupool-x7k2 \
+  --tcp-port 5102 --udp-port 5102 \
+  --announce-maddrs /ip4/<mac-ip>/tcp/5102 /ip4/<mac-ip>/udp/5102/quic-v1 \
+  --kv-cache-memory-fraction 0.25 --max-sequence-length 4096
+```
+
+**Test request:**
+```bash
+curl -s http://127.0.0.1:3001/v1/chat/completions -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"Say hello"}],"max_tokens":32,"stream":false,"chat_template_kwargs":{"enable_thinking":false}}'
+```
+
+---
+
+## 4. Repository structure
+
+```
+Ethglobal-mumbai/
+├── AGENTS.md / CLAUDE.md   → pointer to this file
+├── README.md
+├── .gitignore
+├── docs/
+│   ├── HANDOFF.md          ← this file
+│   ├── SPEC.md             ← MVP specification (source of truth for behaviour)
+│   ├── PROPOSAL.md         ← pitch (ASD-STE100)
+│   └── research/           ← background, not requirements
+├── shared/                 ← Step 0 interfaces: TS types + JSON examples (API, HCS events, Arkiv entities, Merkle leaf, config)
+├── pool/                   ← C1: scripts to start/stop/status the Parallax pool; node.env.example
+├── node-agent/             ← C2: Python node agent (key, registration, Arkiv listing, heartbeat)
+├── gateway/                ← C3–C6: TypeScript gateway (API, World login, x402, router, ledger, HCS, settlement job)
+├── contracts/              ← C10: EpochPayout.sol (Foundry)
+├── agent-client/           ← C9: x402 paying AI agent script
+├── frontend/               ← C8: Next.js app
+├── arkiv/                  ← Arkiv track files (schema.md, friction.md, reach.md, why-arkiv.md, how-you-use-arkiv.md)
+└── scripts/                ← dev helpers (demo runner, seed data)
+```
+
+---
+
+## 5. End-to-end implementation plan (in order)
+
+Each step has an owner stream (see `docs/SPEC.md` §2.1 and the parallel plan in §6), an output, and a "done when" check. Steps in the same phase can run in parallel.
+
+### Phase 0: Interfaces (do first, ~1 hour, everyone)
+
+| Step | Work | Done when |
+|---|---|---|
+| 0.1 | Write `shared/` types: gateway API request/response, session JWT claims, HCS event union, Arkiv entity schemas, Merkle leaf format, config (models, factors, prices, epoch length) | Types compile; one JSON example per type |
+| 0.2 | Create Hedera testnet accounts (treasury, operator, settler, agent, 3 provider payout accounts); create HCS topic | IDs in `.env` files |
+| 0.3 | World Developer Portal: app, RP, action `gpupool-account` (staging); save the RP signing key | IDs in `gateway/.env` |
+| 0.4 | Arkiv: wallets for gateway, coordinator, each node; faucet; access key | Keys in `.env` files |
+
+### Phase 1: Foundations (parallel)
+
+| Step | Stream | Work | Done when |
+|---|---|---|---|
+| 1.1 | A Inference | Set up the M5 as node 3 (same as M4). Write `pool/start-scheduler.sh`, `pool/join-node.sh` (reads `node.env`), `pool/stop-all.sh` (process group), `pool/status.sh` | 3-node pool serves Qwen3-14B; warm-up works on `127.0.0.1:3001` |
+| 1.2 | B Gateway | Gateway skeleton: `/v1/chat/completions` proxy with streaming to the pool; `/v1/models`; config loader; SQLite schema (SPEC §8.7) | Requester laptop gets an answer through the gateway |
+| 1.3 | E Contract | `EpochPayout.sol` + Foundry tests (post, claim, double-claim, bad proof, tinybar units) + testnet deploy via Hashio | Contract verified on HashScan |
+| 1.4 | F Arkiv | Entity schemas; writer + extender helper; seed `gpupool.model` catalog; a query that returns ready pools for a model | Seeded entities visible; query runs |
+| 1.5 | G Frontend | Next.js app with all pages on mock data from `shared/` examples | Pages render with mocks |
+| 1.6 | D Hedera | x402 proof of concept: paywalled `/echo` endpoint + agent pays on testnet | Settled payment tx ID |
+
+### Phase 2: Core flows (parallel, after 1.2)
+
+| Step | Stream | Work | Done when |
+|---|---|---|---|
+| 2.1 | C Identity | World login: `/auth/world/rp-signature`, `/auth/world/verify`, accounts table, starter credits, JWT; IDKit widget in frontend | Success, duplicate-rejected, and cancel paths work |
+| 2.2 | B Gateway | Credit ledger: hold, settle, split (90/5/5), self-request rule, receipts; route from `/cluster/status_json` | Balances change correctly in a test |
+| 2.3 | D Hedera | HCS event writer (async, signed); `ledger_events.hcs_seq` filled | Events visible on HashScan |
+| 2.4 | D Hedera | x402 in the gateway for requests without a session; agent client (budget cap) | Agent gets answers; payments recorded |
+| 2.5 | A + F | Node agent: key, registration link, Arkiv node listing (extend every 30 s), heartbeat to gateway; coordinator writes `gpupool.pool` | Stopped node disappears from Arkiv after expiry |
+
+### Phase 3: Router, reputation, payouts
+
+| Step | Stream | Work | Done when |
+|---|---|---|---|
+| 3.1 | B + F | Router reads `gpupool.pool` from Arkiv; score = reliability × (1 − load); 503 when none | Model list and routing come from Arkiv |
+| 3.2 | B | Reliability score (success 0.7 + uptime 0.3); pool score = min node score; priority queue by ratio | Scores visible on `/me` |
+| 3.3 | E + D | Settlement job: epoch close → Merkle tree → HCS `epoch_closed` → `postEpoch` with HBAR; proofs API; claim page | A provider claims HBAR on HashScan |
+| 3.4 | G | Wire all frontend pages to real APIs and Arkiv | No mocks left |
+
+### Phase 4: Demo and submission
+
+| Step | Work | Done when |
+|---|---|---|
+| 4.1 | Full demo dry run from the Windows laptop (SPEC §1.1, 9 steps) | Runs twice without manual fixes |
+| 4.2 | Track files: Hedera README (x402 tx ID, HashScan links), World debrief, `/arkiv/*.md` + writer wallets + one runnable query | Files complete |
+| 4.3 | Demo video ≤ 5 min; submission | Submitted before the deadline |
+
+---
+
+## 6. Who does what (suggested)
+
+| Owner | Streams |
+|---|---|
+| Linux (Claude + Yash) | B gateway core + ledger; then help integrate C/D |
+| Mac (Codex) | A pool scripts + M5 + node agent; then F Arkiv writer in the node agent |
+| Person C | D x402 + HCS + agent client; E contract + settlement |
+| Person D | C World login; G frontend; Arkiv reads in the UI |
+
+---
+
+## 7. Rules for agents working in this repo
+
+1. `docs/SPEC.md` is the source of truth for behaviour. If you change behaviour, update the spec in the same commit.
+2. Build the MVP only. Out-of-scope items are in `docs/SPEC.md` §16. Do not build them. Do not design against them.
+3. Never commit secrets. Use `.env` files (ignored). Update the matching `.env.example` when you add a key.
+4. Never expose the Parallax API (port 3001) outside `127.0.0.1`.
+5. Never fork Parallax into this repo. Use it as an installed dependency. Small runtime hooks go in `pool/`.
+6. Stop Parallax by process group. Check `pgrep -f "parallax/.venv/bin/python"` is empty after a stop.
+7. Coordinate Mac work through the agent bridge (`./bridge send --to codex …`). Include a task ID and acceptance criteria.
+8. Confirm unknowns before you build on them (x402 Hedera package/API, testnet USDC, Arkiv extend API names, World Agent Pass).
+
+---
+
+## 8. Environment keys
+
+Each component has a `.env.example`. Copy it to `.env` and fill it. Summary:
+
+### gateway/.env
+| Key | Purpose |
+|---|---|
+| `PORT` | Gateway HTTP port (e.g. 8080) |
+| `PUBLIC_URL` | URL that the requester laptop uses (e.g. `http://10.73.185.71:8080`) |
+| `POOL_COORDINATOR_URL` | Parallax scheduler API (`http://127.0.0.1:3001`) |
+| `DATABASE_PATH` | SQLite file path |
+| `JWT_SECRET` | Signs session tokens |
+| `GATEWAY_SIGNING_KEY` | ed25519 private key; signs receipts and HCS events |
+| `CORS_ORIGINS` | Frontend origin(s) |
+| `WORLD_APP_ID` | World Developer Portal app ID |
+| `WORLD_RP_ID` | RP ID (used in the verify URL) |
+| `WORLD_RP_SIGNING_KEY` | RP signing key (server only) |
+| `WORLD_ACTION` | `gpupool-account` |
+| `WORLD_ENVIRONMENT` | `staging` |
+| `STARTER_CREDITS` | e.g. `10000` |
+| `STARTER_EXPIRY_DAYS` | e.g. `14` |
+| `HEDERA_NETWORK` | `testnet` |
+| `HEDERA_OPERATOR_ID` / `HEDERA_OPERATOR_KEY` | Pays HCS fees; holds the topic submit key |
+| `HCS_TOPIC_ID` | Ledger topic |
+| `HEDERA_MIRROR_URL` | `https://testnet.mirrornode.hedera.com` |
+| `HEDERA_JSON_RPC_URL` | `https://testnet.hashio.io/api` |
+| `HEDERA_CHAIN_ID` | `296` |
+| `TREASURY_ACCOUNT_ID` / `TREASURY_PRIVATE_KEY` | Receives x402; funds epoch payouts |
+| `X402_FACILITATOR_URL` | e.g. `https://x402.org/facilitator` (confirm Hedera support) |
+| `X402_NETWORK` | Hedera testnet network ID used by the x402 library |
+| `X402_PAY_TO` | Treasury account |
+| `SETTLER_PRIVATE_KEY` | Calls `postEpoch` |
+| `PAYOUT_CONTRACT_ADDRESS` | Deployed `EpochPayout` |
+| `EPOCH_SECONDS` | `600` for the demo |
+| `ARKIV_RPC_URL` | `https://rpc.rabdi.db-chain.testnet.arkiv.network` |
+| `ARKIV_CHAIN_ID` | `7794095` |
+| `ARKIV_ACCESS_KEY` | From hub.arkiv.network |
+| `ARKIV_PRIVATE_KEY` | Gateway writer (model catalog, account stats) |
+
+### pool/node.env (one per node; also used by the coordinator)
+| Key | Purpose |
+|---|---|
+| `PARALLAX_DIR` | Parallax checkout |
+| `ROLE` | `scheduler` or `node` |
+| `MODEL` | e.g. `Qwen/Qwen3-14B-FP8` |
+| `INIT_NODES` | Number of nodes (scheduler only), e.g. `3` |
+| `DHT_PREFIX` | Private network name |
+| `LAN_IP` | This machine's wired IP |
+| `TCP_PORT` / `UDP_PORT` | Fixed ports |
+| `HF_HOME` | Model cache directory |
+| `EXTRA_FLAGS` | e.g. Mac `--kv-cache-memory-fraction 0.25 --max-sequence-length 4096` |
+| `CUDA_HOME` | CUDA nodes only |
+
+### node-agent/.env
+| Key | Purpose |
+|---|---|
+| `GATEWAY_URL` | Gateway URL |
+| `NODE_KEY_PATH` | Node EVM key file (`~/.gpupool/node.key`) |
+| `POOL_ID` | Pool this node belongs to |
+| `IS_COORDINATOR` | `true` on the coordinator (writes `gpupool.pool`) |
+| `POOL_KEY_PATH` | Coordinator only: pool listing key |
+| `ARKIV_RPC_URL` / `ARKIV_CHAIN_ID` / `ARKIV_ACCESS_KEY` | Arkiv access |
+| `HEARTBEAT_SECONDS` / `ARKIV_EXTEND_SECONDS` | `10` / `30` |
+
+### contracts/.env
+| Key | Purpose |
+|---|---|
+| `HEDERA_JSON_RPC_URL` | Hashio testnet relay |
+| `DEPLOYER_PRIVATE_KEY` | Deploys the contract (ECDSA) |
+| `SETTLER_ADDRESS` | EVM address allowed to post epochs |
+| `CLAIM_DELAY_SECONDS` | `0`–`300` for the demo |
+
+### agent-client/.env
+| Key | Purpose |
+|---|---|
+| `GATEWAY_URL` | Gateway URL |
+| `AGENT_ACCOUNT_ID` / `AGENT_PRIVATE_KEY` | Pays with x402 |
+| `AGENT_BUDGET_HBAR` | Spending cap |
+| `HEDERA_NETWORK` | `testnet` |
+
+### frontend/.env.local
+| Key | Purpose |
+|---|---|
+| `NEXT_PUBLIC_GATEWAY_URL` | Gateway URL |
+| `NEXT_PUBLIC_WORLD_APP_ID` | World app ID (public) |
+| `NEXT_PUBLIC_WORLD_ACTION` | `gpupool-account` |
+| `NEXT_PUBLIC_WORLD_ENVIRONMENT` | `staging` |
+| `NEXT_PUBLIC_ARKIV_RPC_URL` | Arkiv RPC (read-only) |
+| `NEXT_PUBLIC_PAYOUT_CONTRACT` | Contract address |
+| `NEXT_PUBLIC_HEDERA_CHAIN_ID` | `296` |
+| `NEXT_PUBLIC_HASHSCAN_URL` | `https://hashscan.io/testnet` |
+
+**Never** put a private key or the World RP signing key in a `NEXT_PUBLIC_*` variable.
+
+---
+
+## 9. Open questions (confirm before building on them)
+
+| Question | Who/how |
+|---|---|
+| Exact x402 Hedera package and API; which facilitator supports Hedera testnet | Hedera docs/booth |
+| Testnet USDC availability (MVP uses HBAR) | Hedera booth |
+| Arkiv extend/update API names | Arkiv docs (`/writing/expiration/`) |
+| `selfieCheck` availability in IDKit v4 staging; duplicate handling | World booth |
+| World Agent Pass definition (post-MVP) | World workshop |
+| Partner-pick rule (Hedera + World + Arkiv = 3) | ETHGlobal |

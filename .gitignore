@@ -1,0 +1,33 @@
+# secrets
+.env
+.env.*
+node.env
+!.env.example
+!**/.env.example
+*.key
+p2p.key
+*.pem
+# data
+*.sqlite
+*.sqlite3
+*.db
+transcripts/
+# deps / builds
+node_modules/
+.next/
+dist/
+out/
+.venv/
+__pycache__/
+*.pyc
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+# models / caches
+*.gguf
+*.safetensors
+.cache/
+# os / editor
+.DS_Store
+.idea/
+.vscode/
