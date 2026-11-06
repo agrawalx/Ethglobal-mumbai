@@ -128,8 +128,8 @@ Each sponsor solves one real problem. We do not use a sponsor only for a prize.
 - **Solution:** World ID proves that each account belongs to one unique human.
 - **Use:** A node owner verifies with World ID before the node can join. A new user verifies before the user gets starter credits.
 - **Result:** A blocked user cannot make a new account. Starter credits go to real humans only.
-- **Credential:** We use the minimum credential that is sufficient. All credentials work on a phone. We do not use the Orb, because it needs a physical visit.
-  - Selfie Check gives one node.
+- **Credential:** We accept the Orb or Selfie Check. Selfie Check works on a phone, so users without an Orb visit can join. The Orb is the strongest proof of a unique human.
+  - Orb or Selfie Check gives one node.
   - A good history of verified work gives up to three nodes.
   - Passport verification (NFC) gives up to five nodes. This is optional.
 

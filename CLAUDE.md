@@ -47,7 +47,7 @@ If these documents conflict, `docs/SPEC.md` wins. If the spec is unclear or wron
 | Distributed inference | **Parallax** as an installed dependency. **Never fork it into this repo.** Runtime wrappers and scripts go in `pool/`. |
 | Gateway | One TypeScript service (Node 24, Hono or Fastify). The only public entry point. |
 | Database | **SQLite** (`better-sqlite3`). Postgres is out of scope. |
-| Identity | World IDKit v4, action `gpupool-account`, credential `selfieCheck`, **no Orb**. One account per nullifier (TEXT UNIQUE). |
+| Identity | World IDKit v4, action `gpupool-account`, credentials **Orb** or `selfieCheck` (either one). One account per nullifier (TEXT UNIQUE). |
 | Payments | Credits for accounts; **x402 (HBAR on Hedera testnet)** for requests without a session. |
 | Ledger | SQLite is the working copy. **Every balance change also goes to HCS.** |
 | Payouts | x402 income → HBAR payouts per epoch via `EpochPayout.sol` (Merkle claim). No vesting, no disputes. |
