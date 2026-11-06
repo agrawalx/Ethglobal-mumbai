@@ -1,0 +1,202 @@
+import { useEffect, useState } from "react";
+import type { CSSProperties } from "react";
+import AgentSprite from "./AgentSprite";
+import { crew } from "../data/crew";
+import type { AgentId, MissionPhase } from "../data/crew";
+
+type Pose = { x: number; y: number; say?: string };
+const homes: Record<AgentId, Pose> = {
+  pip: { x: 16, y: 67 },
+  milo: { x: 33, y: 74 },
+  quil: { x: 50, y: 57 },
+  iris: { x: 67, y: 74 },
+  wren: { x: 84, y: 67 },
+};
+const poses: Partial<Record<MissionPhase, Partial<Record<AgentId, Pose>>>> = {
+  introducing: {
+    pip: { x: 24, y: 67, say: "Rex. 8 GB, ready." },
+    milo: { x: 37, y: 73 },
+    quil: { x: 50, y: 49, say: "Meet the pool." },
+    iris: { x: 63, y: 73 },
+    wren: { x: 76, y: 67 },
+  },
+  planning: {
+    pip: { x: 28, y: 69 },
+    milo: { x: 40, y: 75 },
+    quil: { x: 50, y: 46, say: "Splitting Qwen3-14B." },
+    iris: { x: 61, y: 75 },
+    wren: { x: 73, y: 68 },
+  },
+  discovering: {
+    pip: { x: 10, y: 54, say: "Layers 0–11 are mine." },
+    milo: { x: 28, y: 72 },
+    quil: { x: 49, y: 57 },
+    iris: { x: 67, y: 71 },
+    wren: { x: 85, y: 62 },
+  },
+  investigating: {
+    pip: { x: 26, y: 57 },
+    milo: { x: 39, y: 72, say: "11–31 here." },
+    quil: { x: 52, y: 49 },
+    iris: { x: 67, y: 63 },
+    wren: { x: 85, y: 72 },
+  },
+  reviewing: {
+    pip: { x: 27, y: 65 },
+    milo: { x: 39, y: 72 },
+    quil: { x: 57, y: 49 },
+    iris: { x: 47, y: 63, say: "Settled. Split by layers." },
+    wren: { x: 79, y: 69 },
+  },
+  writing: {
+    pip: { x: 16, y: 69 },
+    milo: { x: 32, y: 74 },
+    quil: { x: 51, y: 52 },
+    iris: { x: 68, y: 72 },
+    wren: { x: 61, y: 58, say: "Receipt on HCS." },
+  },
+  complete: {
+    pip: { x: 23, y: 70 },
+    milo: { x: 36, y: 74 },
+    quil: { x: 50, y: 54, say: "Pool ready. Listed on Arkiv." },
+    iris: { x: 64, y: 74 },
+    wren: { x: 77, y: 70 },
+  },
+};
+const autoPhases: MissionPhase[] = [
+  "idle",
+  "introducing",
+  "planning",
+  "discovering",
+  "investigating",
+  "reviewing",
+  "writing",
+  "complete",
+];
+export default function CrewScene({
+  phase,
+  onMeet,
+  variant = "room",
+  highlight,
+}: {
+  phase?: MissionPhase;
+  onMeet?: (id: AgentId) => void;
+  variant?: "room" | "landing" | "mini";
+  /** Members to light up (e.g. the nodes on a live route). */
+  highlight?: AgentId[];
+}) {
+  const [autoIndex, setAutoIndex] = useState(0);
+  useEffect(() => {
+    if (phase || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const timer = setInterval(
+      () => setAutoIndex((i) => (i + 1) % autoPhases.length),
+      variant === "landing" ? 2100 : 3600,
+    );
+    return () => clearInterval(timer);
+  }, [phase, variant]);
+  const current = phase ?? autoPhases[autoIndex];
+  const moving =
+    current !== "idle" && current !== "paused" && current !== "complete";
+  return (
+    <div
+      className={`crew-scene crew-scene-${variant} phase-${current}`}
+      data-phase={current}
+      role="group"
+      aria-label="The pool: Rex, Mika and Nova, with Hedy the gateway, coordinated by Pod"
+    >
+      <div className="crew-ground" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+        <span />
+        <span />
+      </div>
+      <svg
+        className={`crew-connections${moving ? " connections-active" : ""}`}
+        viewBox="0 0 1000 280"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        <defs>
+          <linearGradient id={`crew-line-${variant}`}>
+            <stop stopColor="#6fa6e5" stopOpacity="0" />
+            <stop offset=".5" stopColor="#94bdf2" stopOpacity=".55" />
+            <stop offset="1" stopColor="#6fa6e5" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path
+          d="M160 190Q310 250 500 158Q670 235 840 190"
+          stroke={`url(#crew-line-${variant})`}
+          strokeWidth=".7"
+          fill="none"
+        />
+        <path
+          className="crew-signal"
+          d={
+            current === "reviewing"
+              ? "M390 205Q430 95 570 142"
+              : current === "writing"
+                ? "M680 205Q625 95 510 150"
+                : "M160 190Q280 105 390 205Q490 255 670 192"
+          }
+          stroke={`url(#crew-line-${variant})`}
+          strokeWidth="1.5"
+          strokeDasharray="2 16"
+          fill="none"
+        />
+      </svg>
+      {crew.map((person, i) => {
+        const pose = poses[current]?.[person.id] ?? homes[person.id],
+          say = pose.say;
+        const mood =
+          current === "complete"
+            ? "happy"
+            : say
+              ? "talking"
+              : moving
+                ? "walking"
+                : "idle";
+        const style = {
+          "--agent-x": `${pose.x}%`,
+          "--agent-y": `${pose.y}%`,
+          "--agent-color": person.color,
+          "--agent-delay": `${i * -0.8}s`,
+        } as CSSProperties;
+        return (
+          <div
+            className={`crew-member crew-member-${person.id}${say ? " is-speaking" : ""}${highlight?.includes(person.id) ? " is-active" : ""}${highlight && !highlight.includes(person.id) ? " is-dim" : ""}`}
+            key={person.id}
+            style={style}
+          >
+            {say && (
+              <span className="crew-utterance" key={say}>
+                {say}
+                <i />
+              </span>
+            )}
+            <button
+              className="crew-person"
+              aria-label={`Meet ${person.name}, ${person.role}`}
+              onClick={() => onMeet?.(person.id)}
+              disabled={!onMeet}
+              tabIndex={onMeet ? 0 : -1}
+            >
+              <AgentSprite agent={person.id} mood={mood} />
+              <span className="crew-person-name">
+                {person.name}
+                <i />
+              </span>
+              <span className="crew-person-role">{person.role}</span>
+            </button>
+          </div>
+        );
+      })}
+      {variant === "landing" && (
+        <div className="crew-scene-caption">
+          <span>A LITTLE POOLING, IN MOTION.</span>
+          <span>ILLUSTRATIVE PIPELINE</span>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,5 +1,5 @@
-import { listModels, listNodes, listPools, listReadyPools, publicArkiv } from "@gpupool/arkiv";
-import type { ArkivModel, ArkivNode, ArkivPool, ModelConfig, ModelsResponse, NetworkResponse, Route } from "@gpupool/shared";
+import { listAccountStats, listModels, listNodes, listPools, listReadyPools, publicArkiv } from "@gpupool/arkiv";
+import type { ArkivAccountStats, ArkivModel, ArkivNode, ArkivPool, ModelConfig, ModelsResponse, NetworkResponse, Route } from "@gpupool/shared";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { configModelFor, poolLayerMap } from "./route.ts";
@@ -9,6 +9,7 @@ import type { PrivacyMode } from "./privacy.ts";
 
 /** Read-only Arkiv boundary; tests inject readers without contacting the network. */
 export type Directory = {
+  stats?(): Promise<ArkivAccountStats[]>;
   models(): Promise<ArkivModel[]>;
   pools(): Promise<ArkivPool[]>;
   nodes(): Promise<ArkivNode[]>;
@@ -17,7 +18,7 @@ export type Directory = {
 
 export function arkivDirectory(cfg: Config): Directory {
   const pub = publicArkiv({ ARKIV_RPC_URL: cfg.env.ARKIV_RPC_URL, ARKIV_CHAIN_ID: cfg.env.ARKIV_CHAIN_ID, ARKIV_ACCESS_KEY: cfg.env.ARKIV_ACCESS_KEY });
-  return { models: () => listModels(pub), pools: () => listPools(pub), nodes: () => listNodes(pub), readyPools: (model) => listReadyPools(pub, model) };
+  return { stats: () => listAccountStats(pub), models: () => listModels(pub), pools: () => listPools(pub), nodes: () => listNodes(pub), readyPools: (model) => listReadyPools(pub, model) };
 }
 
 export type SelectedPool = { poolId: string; coordinatorUrl: string; route: Route | null; score: number };
@@ -114,6 +115,7 @@ export function createRouter(cfg: Config, db: Db, directory: Directory) {
       const [pools, nodes] = await Promise.all([directory.pools(), directory.nodes()]);
       return {
         source: "arkiv",
+        stats: directory.stats ? await directory.stats() : [],
         nodes,
         pools: pools.map((pool) => {
           const scores = pool.members.map((id) => {

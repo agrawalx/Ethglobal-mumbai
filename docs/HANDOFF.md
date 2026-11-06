@@ -440,3 +440,7 @@ The coordinator runs both roles: `pool/scheduler.env` (`ROLE=scheduler`, ports 5
 | Partner-pick rule (Hedera + World + Arkiv = 3) | ETHGlobal |
 | ~~`/cluster/status_json` has no layer ranges~~ **Resolved (step 2.2/2.5):** each node agent reads its own range from its Parallax node log (`Join scheduler response` / `Layer allocation changed` / `Reloading executor` lines) and reports it in its signed heartbeat; the gateway builds the layer map from fresh heartbeats and accepts it only if it covers `[0, num_layers)` exactly once (SPEC §5.5). No peer ID map is needed. | Done |
 | Does Parallax honour `stream_options.include_usage`? If not, streaming requests have no `usage` to settle (they end `no_usage` and cost nothing). | Live test (needs the 3-node pool) |
+
+## Live frontend integration
+
+Main frontend copied into backendXoutofscope. It is Vite/React with public VITE variables, live-only data and shared-schema adapters. See LIVE-DEMO-RUNBOOK.md for service configuration, tests and acceptance gates. Previous Next.js/NEXT_PUBLIC instructions are obsolete for this frontend. No hardware or payment acceptance is implied by a code build.

@@ -73,7 +73,7 @@ All nodes use wired Ethernet. All nodes download the model before they join.
 | C5 | x402 payments | TypeScript (inside gateway) | Hedera |
 | C6 | Hedera integration (HCS, accounts) | TypeScript | Hedera |
 | C7 | Arkiv integration | TypeScript (gateway) + Python or TS (node agent) | Arkiv |
-| C8 | Frontend | Next.js | Frontend |
+| C8 | Frontend | Vite / React | Frontend |
 | C9 | AI agent client | TypeScript | Hedera |
 | C10 | Payout contract (`EpochPayout.sol`) and settlement job | Solidity (Foundry or Hardhat) + TypeScript | Hedera |
 
@@ -686,7 +686,7 @@ The repository must have `/arkiv/schema.md`, `/arkiv/friction.md`, `/arkiv/reach
 
 ---
 
-## 12. C8: Frontend (Next.js)
+## 12. C8: Frontend (Vite / React)
 
 | Page | Content | Data source |
 |---|---|---|
@@ -808,3 +808,7 @@ The MVP has no output verification. To not design against it, the gateway keeps:
 | 8 | Reliability score + priority queue | Scores show on the account page |
 | 9 | Frontend pages | Full demo runs |
 | 10 | Track files, README, demo video | Ready to submit |
+
+## Live integration acceptance
+
+The website uses live gateway data only. Failed discovery, authentication, ledger and payout reads must not fall back to fixtures. Main frontend is integrated into backendXoutofscope; wire records are validated against shared schemas. Provider claims require a real wallet on testnet 296 and successful transaction confirmation. No synthetic expiry timestamps or aggregate epoch totals are displayed when the gateway does not expose them. Advanced functions are exercised with operator scripts. Code checks do not prove a live three-node demo.

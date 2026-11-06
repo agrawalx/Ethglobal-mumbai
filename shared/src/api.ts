@@ -18,7 +18,7 @@ import {
   TimestampMs,
   Tinybar,
 } from "./common.ts";
-import { ArkivNode, ArkivPool } from "./arkiv.ts";
+import { ArkivNode, ArkivPool, ArkivAccountStats } from "./arkiv.ts";
 import { LedgerEvent } from "./hcs.ts";
 
 /** Gateway HTTP API (SPEC §5.2). */
@@ -432,6 +432,7 @@ export const NetworkResponse = z.object({
     }),
   ),
   nodes: z.array(ArkivNode),
+  stats: z.array(ArkivAccountStats).default([]),
   source: z.literal("arkiv"),
 });
 export type NetworkResponse = z.infer<typeof NetworkResponse>;

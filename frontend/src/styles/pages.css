@@ -1,0 +1,448 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   Console pages: hub tiles, pod / node cards, pipeline diagram, tables.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* copy + code */
+.copy-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+  transition:
+    color 0.2s,
+    border-color 0.2s,
+    background 0.2s;
+}
+.copy-button:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+  background: #ffffff08;
+}
+.code-box {
+  position: relative;
+}
+.code-box > .code {
+  overflow-x: auto;
+  padding-right: 92px;
+  white-space: pre;
+}
+.code-box > .copy-button {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: #02030a;
+}
+.code-inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #02030a;
+  min-width: 0;
+}
+.code-inline code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #cfe0f7;
+  font-size: 13px;
+}
+
+/* tabs */
+.tabs {
+  display: inline-flex;
+  gap: 4px;
+  margin-bottom: 10px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.tabs button {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 6px;
+  color: var(--muted);
+  font: 11px var(--display);
+  letter-spacing: 0.06em;
+}
+.tabs button:hover {
+  color: var(--text);
+}
+.tabs button.is-active {
+  background: #ffffff10;
+  color: var(--text);
+}
+
+/* hub tiles */
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 28px;
+}
+.tile h2 {
+  font: 26px/1.2 var(--display);
+  letter-spacing: -0.6px;
+  color: var(--text);
+}
+.tile > p {
+  margin-top: -8px;
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+.tile .mono-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--cyan);
+}
+.tile .field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.tile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+.table-compact td,
+.table-compact th {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+/* section titles + filters */
+.section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font: 20px var(--display);
+  letter-spacing: -0.3px;
+  color: var(--text);
+}
+.panel-head .section-title {
+  font-size: 18px;
+}
+.panel-head > .faint {
+  font-size: 13px;
+  text-align: right;
+}
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.filters .select {
+  height: 32px;
+  font-size: 13px;
+}
+
+/* pod cards */
+.pod-card header,
+.node-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.pod-card h3,
+.node-card h3 {
+  margin-bottom: 4px;
+  font: 17px var(--display);
+  color: var(--text);
+}
+.pod-card header .faint,
+.node-card header .faint {
+  font-size: 12.5px;
+}
+.pod-card footer,
+.node-card footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+
+/* node cards */
+.node-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--node, var(--line));
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.node-kv {
+  font-size: 13px;
+  gap: 8px 14px;
+}
+.node-card footer .faint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.expiry-ring {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  transform: rotate(-90deg);
+}
+.expiry-ring circle {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 3;
+}
+.expiry-ring .expiry-ring-fill {
+  stroke: var(--node, var(--blue));
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.9s linear;
+}
+.expiry-ring text {
+  transform: rotate(90deg);
+  transform-origin: 18px 18px;
+  fill: var(--muted);
+  font: 9px var(--display);
+}
+.rep-bar {
+  display: inline-block;
+  width: 44px;
+  height: 4px;
+  margin-right: 8px;
+  vertical-align: middle;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--ok) var(--rep), #ffffff14 var(--rep));
+}
+
+/* pod detail header */
+
+/* pipeline diagram */
+.pipelines {
+  display: grid;
+  gap: 22px;
+}
+.pipeline-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 13.5px;
+}
+.pipeline-head > .mono:first-child {
+  color: var(--text);
+  font-size: 14px;
+}
+.pipeline-metric {
+  font-size: 13px;
+}
+.pipeline-head .pipeline-metric:first-of-type {
+  margin-left: auto;
+}
+.pipeline-bar {
+  display: flex;
+  gap: 4px;
+  min-height: 64px;
+}
+.pipeline-seg {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--seg) 55%, transparent);
+  border-radius: 8px;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 calc(100% / 40 - 1px), #ffffff08 calc(100% / 40 - 1px) calc(100% / 40)),
+    color-mix(in srgb, var(--seg) 16%, #05070d);
+}
+.pipeline-seg-name {
+  color: var(--seg);
+  font: 13px var(--display);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pipeline-seg-sub {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pipeline-arrow {
+  position: absolute;
+  right: -11px;
+  top: 50%;
+  z-index: 1;
+  translate: 0 -50%;
+  color: var(--muted);
+  font-style: normal;
+  font-size: 13px;
+}
+.pipeline-seg.is-down {
+  --seg: var(--bad);
+  background: repeating-linear-gradient(135deg, #ef6b6b1f 0 6px, transparent 6px 12px), #120709;
+}
+.pipeline.is-down .pipeline-seg:not(.is-down) {
+  opacity: 0.55;
+}
+
+/* tables */
+.cell-sub {
+  display: block;
+  font-size: 12px;
+}
+.nowrap {
+  white-space: nowrap;
+}
+.table-note {
+  margin-top: 10px;
+  font-size: 12px;
+}
+.table a.pill {
+  color: var(--ok);
+}
+
+/* verdict list */
+
+/* earnings chart */
+
+@media (max-width: 760px) {
+  .tile {
+    padding: 20px;
+  }
+  .tile h2 {
+    font-size: 22px;
+  }
+  .panel-head {
+    flex-wrap: wrap;
+  }
+  .panel-head > .faint {
+    text-align: left;
+  }
+  .pipeline-bar {
+    flex-direction: column;
+  }
+  .pipeline-seg {
+    width: auto !important;
+  }
+  .pipeline-arrow {
+    right: auto;
+    top: auto;
+    bottom: -12px;
+    left: 50%;
+    translate: -50% 0;
+    rotate: 90deg;
+  }
+}
+.copy-button.is-compact {
+  width: 24px;
+  padding: 0;
+  justify-content: center;
+}
+
+/* /network pool header */
+.pool-head {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+.pool-id {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  min-width: 110px;
+}
+.pool-id h3 {
+  font-size: 20px;
+  color: var(--text);
+}
+.pool-stats {
+  flex: 1;
+  min-width: 0;
+}
+.cell-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+}
+@media (max-width: 1200px) {
+  .net-tables {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 600px) {
+  .pool-head {
+    justify-content: space-between;
+  }
+  .pool-stats {
+    order: 3;
+    flex-basis: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .pool-stats .stat:nth-child(2n) {
+    border-right: 0;
+  }
+  .pool-stats .stat:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--line);
+  }
+}
+
+/* /account */
+.register-card {
+  border-color: #278cff66;
+  display: grid;
+  gap: 14px;
+}
+.register-card h2 {
+  font: 24px/1.2 var(--display);
+  color: var(--text);
+}
+.register-card .kv {
+  max-width: 460px;
+}
+.section-bottom {
+  margin-bottom: 20px;
+}
+.login-tile {
+  max-width: 640px;
+}
+.payout-addr {
+  margin: 4px 0 10px;
+  font-size: 13px;
+  color: var(--text);
+  word-break: break-all;
+}
+.acc-grid {
+  align-items: start;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+}
+@media (max-width: 1200px) {
+  .acc-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
