@@ -8,7 +8,7 @@
     "node_sig": "0x76bead1d9b1630bf2a4c044b70e7163268e809e1c5a9e92c1144fda19462a35f683b63835808afe75fe81bf53581027ad4d8de42bd21686b267c0a4e21f4dec51c"
   },
   "heartbeat": {
-    "body": "{\"node_id\":\"0x2c7536e3605d9c16a7a3d7b1898e529396a65c23\",\"pool_id\":\"pool-mumbai-1\",\"ts\":1793912340000,\"online\":true,\"model\":\"Qwen/Qwen3-14B-MLX-8bit\",\"layers\":[0,20],\"tok_s\":5.6}",
-    "signature": "0xc05b64361a05338744675c58045537c6563111649b3eaf739f83727e819dd8d41268ab57b364565fac8bcd07b6d5204e528ada31af6260a63cc4840a227bf6531c"
+    "body": "{\"node_id\":\"0x2c7536e3605d9c16a7a3d7b1898e529396a65c23\",\"pool_id\":\"pool-mumbai-1\",\"ts\":1793912340000,\"online\":true,\"model\":\"Qwen/Qwen3-14B-MLX-8bit\",\"layers\":[0,20],\"tok_s\":5.6,\"peer_id\":null,\"lan_ip\":null,\"mem_pressure\":null,\"usable_mem_gb\":null,\"served_sessions\":null,\"restart_ack\":null,\"p2p_port\":null,\"rtt_ms\":null,\"challenge_result\":null}",
+    "signature": "0x6ce19b0131be1b6916d0d9ed06787b8c79935f515cd38bb3d63796c4f151beb01f810e5ac2771e5a892a6339981d7e1c08c8db8ccec472a54a206b7daf0d5cc21b"
   }
 }

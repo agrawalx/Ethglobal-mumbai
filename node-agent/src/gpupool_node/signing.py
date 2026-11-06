@@ -22,9 +22,16 @@ def sign_register(acct: LocalAccount, pool_id: str, ts: int) -> str:
     return "0x" + sig.hex().removeprefix("0x")
 
 
-def heartbeat_body(nid: str, pool_id: str, ts: int, online: bool, model: str | None, layers: list[int] | None, tok_s: float | None) -> bytes:
+# Post-MVP P5 heartbeat fields (shared NodeHeartbeat), always sent, in this order. None = not known.
+P5_FIELDS = ("peer_id", "lan_ip", "mem_pressure", "usable_mem_gb", "served_sessions", "restart_ack", "p2p_port", "rtt_ms", "challenge_result")
+
+
+def heartbeat_body(nid: str, pool_id: str, ts: int, online: bool, model: str | None, layers: list[int] | None, tok_s: float | None,
+                   extra: dict | None = None) -> bytes:
     """Raw request body (shared NodeHeartbeat). These exact bytes are signed and sent."""
     body = {"node_id": nid, "pool_id": pool_id, "ts": ts, "online": online, "model": model, "layers": layers, "tok_s": tok_s}
+    for k in P5_FIELDS:
+        body[k] = (extra or {}).get(k)
     return json.dumps(body, separators=(",", ":")).encode("utf-8")
 
 

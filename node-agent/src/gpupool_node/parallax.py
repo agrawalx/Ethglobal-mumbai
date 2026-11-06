@@ -22,6 +22,8 @@ ANSI = re.compile(r"\x1b\[[0-9;]*m")
 JOIN = re.compile(r"Join scheduler response: (\{.*\})")
 CHANGED = re.compile(r"Layer allocation changed!.*New: \[(\d+), (\d+)\) Model: .* -> (\S+)")
 RELOAD = re.compile(r"Reloading executor with layers \[(\d+), (\d+)\)")
+# pool/lib.sh start_group writes this line before each start: older lines belong to a dead process.
+START = "=== gpupool start"
 TAIL_BYTES = 4 * 1024 * 1024
 
 
@@ -35,7 +37,9 @@ class Assignment:
 def parse_log(text: str) -> Assignment:
     a = Assignment()
     for line in ANSI.sub("", text).splitlines():
-        if m := JOIN.search(line):
+        if line.startswith(START):
+            a = Assignment()  # new process: forget the old assignment (no stale layers while loading)
+        elif m := JOIN.search(line):
             try:
                 d = ast.literal_eval(m.group(1))
             except (ValueError, SyntaxError):
@@ -56,6 +60,15 @@ def read_assignment(log: Path) -> Assignment:
         size = log.stat().st_size
         f.seek(max(0, size - TAIL_BYTES))
         return parse_log(f.read().decode("utf-8", "replace"))
+
+
+def read_peer_id(path: Path) -> str | None:
+    """This node's current Parallax peer ID, written by pool/hooks before the join (P5.4)."""
+    try:
+        v = path.read_text().strip()
+    except OSError:
+        return None
+    return v or None
 
 
 def node_running() -> bool:

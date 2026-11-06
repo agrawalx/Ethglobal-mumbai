@@ -32,3 +32,23 @@ node `0x4f24a8795047c2bb0d0c542780dc1d91f7f8cdc1` reported layers [29, 40) from 
 `0x11e1d193d611d6acaa059026fcfef70c98a1d34aaa311ee4f0b5ad1cc60848a1` (tx from the node key), pool entity
 `0xb3682573388a9e8c0a1f254087cd8a3d7ad17e6f12482c5f94c77f0536795044` (tx from the pool key, status `loading`: one node of three → no valid map).
 After `stop --keep-parallax` the node listing was gone from `list-nodes` after the 120 s expiry.
+
+## Post-MVP P5 (docs/POST_MVP_PLAN.md, SPEC §4.3)
+
+| What | How |
+|---|---|
+| Peer ID (P5.4) | Read from `PEER_ID_FILE` (`pool/run/node.peer-id`, written by `pool/hooks` before the join; else the join log) and sent as `peer_id`. The gateway's admission allow-list is built from these signed heartbeats. |
+| Served sessions (P5.9) | With `NOTIFY_PORT`, a listener on `127.0.0.1:NOTIFY_PORT/notify` takes Parallax `--notify-url` events and counts new distinct `session_id`s; each heartbeat sends `served_sessions` (kept if a heartbeat fails). |
+| Memory (P5.7) | `usable_mem_gb`: Mac = memory − max(4 GB, 25 %); GPU = VRAM. `mem_pressure` = `swap_growing` when swap use grows > `SWAP_GROWTH_MB` within `SWAP_WINDOW_S` while Parallax runs (`sysctl vm.swapusage` / `/proc/meminfo`); the gateway then skips the pool. |
+| LAN IP (P5.6) | `lan_ip` = local address used to reach the gateway. If it differs from `LAN_IP` in `pool/node.env`: `AUTO_RESTART=true` runs `pool/restart.sh --lan-ip <new>` (rewrites the env files, restarts); else prints the command once. The firewall allow-list still needs a human (sudo). |
+| Clean restart (P5.5) | Heartbeat response `restart_id` > last executed → `AUTO_RESTART=true` runs `pool/restart.sh` (`--coordinator` on the coordinator; members `--join-delay RESTART_JOIN_DELAY_S`) in a background thread, then sends `restart_ack`. The ack is kept in `~/.gpupool/agent-state.json`. Output: `pool/logs/restart.log`. |
+| Stale layers | Lines before the last `=== gpupool start` marker in the node log are ignored, so a restarting node never reports the old process's layers. |
+
+Tests: `uv run pytest -q` (17 tests; `tests/test_p5.py` covers the parts above).
+
+## SPEC §16.1 (automatic pools, election)
+
+| What | How |
+|---|---|
+| Pool writer | Writes `gpupool.pool` only when the heartbeat response says `pool_writer` (gateway election), with the gateway's `coordinator_url_hash`. |
+| `POOL_ID=auto` | Sends `p2p_port` (pool/node.env `TCP_PORT`) and measures TCP-connect delay to the `probe` peers (best of 3, background), reported as `rtt_ms`. On `assigned_pool`: `AUTO_RESTART=true` runs `pool/restart.sh --dht-prefix <prefix>` and keeps the pool in `~/.gpupool/agent-state.json`; else prints the command. |

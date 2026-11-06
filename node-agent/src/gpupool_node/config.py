@@ -34,6 +34,15 @@ class Config:
     heartbeat_seconds: int
     arkiv_extend_seconds: int
     parallax_node_log: Path
+    # ---- post-MVP P5 (docs/POST_MVP_PLAN.md) ----
+    pool_dir: Path
+    node_env: Path
+    peer_id_file: Path
+    auto_restart: bool
+    restart_join_delay_s: int
+    notify_port: int | None
+    swap_growth_mb: float
+    swap_window_s: float
 
 
 def load(env_file: Path | None = None) -> Config:
@@ -47,6 +56,10 @@ def load(env_file: Path | None = None) -> Config:
         return v
 
     exp = lambda p: Path(os.path.expanduser(p))  # noqa: E731
+    pool_dir = exp(env.get("POOL_DIR", str(REPO / "pool")))
+    node_env = exp(env.get("POOL_NODE_ENV", str(pool_dir / "node.env")))
+    # NOTIFY_PORT must match pool/node.env (join-node.sh passes --notify-url); read it from there if unset.
+    notify = env.get("NOTIFY_PORT") or read_env_file(node_env).get("NOTIFY_PORT", "").split("#", 1)[0].strip()
     return Config(
         gateway_url=need("GATEWAY_URL").rstrip("/"),
         frontend_url=env.get("FRONTEND_URL", "http://localhost:3000").rstrip("/"),
@@ -59,4 +72,12 @@ def load(env_file: Path | None = None) -> Config:
         heartbeat_seconds=int(env.get("HEARTBEAT_SECONDS", "10")),
         arkiv_extend_seconds=int(env.get("ARKIV_EXTEND_SECONDS", "30")),
         parallax_node_log=exp(env.get("PARALLAX_NODE_LOG", str(REPO / "pool" / "logs" / "node.log"))),
+        pool_dir=pool_dir,
+        node_env=node_env,
+        peer_id_file=exp(env.get("PEER_ID_FILE", str(pool_dir / "run" / "node.peer-id"))),
+        auto_restart=env.get("AUTO_RESTART", "false").lower() == "true",
+        restart_join_delay_s=int(env.get("RESTART_JOIN_DELAY_S", "15")),
+        notify_port=int(notify) if notify else None,
+        swap_growth_mb=float(env.get("SWAP_GROWTH_MB", "256")),
+        swap_window_s=float(env.get("SWAP_WINDOW_S", "300")),
     )

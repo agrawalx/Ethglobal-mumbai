@@ -8,7 +8,7 @@ from eth_account.messages import encode_defunct
 
 from gpupool_node import keys
 from gpupool_node.parallax import parse_log
-from gpupool_node.signing import heartbeat_body, node_id, register_message, sign_body, sign_register
+from gpupool_node.signing import P5_FIELDS, heartbeat_body, node_id, register_message, sign_body, sign_register
 from make_vector import TEST_KEY, vector
 
 REPO = Path(__file__).resolve().parents[2]
@@ -39,11 +39,13 @@ def test_heartbeat_signature_is_over_raw_body_bytes():
 
 def test_heartbeat_body_shape_matches_shared_example():
     example = json.loads((REPO / "shared" / "examples" / "node-heartbeat.json").read_text())
-    body = json.loads(heartbeat_body(example["node_id"], example["pool_id"], example["ts"], example["online"], example["model"], example["layers"], example["tok_s"]))
+    extra = {k: example[k] for k in P5_FIELDS}
+    body = json.loads(heartbeat_body(example["node_id"], example["pool_id"], example["ts"], example["online"], example["model"], example["layers"], example["tok_s"], extra))
     assert body == example
     assert list(body) == list(example)  # same field order too
     off = json.loads(heartbeat_body(example["node_id"], "p", 1, False, None, None, None))
     assert off["layers"] is None and off["model"] is None and off["tok_s"] is None
+    assert all(off[k] is None for k in P5_FIELDS), "P5 fields are always sent (null = unknown)"
 
 
 def test_key_file_format_and_mode(tmp_path):
