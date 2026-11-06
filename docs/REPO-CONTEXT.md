@@ -5,11 +5,10 @@ Updated 2026-11-06. Start here when continuing the frontend integration. Read `C
 ## Current branch and how it was assembled
 
 - **Working branch:** `integration/live-frontend`.
-- **Worktree:** `/private/tmp/gpupool-backend-live` (a temporary local path; keep or relocate it before cleaning temporary files).
 - **Base:** `origin/backendXoutofscope` at `45cea98d542a3fff936c5b7824074d62a8bdd9b8`.
 - **Frontend source:** tracked `frontend/` copied from `origin/main` at `9928fb6f18f87179445892edaf7b7319acd610fc`. That main tree already includes the frontend branch.
 - This is a **directory copy plus integration changes**, not a Git merge of all three histories. The original backend branch tip remains the parent of this integration; main is not a merged ancestor.
-- Original main checkout, its one-line specification edit, and the pre-existing frontend worktree were preserved. No remote push is performed. The commit containing this document is the integration checkpoint; use `git log -1` for its hash.
+- `main` was merged into this branch afterwards (frontend conflicts resolved to the integrated version), so `main` can fast-forward to it.
 
 ## Implemented in this checkpoint
 
@@ -50,7 +49,7 @@ Observed results in this worktree:
 - Shell syntax, changed TS syntax, frontend credential-pattern scan and whitespace checks passed.
 - Frontend lint reports two existing ParticleScene React warnings; it is not recorded as a clean lint gate.
 
-**Dependency caveat:** two fresh pnpm installs timed out on registry downloads. To validate frontend work, dependencies already installed in the separate frontend worktree were linked locally without modifying that source worktree. Some backend packages were linked from the partial cache. These ignored symlinks are not committed and will not transfer to another checkout. Workspace lockfile was resolved offline. Another agent must run a clean `pnpm install` before release; the copied npm lock is historical, while the root pnpm lock covers the added workspace dependency.
+**Dependencies:** a clean `pnpm install` from the workspace root works (checked 2026-11-06). The frontend uses the root `pnpm-lock.yaml`; the old npm lockfile was removed.
 
 **Blocked checks:** full gateway suite cannot import missing better-sqlite3; Python/Parallax-hook suite needs uncached pycryptodome; Foundry needs solc 0.8.28. These are not passing checks. No live World, Arkiv write, HCS write, x402 transfer, deployment, payout claim or inference launch was performed in this integration.
 
@@ -171,7 +170,7 @@ Additional API includes `/network`, `/ledger/events`, `/payouts/:address`, `/poo
 No private environment contents were used for this document. Example files, configuration schema, and entry points are the configuration authority. A variable's presence in a template does not mean it is consumed by that branch.
 
 - Backend: Node >=24, pnpm workspace; direct TS execution. Shared package exports source and network config. Main versions include x402 2.30.0, IDKit core 4.6.0, Hedera SDK 2.90.1, Arkiv SDK 1.0.1, Hono 4.x, Zod 4.x, better-sqlite3 13.x.
-- Frontend: independent Vite 8/React 19 package and npm lock; `npm install`, `npm run dev`, `npm run build`, `npm test`, `npm run lint` from `frontend/`. Default dev port 5173. Vite proxies gateway API paths; deployment needs equivalent API routing. Next.js `NEXT_PUBLIC_*` instructions from earlier setup do not configure this UI.
+- Frontend: Vite 8/React 19 workspace package. From the root: `pnpm install`, then `pnpm --dir frontend dev` / `build` / `test` / `lint`. Default dev port 5173. Vite proxies gateway API paths; deployment needs equivalent API routing. Use `VITE_*` keys (see HANDOFF §8), not `NEXT_PUBLIC_*`.
 - Backend from workspace root: `pnpm install`, then `pnpm --filter @gpupool/shared test`, `pnpm --filter @gpupool/gateway test` / `typecheck` / `start`. Gateway package scripts load that component's `.env`.
 - Arkiv: `pnpm --filter @gpupool/arkiv cli --help`; inspect CLI commands before any write. Node agent shells out to the TS CLI using the node/pool writer identity.
 - Node agent: from `node-agent/`, `uv sync`, `uv run gpupool-node init`, `uv run gpupool-node start --no-join` if Parallax already runs, `uv run pytest -q`. Ordinary `start` launches Parallax. Stop semantics are documented in component README.

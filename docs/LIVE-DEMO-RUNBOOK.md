@@ -41,6 +41,6 @@ Run shared/gateway/Arkiv/agent-client tests and typechecks, frontend build/lint/
 
 Passed: frontend app and Vite-config typechecks; Vite production build; gateway/shared/Arkiv/agent-client typechecks; 66 existing frontend fixture/money checks; 70 shared/Arkiv/agent-budget tests; new live schema/unit mapping, outage and truncated-stream tests; shell syntax and changed TS syntax checks. Production assets contain neither the seeded mock store nor seeded demo wallet identifiers. A stale priority-test x402 result was updated with asset/amountRaw to match the current interface.
 
-Fresh pnpm installation failed twice on registry timeouts (better-sqlite3 and platform compiler downloads). Frontend validation reused dependencies already installed in the existing frontend worktree without modifying that worktree. Re-run from a clean install before release. The workspace lockfile was resolved offline.
+A clean `pnpm install` from the workspace root works (checked 2026-11-06); the frontend uses the root pnpm lockfile.
 
 Gateway suite remains blocked by missing better-sqlite3, even with local sockets permitted. Python suite is blocked by an uncached pycryptodome wheel. Foundry is blocked by missing solc 0.8.28. Lint reports two pre-existing ParticleScene React warnings. Browser E2E/visual tests and live World, Ethernet pool, chain claims and advanced-service acceptance are not completed. The operator must supply current environment-file locations and machine access. No real payment, deployment, inference launch, push or database reset was performed.
