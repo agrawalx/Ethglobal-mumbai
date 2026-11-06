@@ -25,6 +25,7 @@ import { getConnInfo } from "@hono/node-server/conninfo";
 import { PoolPlanResponse } from "@gpupool/shared";
 import { poolPlan } from "./formation.ts";
 import { verificationAppealHandler, verificationReadHandler } from "./verification.ts";
+import { agentRegistration } from "./erc8004.ts";
 
 export type Deps = {
   cfg: Config;
@@ -46,7 +47,7 @@ export type AppEnv = { Variables: { reqId: string; accountId: string | null; age
 
 type RequestRow = {
   req_id: string; model: string; pay_type: "credits" | "x402"; status: "pending" | "ok" | "failed"; account_id: string | null;
-  x402_payer: string | null; x402_tx: string | null; x402_amount_tinybar: string | null; in_tokens: number | null; out_tokens: number | null;
+  x402_payer: string | null; x402_tx: string | null; x402_amount_tinybar: string | null; x402_asset: "hbar" | "usdc" | null; in_tokens: number | null; out_tokens: number | null;
   cost_mc: number | null; split: string | null; route: string | null; prompt_hash: string; resp_hash: string | null; hcs_seq: number | null; attempts: string | null; route_source: "heartbeat" | "scheduler" | null; privacy: "trusted-ends" | "trusted-all" | null; ts: number;
 };
 
@@ -70,6 +71,8 @@ export function createApp({ cfg, db, signer, x402 = null, worldFetch, directory,
   });
 
   app.get("/healthz", (c) => c.json({ ok: true as const }));
+  app.get("/.well-known/agent-registration.json", (c) => cfg.env.PUBLIC_URL
+    ? c.json(agentRegistration(cfg)) : errorResponse(c, 503, "internal", "agent registration needs PUBLIC_URL"));
 
   // Session if an Authorization header is present (invalid → 401), else x402 (SPEC §5.3 step 2).
   app.post("/v1/chat/completions", session(secret, false, (t) => agentFromToken(db, t)), chatHandler(cfg, makePrepare({ cfg, db, signer, x402, router, queue, observe: onComplete }), stall));

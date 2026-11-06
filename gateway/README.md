@@ -65,7 +65,7 @@ Live (6 Nov, agent-client, 2 questions, fake pool): `0.0.9185802@1793930570.6797
 | Live check | Invalid proofs to our `rp_831104fa5fd04dd5`: Selfie → 400 `validation_error` "sybil_score is required…"; Orb → 400 `all_verifications_failed`. So the URL and RP are valid; the shapes match. |
 | Not verified | A real World App / simulator login (needs the frontend + a phone/simulator). Whether World App blocks a second proof for the same action (repeat login) is unconfirmed; if it does, repeat logins need IDKit session proofs. Pre-create the action `gpupool-account` in the portal (staging) to be safe. |
 
-SQLite: all SPEC §8.7 tables (`src/db.ts`), `SCHEMA_VERSION` 4 (rolling observations and durable epoch settlement). No migrations: delete the DB file when the version changes.
+SQLite: all SPEC §8.7 tables (`src/db.ts`), `SCHEMA_VERSION` 10 (verification, privacy, incentives, and durable epoch settlement). No migrations: delete the DB file when the version changes.
 
 Unverified: that Parallax honours `stream_options.include_usage` (if not, streaming requests end with `ok:false, reason:"no_usage"` and cost nothing); real inference through the gateway (only one node exists now).
 
@@ -249,7 +249,7 @@ path. Skipped live inference and claims are explicitly reported as unverified.
 `src/formation.ts`: per-pool coordinator URLs (`POOL_COORDINATORS`, `POOL_COORDINATORS_FILE`),
 listing-writer election (`pools.writer_node`), automatic formation from `auto` nodes (`node_rtt`,
 `GET /pools/plan`, loopback only), private DHT prefixes. `src/queue.ts`: `router.max_concurrent_per_pool`
-slots. `src/router.ts`: `x-gpupool-privacy: trusted-ends` (+ `TRUSTED_ACCOUNTS`). Schema version 7.
+slots. `src/router.ts`: `x-gpupool-privacy: trusted-ends` (+ `TRUSTED_ACCOUNTS`). Current schema version 10.
 Tests: `test/s16.test.ts`.
 
 ## Privacy (SPEC §5.6, no Parallax change)
@@ -257,7 +257,7 @@ Tests: `test/s16.test.ts`.
 `src/privacy.ts`: `x-gpupool-privacy: trusted-ends | trusted-all` routing (router), no transcript for
 privacy requests, AES-256-GCM transcripts (`TRANSCRIPT_KEY`; read only via `readTranscript`), salted
 `prompt_hash`/`resp_hash` (salt in `requests.hash_salt`, sent to the requester as `x-gpupool-hash-salt`),
-HTTPS (`TLS_CERT_FILE`, `TLS_KEY_FILE`). Schema version 9 (`requests.hash_salt`, `requests.privacy`).
+HTTPS (`TLS_CERT_FILE`, `TLS_KEY_FILE`). Current schema version 10 (`requests.hash_salt`, `requests.privacy`).
 Demo with real values: `pnpm demo:privacy`. Tests: `test/privacy.test.ts`.
 
 ## SPEC §16.2 output verification

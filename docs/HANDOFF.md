@@ -278,6 +278,7 @@ Each component has a `.env.example`. Copy it to `.env` and fill it. Summary:
 | `PUBLIC_URL` | URL that the requester laptop uses (e.g. `http://10.73.185.71:8080`) |
 | `POOL_COORDINATOR_URL` | Private Parallax scheduler API (`http://127.0.0.1:3001`); exact URL must hash to the Arkiv pool listing's `coordinator_url_hash` |
 | `DATABASE_PATH` | SQLite file path |
+| `DB_RESET_ON_MISMATCH` | Default `true`: a database from another schema version is moved aside as `<file>-bak-v<N>-<time>` (never deleted) and recreated on the latest schema. `false` = refuse to start |
 | `VERIFY_SESSION_TOKEN` | Optional verification CLI session token for an idle requester account; only `--inference` spends credits; server does not use it |
 | `HEARTBEAT_SECONDS` | Expected node heartbeat interval / score refresh period (default `10`); must match node-agent configuration |
 | `POOL_TIMEOUT_MS` | Time to the pool response headers of **non-streaming** requests, ms (default `600000`; generation after the headers is not timed). Streaming requests use the first-token limit from `shared/config` `resilience` (post-MVP P5.1). |

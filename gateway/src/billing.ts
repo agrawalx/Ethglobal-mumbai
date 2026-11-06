@@ -38,12 +38,12 @@ function payoutSnapshot(db: Db, route: Route | null): PayoutRoute | null {
   }) ?? null;
 }
 
-function insertRequest(db: Db, cfg: Config, row: { reqId: string; accountId: string | null; payer?: string; tx?: string; amount?: string; model: string; payType: "credits" | "x402"; route: Route | null; promptHash: string; prompt: string; seed: number; settings: string; salt: string; privacy: string | null }, now: number) {
+function insertRequest(db: Db, cfg: Config, row: { reqId: string; accountId: string | null; payer?: string; tx?: string; amount?: string; asset?: string; raw?: string; model: string; payType: "credits" | "x402"; route: Route | null; promptHash: string; prompt: string; seed: number; settings: string; salt: string; privacy: string | null }, now: number) {
   db.transaction(() => {
     db.prepare(
-      `INSERT INTO requests (req_id, account_id, x402_payer, x402_tx, x402_amount_tinybar, model, pay_type, route, status, prompt_hash, sampling_seed, sampling_settings, ts)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
-    ).run(row.reqId, row.accountId, row.payer ?? null, row.tx ?? null, row.amount ?? null, row.model, row.payType, row.route ? JSON.stringify(row.route) : null, row.promptHash, row.seed, row.settings, now);
+      `INSERT INTO requests (req_id, account_id, x402_payer, x402_tx, x402_amount_tinybar, x402_asset, x402_amount_raw, model, pay_type, route, status, prompt_hash, sampling_seed, sampling_settings, ts)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
+    ).run(row.reqId, row.accountId, row.payer ?? null, row.tx ?? null, row.amount ?? null, row.asset ?? null, row.raw ?? null, row.model, row.payType, row.route ? JSON.stringify(row.route) : null, row.promptHash, row.seed, row.settings, now);
     if (row.payType === "x402") {
       const snapshot = payoutSnapshot(db, row.route);
       db.prepare("UPDATE requests SET payout_snapshot = ? WHERE req_id = ?").run(snapshot ? JSON.stringify(snapshot) : null, row.reqId);
@@ -277,7 +277,7 @@ export function makePrepare(d: BillingDeps): Prepare {
       if (!d.x402) return errorResponse(c, 402, "payment_required", "no session token, and x402 is not configured on this gateway");
       const paid = await d.x402.charge(c, req, maxTokens);
       if (paid instanceof Response) return paid;
-      insertRequest(db, cfg, { reqId, accountId: null, payer: paid.payer, tx: paid.tx, amount: paid.amountTinybar, model: model.model_id, payType: "x402", route: cur.route, promptHash: pHash, prompt, seed: req.seed!, settings: samplingSettings, salt, privacy: privacy ?? null }, Date.now());
+      insertRequest(db, cfg, { reqId, accountId: null, payer: paid.payer, tx: paid.tx, amount: paid.amountTinybar, asset: paid.asset, raw: paid.amountRaw, model: model.model_id, payType: "x402", route: cur.route, promptHash: pHash, prompt, seed: req.seed!, settings: samplingSettings, salt, privacy: privacy ?? null }, Date.now());
       console.log(JSON.stringify({ msg: "x402_settled", reqId, payer: paid.payer, tx: paid.tx, amount_tinybar: paid.amountTinybar }));
       return {
         headers: { ...paid.headers, [HASH_SALT_HEADER]: salt },
@@ -300,6 +300,8 @@ export function makePrepare(d: BillingDeps): Prepare {
                   payer: paid.payer,
                   tx_id: paid.tx,
                   amount_tinybar: paid.amountTinybar,
+                  asset: paid.asset,
+                  amount_raw: paid.amountRaw,
                   model: model.model_id,
                   in_tokens: comp.usage!.prompt_tokens,
                   out_tokens: comp.usage!.completion_tokens,

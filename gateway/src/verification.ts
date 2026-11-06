@@ -166,6 +166,7 @@ export async function runAppealOnce(db: Db, cfg: Config, signer: Signer, now = D
     db.transaction(() => {
       db.prepare("UPDATE verification_appeals SET status = 'checked', score = ?, verdict = ?, checked_at = ? WHERE id = ? AND status = 'queued'").run(r.score, verdict, now, appeal.appeal_id);
       db.prepare("UPDATE verification_jobs SET verdict = ?, score = ?, threshold = ?, reference_hash = ?, final_at = ? WHERE id = ? AND verdict = 'appealed'").run(verdict === "flag" ? "final_flag" : "final_pass", r.score, r.threshold, r.reference_hash, now, appeal.verification_id);
+      updateGroupRisk(db, appeal.route, verdict === "flag", now);
       recordEvent(db, signer, { type: "verification_final", verification_id: appeal.verification_id, req_id: appeal.req_id as `req_${string}`, verdict }, now);
     })();
     return true;
@@ -275,17 +276,17 @@ export async function runCanaryOnce(db: Db, cfg: Config, signer: Signer, router:
   if (!model) throw new Error(`unknown canary model ${modelId}`);
   let selected = await router.select(model);
   if (!selected?.route || !queue.isIdle(selected.poolId)) return false;
+  const poolId = selected.poolId;
   const owners = [...new Set(selected.route.map((h) => (db.prepare("SELECT account_id FROM nodes WHERE node_id = ?").get(h.node_id) as { account_id: string } | undefined)?.account_id).filter(Boolean))];
   if (owners.includes(cfg.env.VERIFIER_OWNER_ACCOUNT)) return false;
   const abort = new AbortController();
-  const release = await queue.acquire(selected.poolId, 1, abort.signal);
-  const stopRoute = router.start(selected.poolId);
+  const release = await queue.acquire(poolId, 1, abort.signal);
+  const stopRoute = router.start(poolId);
   const canaryId = `can_${now.toString(36)}${randomBytes(6).toString("hex")}`;
   const prompt = [{ role: "user", content: "Reply with exactly the word READY." }];
   try {
     const fresh = await router.select(model, selected.poolId);
     if (!fresh?.route) return false;
-    selected = fresh;
     const response = await fetch(new URL("/v1/chat/completions", selected.coordinatorUrl), { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ model: model.model_id, messages: prompt, temperature: 0, top_p: 1, seed: 0, max_tokens: 8,
         chat_template_kwargs: { enable_thinking: false } }), signal: AbortSignal.timeout(cfg.env.POOL_TIMEOUT_MS) });
@@ -293,15 +294,15 @@ export async function runCanaryOnce(db: Db, cfg: Config, signer: Signer, router:
     const result = await response.json() as { choices?: { message?: { content?: unknown } }[] };
     const answer = result.choices?.[0]?.message?.content;
     if (typeof answer !== "string") throw new Error("canary response has no text");
-    const routeJson = JSON.stringify(selected.route);
+    const routeJson = JSON.stringify(fresh.route);
     const reply = await callVerifier(cfg.env.VERIFIER_URL, { verification_id: canaryId, model: model.model_id, prompt,
-      response: answer, seed: 0, sampling: { temperature: 0, top_p: 1 }, route: selected.route, method: "token-difr-canary" });
+      response: answer, seed: 0, sampling: { temperature: 0, top_p: 1 }, route: fresh.route, method: "token-difr-canary" });
     const verdict = reply.score > reply.threshold ? "flag" : "pass";
     db.transaction(() => {
       db.prepare("INSERT INTO verification_canaries (id,pool_id,model,route_hash,score,threshold,verdict,ts) VALUES (?,?,?,?,?,?,?,?)")
-        .run(canaryId, selected.poolId, model.model_id, digest(routeJson), reply.score, reply.threshold, verdict, now);
+        .run(canaryId, poolId, model.model_id, digest(routeJson), reply.score, reply.threshold, verdict, now);
       updateGroupRisk(db, routeJson, verdict === "flag", now);
-      recordEvent(db, signer, { type: "verification_canary", canary_id: canaryId, pool_id: selected.poolId, model: model.model_id,
+      recordEvent(db, signer, { type: "verification_canary", canary_id: canaryId, pool_id: poolId, model: model.model_id,
         route_hash: digest(routeJson) as `0x${string}`, score: reply.score, threshold: reply.threshold, verdict }, now);
     })();
     return true;

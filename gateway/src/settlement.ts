@@ -6,7 +6,18 @@ import { recordEvent, signEvent, type Signer, type UnsignedEvent } from "./event
 import { payoutTree, ZERO_ROOT } from "./merkle.ts";
 import { validLayerMap } from "./route.ts";
 
-export type EpochState = { root: Hex; total: bigint; claimed: bigint; postedAt: bigint };
+export type EpochState = {
+  root: Hex; total: bigint; claimed: bigint; postedAt: bigint;
+  /** V2: first second at which claims can be made (challenge window and vesting over). */
+  opensAt?: bigint;
+  /** V2: first second at which the unclaimed value can be swept to the treasury. */
+  sweepAt?: bigint;
+  state?: "open" | "challenged" | "voided";
+};
+/** V2 dispute events of one epoch, in block order. */
+export type Dispute = { type: "challenged"; evidence: Hex } | { type: "dismissed" } | { type: "resolved"; newRoot: Hex; newTotal: bigint };
+/** SPEC §16.4: where the epoch bundle goes (Swarm). Returns the reference. */
+export type BundleStore = { upload(name: string, json: string): Promise<string> };
 export type SignedTx = { raw: Hex; hash: Hex };
 export type Claim = { type: "claim"; address: Hex; amount: bigint; tx: Hex } | { type: "sweep"; tx: Hex };
 export type SettlementChain = {
@@ -15,12 +26,17 @@ export type SettlementChain = {
   resolvePayer(account: string): Promise<Hex>;
   epoch(epoch: number): Promise<EpochState>;
   prepareFunding(amount: bigint): Promise<SignedTx>;
-  preparePost(epoch: number, root: Hex, amount: bigint): Promise<SignedTx>;
+  /** V2 also takes the HCS sequence of the epoch_closed message and the vesting unlock time (unix seconds, 0 = none). */
+  preparePost(epoch: number, root: Hex, amount: bigint, hcsSeq?: number, unlockAt?: number): Promise<SignedTx>;
   broadcast(raw: Hex): Promise<Hex>;
   receipt(hash: Hex): Promise<{ status: "success" | "reverted"; blockNumber: bigint } | null>;
   claimDelay(): Promise<bigint>;
   blockNumber(): Promise<bigint>;
   claims(epoch: number, from: bigint, to: bigint): Promise<Claim[]>;
+  /** V2 only. */
+  disputes?(epoch: number, from: bigint, to: bigint): Promise<Dispute[]>;
+  /** V2 only: schedule `sweep(epoch)` at `atSeconds` as a Hedera scheduled transaction; returns the schedule ID. */
+  scheduleSweep?(epoch: number, atSeconds: number): Promise<string>;
 };
 export type PaidRequest = { req_id: string; model: string; status: string; x402_payer: string | null; x402_tx: string | null; x402_amount_tinybar: string | null; payout_snapshot: string | null };
 
@@ -46,11 +62,22 @@ export function providerPayouts(cfg: Config, requests: PaidRequest[], payerAddre
   return [...amounts].filter(([, n]) => n > 0n).map(([payout_address, n]) => ({ payout_address, amount_tinybar: n.toString() }));
 }
 
-type EpochRow = { epoch: number; total_tinybar: string; merkle_root: Hex; status: string; hcs_event_id: number; funding_raw: Hex | null; funding_tx: Hex | null; post_raw: Hex | null; post_tx: Hex | null; posted_block: string | null; claims_block: string | null };
+type EpochRow = { epoch: number; total_tinybar: string; merkle_root: Hex; status: string; hcs_event_id: number; funding_raw: Hex | null; funding_tx: Hex | null; post_raw: Hex | null; post_tx: Hex | null; posted_block: string | null; claims_block: string | null; sweep_schedule: string | null; swarm_ref: string | null };
+
+/** Everything a third party needs to rebuild an epoch's Merkle root and audit its income (no transcripts, no prompts). */
+export function epochBundle(db: Db, signerPublicKey: string, epoch: number, start: number, end: number, tree: { root: Hex; hash: Hex; payouts: MerkleLeaf[] }, total: string) {
+  const receipts = (db.prepare(`SELECT req_id, model, status, x402_payer, x402_tx, x402_amount_tinybar, in_tokens, out_tokens, payout_snapshot, prompt_hash, resp_hash, route_source, ts
+    FROM requests WHERE pay_type = 'x402' AND ts >= ? AND ts < ? ORDER BY ts, req_id`).all(start, end) as (Record<string, unknown> & { payout_snapshot: string | null })[])
+    .map((r) => ({ ...r, payout_snapshot: r.payout_snapshot ? JSON.parse(r.payout_snapshot) : null }));
+  return { version: 1, gateway_pubkey: signerPublicKey, epoch, start_ts: start, end_ts: end, total_tinybar: total,
+    merkle_root: tree.root, payouts_hash: tree.hash, payouts: tree.payouts, receipts };
+}
 
 /** Closed epoch snapshots and signed raw transactions survive restart. One worker owns these wallets. */
-export function createSettlement(db: Db, cfg: Config, signer: Signer, chain: SettlementChain) {
+export function createSettlement(db: Db, cfg: Config, signer: Signer, chain: SettlementChain, store?: BundleStore) {
   const duration = (cfg.env.EPOCH_SECONDS ?? 600) * 1000;
+  // SPEC §16.4 multiple gateways: epoch ids live in this gateway's namespace on the contract.
+  const base = cfg.env.GATEWAY_INDEX * 2 ** 32;
   let running = false;
 
   async function closeDue(now: number) {
@@ -58,9 +85,10 @@ export function createSettlement(db: Db, cfg: Config, signer: Signer, chain: Set
     const due = db.prepare(`SELECT DISTINCT CAST(ts / ? AS INTEGER) AS epoch FROM requests
       WHERE pay_type = 'x402' AND ts < ? ORDER BY epoch`).all(duration, boundary) as { epoch: number }[];
     const payers = new Map<string, Hex>();
-    for (const { epoch } of due) {
+    for (const { epoch: n } of due) {
+      const epoch = base + n;
       if (db.prepare("SELECT 1 FROM epochs WHERE epoch = ?").get(epoch)) continue;
-      const start = epoch * duration;
+      const start = n * duration;
       const rows = db.prepare(`SELECT * FROM requests WHERE pay_type = 'x402' AND ts >= ? AND ts < ? ORDER BY ts, req_id`).all(start, start + duration) as PaidRequest[];
       if (rows.some((r) => r.status === "pending")) continue;
       // An on-chain payment can fund providers once, even if a payment header is replayed.
@@ -70,14 +98,25 @@ export function createSettlement(db: Db, cfg: Config, signer: Signer, chain: Set
       }
       const tree = payoutTree(epoch, providerPayouts(cfg, unique, payers));
       const total = tree.payouts.reduce((sum, p) => sum + BigInt(p.amount_tinybar), 0n).toString();
+      // SPEC §16.4 Swarm: the bundle goes out first, so every closed epoch has a reference. A Bee outage
+      // delays the close (retried next tick); it never closes an epoch without its bundle.
+      let swarmRef: string | undefined;
+      if (store) {
+        try {
+          swarmRef = await store.upload(`epoch-${epoch}.json`, canonicalJson(epochBundle(db, signer.publicKeyHex, epoch, start, start + duration, tree, total)));
+        } catch (e) {
+          console.error(`epoch ${epoch}: Swarm upload failed, close retried: ${(e as Error).message}`);
+          continue;
+        }
+      }
       let event: UnsignedEvent = { type: "epoch_closed", epoch, start_ts: start, end_ts: start + duration,
-        total_tinybar: total, merkle_root: tree.root, payouts_hash: tree.hash, payouts: tree.payouts };
+        total_tinybar: total, merkle_root: tree.root, payouts_hash: tree.hash, payouts: tree.payouts, ...(swarmRef ? { swarm_ref: swarmRef } : {}) };
       if (Buffer.byteLength(canonicalJson(signEvent(signer, event, now))) >= 1024) event = { ...event, payouts: null };
       db.transaction(() => {
         recordEvent(db, signer, event, now);
         const id = (db.prepare("SELECT last_insert_rowid() AS id").get() as { id: number }).id;
-        db.prepare(`INSERT INTO epochs (epoch, start_ts, end_ts, total_tinybar, merkle_root, status, hcs_event_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?)`).run(epoch, start, start + duration, total, tree.root, tree.payouts.length ? "closed" : "empty", id);
+        db.prepare(`INSERT INTO epochs (epoch, start_ts, end_ts, total_tinybar, merkle_root, status, hcs_event_id, swarm_ref)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(epoch, start, start + duration, total, tree.root, tree.payouts.length ? "closed" : "empty", id, swarmRef ?? null);
         for (const p of tree.proofs) db.prepare(`INSERT INTO epoch_payouts (epoch, payout_address, amount_tinybar, proof)
           VALUES (?, ?, ?, ?)`).run(epoch, p.payout_address, p.amount_tinybar, JSON.stringify(p.proof));
       })();
@@ -119,7 +158,9 @@ export function createSettlement(db: Db, cfg: Config, signer: Signer, chain: Set
         }
         db.prepare("UPDATE epochs SET status = 'funded' WHERE epoch = ?").run(r.epoch);
         if (!r.post_raw) {
-          const tx = await chain.preparePost(r.epoch, r.merkle_root, total);
+          // V2: link the post to its signed HCS message; vesting unlock is fixed when the transaction is signed.
+          const unlockAt = cfg.env.PAYOUT_VESTING_SECONDS > 0 ? Math.floor(Date.now() / 1000) + cfg.env.PAYOUT_VESTING_SECONDS : 0;
+          const tx = await chain.preparePost(r.epoch, r.merkle_root, total, hcs.hcs_seq, unlockAt);
           r.post_raw = tx.raw; r.post_tx = tx.hash;
           db.prepare("UPDATE epochs SET post_raw = ?, post_tx = ?, status = 'posting' WHERE epoch = ?").run(tx.raw, tx.hash, r.epoch);
         }
@@ -129,14 +170,14 @@ export function createSettlement(db: Db, cfg: Config, signer: Signer, chain: Set
       if (!receipt) return;
       const state = await chain.epoch(r.epoch);
       if (state.root !== r.merkle_root || state.total !== total) throw new Error(`posted epoch ${r.epoch} did not match local payouts`);
-      const claimable = Number(state.postedAt + await chain.claimDelay()) * 1000;
+      const claimable = state.opensAt !== undefined ? Number(state.opensAt) * 1000 : Number(state.postedAt + await chain.claimDelay()) * 1000;
       db.prepare("UPDATE epochs SET status = 'posted', posted_block = ?, claims_block = ?, claimable_at = ? WHERE epoch = ?")
         .run(receipt.blockNumber.toString(), (receipt.blockNumber - 1n).toString(), claimable, r.epoch);
     }
   }
 
   async function syncClaims() {
-    const epochs = db.prepare("SELECT * FROM epochs WHERE status = 'posted' ORDER BY epoch").all() as EpochRow[];
+    const epochs = db.prepare("SELECT * FROM epochs WHERE status IN ('posted', 'challenged') ORDER BY epoch").all() as EpochRow[];
     if (!epochs.length) return;
     const latest = await chain.blockNumber();
     for (const e of epochs) {
@@ -144,7 +185,22 @@ export function createSettlement(db: Db, cfg: Config, signer: Signer, chain: Set
       if (from > latest) continue;
       const to = from + 1999n < latest ? from + 1999n : latest;
       const claims = await chain.claims(e.epoch, from, to);
+      const disputes = chain.disputes ? await chain.disputes(e.epoch, from, to) : [];
       db.transaction(() => {
+        // SPEC §16.4 disputes: a challenged epoch exposes no proofs until it is resolved or dismissed.
+        for (const d of disputes) {
+          if (d.type === "challenged") db.prepare("UPDATE epochs SET status = 'challenged' WHERE epoch = ?").run(e.epoch);
+          else if (d.type === "dismissed") db.prepare("UPDATE epochs SET status = 'posted' WHERE epoch = ?").run(e.epoch);
+          else {
+            const local = db.prepare("SELECT merkle_root, status FROM epochs WHERE epoch = ?").get(e.epoch) as { merkle_root: Hex; status: string };
+            // `scripts/dispute.ts` already stored the corrected payouts; any other resolution needs a person.
+            if (d.newRoot === local.merkle_root || (d.newRoot === ZERO_ROOT && local.merkle_root === ZERO_ROOT)) db.prepare("UPDATE epochs SET status = 'posted' WHERE epoch = ?").run(e.epoch);
+            else {
+              db.prepare("UPDATE epochs SET status = 'review' WHERE epoch = ?").run(e.epoch);
+              console.error(`epoch ${e.epoch}: resolved on-chain to ${d.newRoot}, local payouts differ; use scripts/dispute.ts --record`);
+            }
+          }
+        }
         for (const c of claims) {
           if (c.type === "sweep") {
             db.prepare("UPDATE epochs SET status = 'swept' WHERE epoch = ?").run(e.epoch);
@@ -162,12 +218,28 @@ export function createSettlement(db: Db, cfg: Config, signer: Signer, chain: Set
     }
   }
 
+  /** SPEC §16.4: sweep each posted epoch with a Hedera scheduled transaction (no gateway key, no gateway timer). */
+  async function scheduleSweeps() {
+    if (!chain.scheduleSweep || cfg.env.SCHEDULE_SWEEP !== "true") return;
+    const rows = db.prepare("SELECT epoch FROM epochs WHERE status IN ('posted', 'challenged') AND sweep_schedule IS NULL ORDER BY epoch").all() as { epoch: number }[];
+    for (const { epoch } of rows) {
+      const state = await chain.epoch(epoch);
+      if (state.sweepAt === undefined) continue;
+      try {
+        const id = await chain.scheduleSweep(epoch, Number(state.sweepAt));
+        db.prepare("UPDATE epochs SET sweep_schedule = ? WHERE epoch = ?").run(id, epoch);
+      } catch (e) {
+        console.error(`epoch ${epoch}: scheduling the sweep failed (retried): ${(e as Error).message}`);
+      }
+    }
+  }
+
   return {
     closeDue,
     async runOnce(now = Date.now()) {
       if (running) return;
       running = true;
-      try { await chain.verify(); await closeDue(now); await postDue(); await syncClaims(); }
+      try { await chain.verify(); await closeDue(now); await postDue(); await syncClaims(); await scheduleSweeps(); }
       finally { running = false; }
     },
   };

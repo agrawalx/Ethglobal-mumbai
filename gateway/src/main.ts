@@ -14,6 +14,9 @@ import { refreshReliability } from "./reliability.ts";
 import { expireEarned, payAvailability, runPenalties, unlockDue } from "./incentives.ts";
 import { createSettlement, startSettlementWorker } from "./settlement.ts";
 import { hederaSettlementChain } from "./payout-chain.ts";
+import { hederaSweepScheduler, resolveContractId } from "./schedule.ts";
+import { swarmStore } from "./swarm.ts";
+import { legalGate } from "./legal.ts";
 import { arkivStatsWriter, startAccountStatsPublisher } from "./account-stats.ts";
 import { createX402 } from "./x402.ts";
 import { maybeQueueVerification, startCanaryWorker, startVerificationWorker } from "./verification.ts";
@@ -29,10 +32,11 @@ try {
   process.exit(1);
 }
 const e = cfg.env;
-const db = openDb(e.DATABASE_PATH);
+legalGate(cfg);
+const db = openDb(e.DATABASE_PATH, { resetOnMismatch: e.DB_RESET_ON_MISMATCH === "true" });
 
 const x402 = e.X402_FACILITATOR_URL && e.X402_PAY_TO
-  ? createX402({ cfg: cfg.net, facilitatorUrl: e.X402_FACILITATOR_URL, network: e.X402_NETWORK ?? "hedera:testnet", payTo: e.X402_PAY_TO })
+  ? createX402({ cfg: cfg.net, facilitatorUrl: e.X402_FACILITATOR_URL, network: e.X402_NETWORK ?? "hedera:testnet", payTo: e.X402_PAY_TO, acceptUsdc: e.X402_ACCEPT_USDC === "true" })
   : null;
 if (!x402) console.warn("x402 not configured (X402_FACILITATOR_URL / X402_PAY_TO): requests without a session get 402");
 
@@ -80,10 +84,21 @@ const reliabilityTimer = setInterval(() => {
 }, cfg.env.HEARTBEAT_SECONDS * 1000);
 
 let stopSettlement = () => {};
+let closeSchedule = () => {};
 if (e.PAYOUT_CONTRACT_ADDRESS) {
-  const chain = hederaSettlementChain(cfg);
   if (!e.HCS_TOPIC_ID || !e.HEDERA_OPERATOR_ID || !e.HEDERA_OPERATOR_KEY) throw new Error("epoch settlement requires the HCS writer configuration");
-  stopSettlement = startSettlementWorker(createSettlement(db, cfg, signer, chain));
+  // SPEC §16.4 scheduled sweeps (V2 only): the operator schedules sweep(epoch) as a Hedera scheduled transaction.
+  let sweepScheduler;
+  if (e.PAYOUT_CONTRACT_VERSION === "2" && e.SCHEDULE_SWEEP === "true") {
+    const contractId = await resolveContractId({ contractId: e.PAYOUT_CONTRACT_ID, evmAddress: e.PAYOUT_CONTRACT_ADDRESS, mirrorUrl: e.HEDERA_MIRROR_URL ?? "https://testnet.mirrornode.hedera.com" });
+    const s = hederaSweepScheduler({ network: e.HEDERA_NETWORK ?? "testnet", operatorId: e.HEDERA_OPERATOR_ID, operatorKey: e.HEDERA_OPERATOR_KEY, contractId });
+    sweepScheduler = s.schedule;
+    closeSchedule = s.close;
+  }
+  const chain = hederaSettlementChain(cfg, sweepScheduler);
+  const store = swarmStore(cfg);
+  if (store) console.log("Swarm bundles on: each closed epoch is uploaded to Bee before it is committed to HCS");
+  stopSettlement = startSettlementWorker(createSettlement(db, cfg, signer, chain, store));
 } else {
   console.warn("epoch settlement disabled: set PAYOUT_CONTRACT_ADDRESS and treasury/settler keys to enable");
 }
@@ -124,6 +139,7 @@ const shutdown = () => {
   clearInterval(incentivesTimer);
   void statsPublisher?.stop();
   stopSettlement();
+  closeSchedule();
   stopVerification();
   stopCanaries();
   stopHcs();

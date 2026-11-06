@@ -6,3 +6,4 @@ export * from "./hcs.ts";
 export * from "./merkle.ts";
 export * from "./api.ts";
 export * from "./canonical.ts";
+export * from "./agent-registration.ts";

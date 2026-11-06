@@ -147,23 +147,23 @@ try:
     if platform.system() == "Darwin":
         import mlx.core as mx
         backend = "mlx"
-        a = mx.array(av, dtype=mx.int32)
-        b = mx.array(bv, dtype=mx.int32)
+        a = mx.array(av, dtype=mx.float32)
+        b = mx.array(bv, dtype=mx.float32)
         for _ in range(4):
             c = a @ b
             mx.eval(c)
-        values = [int(x) for x in c.reshape((-1,))[:16].tolist()]
+        values = [int(round(float(x))) for x in c.reshape((-1,))[:16].tolist()]
     else:
         import torch
         if torch.cuda.is_available():
             backend = "cuda"
             device = torch.device("cuda:0")
             memory = torch.cuda.get_device_properties(device).total_memory / (1024 ** 3)
-            a = torch.tensor(av, dtype=torch.int32, device=device)
-            b = torch.tensor(bv, dtype=torch.int32, device=device)
+            a = torch.tensor(av, dtype=torch.float32, device=device)
+            b = torch.tensor(bv, dtype=torch.float32, device=device)
             for _ in range(4): c = a @ b
             torch.cuda.synchronize()
-            values = [int(x) for x in c.flatten()[:16].cpu().tolist()]
+            values = [int(round(float(x))) for x in c.flatten()[:16].cpu().tolist()]
 except Exception as e:
     print(json.dumps({"backend":"unavailable","memory_gb":memory,"error":type(e).__name__}))
     raise SystemExit(0)

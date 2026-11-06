@@ -92,6 +92,17 @@ export const GpupoolConfig = z.object({
     route_dispute_ratio: z.number().positive(),
     route_check_min_requests: z.number().int().positive(),
   }),
+  /**
+   * SPEC §16.4 USDC on x402. Prices stay the HBAR tiers (SPEC §7.3): USDC price = ceil(price_tinybar / tinybar_per_unit)
+   * in USDC base units. Providers are still paid in HBAR, so USDC income counts toward the epoch at this fixed rate
+   * (the treasury must hold HBAR liquidity for payouts).
+   */
+  x402_usdc: z.object({
+    token_id: z.string().regex(/^\d+\.\d+\.\d+$/),
+    decimals: z.number().int().min(0).max(18),
+    /** Tinybar value of one USDC base unit (1e-6 USDC). 500 ≈ 1 USDC = 5 HBAR. */
+    tinybar_per_unit: z.number().int().positive(),
+  }),
   /** SPEC §16.3 incentives. */
   incentives: z.object({
     /** Earned credits stay locked (can be taken back for fraud) this long before they can be spent. */

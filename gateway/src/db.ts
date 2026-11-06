@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
 
@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
  * tinybar decimal strings, times are Unix ms. No migrations (dev phase): when SCHEMA_VERSION
  * changes, delete the database file and restart.
  */
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 12;
 
 export const TABLES = [
   "accounts",
@@ -107,7 +107,9 @@ CREATE TABLE IF NOT EXISTS requests (
   account_id           TEXT REFERENCES accounts(id), -- null for x402
   x402_payer           TEXT,                         -- Hedera account ID
   x402_tx              TEXT,                         -- Hedera tx ID
-  x402_amount_tinybar  TEXT,
+  x402_amount_tinybar  TEXT,                         -- HBAR paid, or the HBAR-equivalent of USDC (§16.4)
+  x402_asset           TEXT,                         -- §16.4: hbar / usdc
+  x402_amount_raw      TEXT,                         -- §16.4: amount in the paid asset's base unit
   model                TEXT NOT NULL,
   pay_type             TEXT NOT NULL CHECK (pay_type IN ('credits', 'x402')),
   in_tokens            INTEGER,
@@ -151,7 +153,9 @@ CREATE TABLE IF NOT EXISTS epochs (
   post_raw       TEXT,
   posted_block   TEXT,
   claims_block   TEXT,
-  claimable_at   INTEGER
+  claimable_at   INTEGER,
+  sweep_schedule TEXT,                               -- §16.4: Hedera scheduled-transaction ID of the sweep
+  swarm_ref      TEXT                                -- §16.4: Swarm reference of the epoch bundle
 );
 CREATE TABLE IF NOT EXISTS epoch_payouts (
   epoch           INTEGER NOT NULL REFERENCES epochs(epoch),
@@ -299,16 +303,41 @@ CREATE TABLE IF NOT EXISTS transcripts (
 
 export type Db = Database.Database;
 
-export function openDb(path: string): Db {
+export type OpenOptions = {
+  /**
+   * Dev phase (CLAUDE.md §1: no migrations). When the file has another schema version: true (default) =
+   * move it aside as `<file>-bak-v<N>-<time>` and start a fresh database on the latest schema (nothing is
+   * deleted); false = refuse to start.
+   */
+  resetOnMismatch?: boolean;
+};
+
+/** Move a database file (and any leftover WAL/SHM files) aside. Returns the backup path. */
+function backupAside(path: string, version: number, now = Date.now()): string {
+  const backup = `${path}-bak-v${version}-${now}`;
+  renameSync(path, backup);
+  for (const suffix of ["-wal", "-shm"]) if (existsSync(path + suffix)) renameSync(path + suffix, backup + suffix);
+  return backup;
+}
+
+export function openDb(path: string, opts: OpenOptions = {}): Db {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-  const db = new Database(path);
+  let db = new Database(path);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   const version = db.pragma("user_version", { simple: true }) as number;
   const hasTables = (db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type = 'table'").get() as { n: number }).n > 0;
   if (hasTables && version !== SCHEMA_VERSION) {
-    db.close();
-    throw new Error(`database ${path} has schema v${version}, need v${SCHEMA_VERSION}: delete the file and restart (dev phase, no migrations)`);
+    if (path === ":memory:" || opts.resetOnMismatch === false) {
+      db.close();
+      throw new Error(`database ${path} has schema v${version}, need v${SCHEMA_VERSION}: remove the file, or set DB_RESET_ON_MISMATCH=true to move it aside automatically`);
+    }
+    db.close(); // a clean close checkpoints the WAL into the main file
+    const backup = backupAside(path, version);
+    console.warn(JSON.stringify({ msg: "db_schema_reset", found: version, need: SCHEMA_VERSION, backup }));
+    db = new Database(path);
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
   }
   db.exec(SCHEMA);
   db.pragma(`user_version = ${SCHEMA_VERSION}`);

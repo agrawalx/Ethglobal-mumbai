@@ -1,6 +1,6 @@
 import type { Context } from "hono";
 import { HTTPFacilitatorClient, x402HTTPResourceServer, x402ResourceServer, type HTTPAdapter, type HTTPRequestContext, type HTTPResponseInstructions } from "@x402/core/server";
-import { HBAR_ASSET_ID } from "@x402/hedera";
+import { HBAR_ASSET_ID, isHbarAsset } from "@x402/hedera";
 import { ExactHederaScheme } from "@x402/hedera/exact/server";
 import type { ChatCompletionRequest, GpupoolConfig } from "@gpupool/shared";
 
@@ -26,7 +26,14 @@ export function priceTinybar(cfg: GpupoolConfig, modelId: string, maxTokens: num
   return tier.price_tinybar;
 }
 
-export type X402Paid = { payer: string; tx: string; amountTinybar: string; headers: Record<string, string> };
+/** SPEC §16.4: USDC price in base units = ceil(HBAR tier price / tinybar_per_unit). */
+export function priceUsdcUnits(cfg: GpupoolConfig, modelId: string, maxTokens: number): string {
+  const tinybar = BigInt(priceTinybar(cfg, modelId, maxTokens));
+  const rate = BigInt(cfg.x402_usdc.tinybar_per_unit);
+  return ((tinybar + rate - 1n) / rate).toString();
+}
+
+export type X402Paid = { payer: string; tx: string; amountTinybar: string; asset: "hbar" | "usdc"; amountRaw: string; headers: Record<string, string> };
 export type X402 = { charge(c: Context, req: ChatCompletionRequest, maxTokens: number): Promise<X402Paid | Response> };
 
 /** Body for the price callback. The handler has already parsed and checked the request. */
@@ -54,13 +61,13 @@ const toResponse = (r: HTTPResponseInstructions): Response => {
   return new Response(JSON.stringify(r.body ?? {}), { status: r.status, headers });
 };
 
-export function createX402(opts: { cfg: GpupoolConfig; facilitatorUrl: string; network: string; payTo: string }): X402 {
+export function createX402(opts: { cfg: GpupoolConfig; facilitatorUrl: string; network: string; payTo: string; acceptUsdc?: boolean }): X402 {
   if (!/^\d+\.\d+\.\d+$/.test(opts.payTo)) throw new Error("X402_PAY_TO must be a Hedera account ID 0.0.x (facilitators reject EVM aliases)");
   const facilitator = new HTTPFacilitatorClient({ url: opts.facilitatorUrl });
   const server = new x402ResourceServer(facilitator).register("hedera:*", new ExactHederaScheme());
   const http = new x402HTTPResourceServer(server, {
     [X402_ROUTE]: {
-      accepts: {
+      accepts: [{
         scheme: "exact",
         network: opts.network as `${string}:${string}`,
         payTo: opts.payTo,
@@ -70,7 +77,17 @@ export function createX402(opts: { cfg: GpupoolConfig; facilitatorUrl: string; n
           return { asset: HBAR_ASSET_ID, amount: priceTinybar(opts.cfg, p.model, p.maxTokens) };
         },
         maxTimeoutSeconds: 120,
-      },
+      }, ...(opts.acceptUsdc ? [{
+        // SPEC §16.4: USDC (HTS token) at the fixed rate in shared config. The payer must be associated with the token.
+        scheme: "exact",
+        network: opts.network as `${string}:${string}`,
+        payTo: opts.payTo,
+        price: async (ctx: HTTPRequestContext) => {
+          const p = (await ctx.adapter.getBody?.()) as Priced;
+          return { asset: opts.cfg.x402_usdc.token_id, amount: priceUsdcUnits(opts.cfg, p.model, p.maxTokens) };
+        },
+        maxTimeoutSeconds: 120,
+      }] : [])],
       description: "gpupool chat completion (priced by model and max_tokens tier, SPEC §7.3)",
       mimeType: "application/json",
     },
@@ -107,7 +124,12 @@ export function createX402(opts: { cfg: GpupoolConfig; facilitatorUrl: string; n
         : await http.processSettlement(result.paymentPayload, result.paymentRequirements, result.declaredExtensions, { request: ctx });
       if (!settled.success) return "response" in settled ? toResponse(settled.response) : Response.json({ error: { code: "payment_required", message: "settlement failed" } }, { status: 402 });
       if (!settled.payer) return Response.json({ error: { code: "internal", message: "facilitator settled without a payer" } }, { status: 502 });
-      return { payer: settled.payer, tx: settled.transaction, amountTinybar: settled.amount ?? result.paymentRequirements.amount, headers: settled.headers };
+      // The accepted option decides the asset. USDC income counts toward the epoch in HBAR at the fixed rate.
+      const raw = settled.amount ?? result.paymentRequirements.amount;
+      const usdc = !isHbarAsset(result.paymentRequirements.asset);
+      if (usdc && result.paymentRequirements.asset !== opts.cfg.x402_usdc.token_id) return Response.json({ error: { code: "payment_required", message: `asset ${result.paymentRequirements.asset} is not accepted` } }, { status: 402 });
+      const amountTinybar = usdc ? (BigInt(raw) * BigInt(opts.cfg.x402_usdc.tinybar_per_unit)).toString() : raw;
+      return { payer: settled.payer, tx: settled.transaction, amountTinybar, asset: usdc ? "usdc" : "hbar", amountRaw: raw, headers: settled.headers };
     },
   };
 }

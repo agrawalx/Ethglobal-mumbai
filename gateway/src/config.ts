@@ -20,6 +20,8 @@ export const GatewayEnv = z.preprocess(
     PUBLIC_URL: z.url().optional(),
     POOL_COORDINATOR_URL: z.url(),
     DATABASE_PATH: z.string().min(1),
+    /** Dev phase: a database with another schema version is moved aside (never deleted) and recreated. false = refuse to start. */
+    DB_RESET_ON_MISMATCH: z.enum(["true", "false"]).default("true"),
     /** Comma-separated frontend origins. Empty = no cross-origin access. */
     CORS_ORIGINS: z.string().default(""),
     /** Time to the pool's response headers of NON-streaming requests, ms. Non-streaming Parallax answers send
@@ -50,8 +52,29 @@ export const GatewayEnv = z.preprocess(
     X402_FACILITATOR_URL: opt,
     X402_NETWORK: opt,
     X402_PAY_TO: opt,
+    /** SPEC §16.4: also accept USDC (HTS) on x402; priced from the HBAR tiers at the fixed rate in shared config. */
+    X402_ACCEPT_USDC: z.enum(["true", "false"]).default("false"),
+    ERC8004_IDENTITY_REGISTRY: opt,
+    ERC8004_REPUTATION_REGISTRY: opt,
+    ERC8004_AGENT_ID: z.string().regex(/^\d+$/).optional(),
+    ERC8004_IMAGE_URL: z.url().optional(),
     SETTLER_PRIVATE_KEY: opt,
     PAYOUT_CONTRACT_ADDRESS: opt,
+    /** SPEC §16.4: 1 = EpochPayout (MVP, deployed); 2 = EpochPayoutV2 (challenge window, vesting, namespaces, HCS link). */
+    /** Counsel opinion reference (docs/LEGAL_CHECK.md). Only logged: the build stays testnet-only. */
+    LEGAL_CLEARANCE_REF: opt,
+    PAYOUT_CONTRACT_VERSION: z.enum(["1", "2"]).default("1"),
+    /** SPEC §16.4 multiple gateways: this gateway's namespace on the contract (epoch ids = index × 2^32 + n). 0 = single gateway. */
+    GATEWAY_INDEX: z.coerce.number().int().min(0).max(1_000_000).default(0),
+    /** V2: extra vesting (seconds) before claims open, on top of the challenge window. */
+    PAYOUT_VESTING_SECONDS: z.coerce.number().int().nonnegative().default(0),
+    /** V2: schedule the sweep of each posted epoch as a Hedera scheduled transaction (HIP-423). */
+    SCHEDULE_SWEEP: z.enum(["true", "false"]).default("false"),
+    /** Hedera contract ID of the payout contract (looked up on the mirror node from its address when empty). */
+    PAYOUT_CONTRACT_ID: opt,
+    /** SPEC §16.4 Swarm: a Bee node and a usable postage batch; each epoch bundle is uploaded before the epoch closes. */
+    BEE_API_URL: opt,
+    BEE_POSTAGE_BATCH_ID: opt,
     EPOCH_SECONDS: z.coerce.number().int().positive().optional(),
     ARKIV_RPC_URL: opt,
     ARKIV_CHAIN_ID: opt,

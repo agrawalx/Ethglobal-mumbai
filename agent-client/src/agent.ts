@@ -24,7 +24,7 @@ const QUESTIONS = [
   "Give a one-line definition of a Merkle proof.",
 ];
 
-const { values } = parseArgs({ options: { questions: { type: "string", default: "5" }, model: { type: "string", default: "Qwen/Qwen3-14B-FP8" }, "max-tokens": { type: "string", default: "128" } } });
+const { values } = parseArgs({ options: { questions: { type: "string", default: "5" }, model: { type: "string", default: "Qwen/Qwen3-14B-FP8" }, "max-tokens": { type: "string", default: "128" }, asset: { type: "string" } } });
 const env = process.env;
 const missing = ["GATEWAY_URL", "AGENT_ACCOUNT_ID", "AGENT_PRIVATE_KEY"].filter((k) => !env[k]);
 if (missing.length) {
@@ -37,6 +37,10 @@ if ((env.HEDERA_NETWORK ?? "testnet") !== "testnet") {
 }
 const network = "hedera:testnet" as const;
 const cfg = loadNetConfig();
+const paymentAsset = values.asset ?? env.AGENT_PAYMENT_ASSET ?? "hbar";
+if (paymentAsset !== "hbar" && paymentAsset !== "usdc") throw new Error("--asset must be hbar or usdc");
+const assetId = paymentAsset === "usdc" ? cfg.x402_usdc.token_id : HBAR_ASSET_ID;
+const rate = paymentAsset === "usdc" ? BigInt(cfg.x402_usdc.tinybar_per_unit) : 1n;
 const model = values.model!;
 const maxTokens = Number(values["max-tokens"]);
 const count = Math.min(Number(values.questions), QUESTIONS.length);
@@ -46,7 +50,9 @@ const gateway = env.GATEWAY_URL!.replace(/\/+$/, "");
 
 let spent = 0n;
 for (const question of QUESTIONS.slice(0, count)) {
-  const price = priceTinybar(cfg, model, maxTokens);
+  const tierPrice = priceTinybar(cfg, model, maxTokens);
+  const priceRaw = (tierPrice + rate - 1n) / rate;
+  const price = priceRaw * rate;
   if (!canAfford(spent, price, budget)) {
     console.log(`budget: stop. spent ${spent} + next ${price} tinybar > budget ${budget} tinybar`);
     break;
@@ -54,7 +60,8 @@ for (const question of QUESTIONS.slice(0, count)) {
   // Per-payment cap = what is left of the budget (the default spend controls block HBAR).
   const client = new x402Client()
     .register("hedera:*", new ExactHederaScheme(signer))
-    .setSpendControls({ allowedAssets: [{ network, asset: HBAR_ASSET_ID, maxAmountPerPayment: (budget - spent).toString() }] });
+    .setSpendControls({ allowedAssets: [{ network, asset: assetId, maxAmountPerPayment: priceRaw.toString() }] })
+    .registerPolicy((_version, requirements) => requirements.filter((r) => r.asset === assetId));
   const pay = wrapFetchWithPayment(fetch, client);
   console.log(`\nQ: ${question}`);
   const res = await pay(`${gateway}/v1/chat/completions`, {
@@ -67,7 +74,7 @@ for (const question of QUESTIONS.slice(0, count)) {
   if (header) {
     const settle = decodePaymentResponseHeader(header);
     spent += price;
-    console.log(`paid ${price} tinybar, tx ${settle.transaction}\nHashScan: ${hashscanTxUrl(settle.transaction)}`);
+    console.log(`paid ${priceRaw} base units of ${paymentAsset} (${price} tinybar equivalent), tx ${settle.transaction}\nHashScan: ${hashscanTxUrl(settle.transaction)}`);
   }
   const body = (await res.json().catch(() => null)) as any;
   if (!res.ok) {

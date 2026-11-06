@@ -66,7 +66,11 @@ export const X402PaymentEvent = z.object({
   req_id: RequestId,
   payer: HederaAccountId,
   tx_id: HederaTxId,
+  /** HBAR paid, or for USDC the HBAR-equivalent at the configured fixed rate (epoch accounting, SPEC §16.4). */
   amount_tinybar: Tinybar,
+  /** SPEC §16.4: asset actually paid (default hbar) and the raw amount in that asset's base unit. */
+  asset: z.enum(["hbar", "usdc"]).optional(),
+  amount_raw: Tinybar.optional(),
   model: ModelId,
   in_tokens: z.number().int().nonnegative(),
   out_tokens: z.number().int().nonnegative(),
@@ -105,6 +109,20 @@ export const EpochClosedEvent = z.object({
   payouts_hash: Hex32,
   /** Full list if the message stays < 1 KB; otherwise null and the gateway keeps it. */
   payouts: z.array(z.object({ payout_address: EvmAddress, amount_tinybar: Tinybar })).nullable(),
+  /** SPEC §16.4 Swarm: reference of the epoch bundle (receipts, routes, payouts, Merkle tree inputs). */
+  swarm_ref: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+});
+
+/** SPEC §16.4: a dispute changed a posted epoch (EpochPayoutV2.resolve). The difference went to the treasury. */
+export const EpochResolvedEvent = z.object({
+  ...base,
+  type: z.literal("epoch_resolved"),
+  epoch: EpochNumber,
+  old_root: Hex32,
+  new_root: Hex32.nullable(),
+  new_total_tinybar: Tinybar,
+  refunded_tinybar: Tinybar,
+  evidence_id: z.string().min(1).max(80),
 });
 
 export const PayoutClaimedEvent = z.object({
@@ -216,6 +234,7 @@ export const LedgerEvent = z.discriminatedUnion("type", [
   CreditsExpiredEvent,
   PayoutAddressSetEvent,
   EpochClosedEvent,
+  EpochResolvedEvent,
   PayoutClaimedEvent,
   VerificationResultEvent,
   VerificationAppealEvent,

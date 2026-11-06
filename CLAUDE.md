@@ -1,3 +1,4 @@
+
 # CLAUDE.md: Rules for agents in this repository
 
 ## 0. Read first

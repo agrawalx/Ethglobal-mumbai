@@ -393,6 +393,8 @@ export const Receipt = z.object({
   x402_payer: HederaAccountId.nullable(),
   x402_tx: HederaTxId.nullable(),
   x402_amount_tinybar: Tinybar.nullable(),
+  /** SPEC §16.4: asset of the x402 payment (null for credit requests). */
+  x402_asset: z.enum(["hbar", "usdc"]).nullable(),
   in_tokens: z.number().int().nonnegative().nullable(),
   out_tokens: z.number().int().nonnegative().nullable(),
   /** Credit requests only; null for x402 and failed requests. */
