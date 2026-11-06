@@ -1,0 +1,1 @@
+{ "node_id": "0xa4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4", "pool_id": "pool-mumbai-1", "ts": 1793912340000, "online": true, "model": "Qwen/Qwen3-14B-MLX-8bit", "layers": [0, 20], "tok_s": 5.6 }

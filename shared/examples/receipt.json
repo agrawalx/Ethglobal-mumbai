@@ -1,0 +1,8 @@
+{
+  "req_id": "req_01JC8Z6Q4M", "model": "Qwen/Qwen3-14B-FP8", "pay_type": "credits", "status": "ok",
+  "account_id": "acc_9Lm3Rt", "x402_payer": null, "x402_tx": null, "x402_amount_tinybar": null,
+  "in_tokens": 412, "out_tokens": 256, "cost_mc": 592200,
+  "split": {"nodes":{"0xa4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4":266490,"0xa5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5":119920,"0x4646464646464646464646464646464646464646":146569},"burn_mc":29610,"reserve_mc":29611},
+  "route": [{"node_id":"0xa4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4","layers":[0,20]},{"node_id":"0xa5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5","layers":[20,29]},{"node_id":"0x4646464646464646464646464646464646464646","layers":[29,40]}],
+  "prompt_hash": "0xabababababababababababababababababababababababababababababababab", "resp_hash": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd", "hcs_seq": 42, "ts": 1793912345123
+}
