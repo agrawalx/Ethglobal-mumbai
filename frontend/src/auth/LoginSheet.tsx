@@ -3,7 +3,7 @@
    /auth/world/verify unchanged → JWT. Without an RP (demo / no gateway yet) the
    sheet offers the four demo paths from §6.4 as a simulation. */
 import { useEffect, useState } from "react";
-import { IDKitRequestWidget, CredentialRequest } from "@worldcoin/idkit";
+import { IDKitRequestWidget, CredentialRequest, any } from "@worldcoin/idkit";
 import type { IDKitErrorCodes } from "@worldcoin/idkit";
 import { Sheet } from "../components/Shared";
 import { Icon } from "../components/Icon";
@@ -71,7 +71,7 @@ export default function LoginSheet() {
     <Sheet title="Log in with World ID" onClose={s.closeLogin}>
       <div className="login-body">
         <p className="muted">
-          One human, one account. A new account gets {fmtNum(STARTER_CREDITS)} starter credits (valid for 14 days). Verify with Selfie Check.
+          One human, one account. A new account gets {fmtNum(STARTER_CREDITS)} starter credits (valid for 14 days). Verify with the Orb or Selfie Check.
         </p>
 
         {outcome?.kind === "ok" ? (
@@ -107,7 +107,7 @@ export default function LoginSheet() {
               environment={rp!.environment}
               rp_context={rp!}
               allow_legacy_proofs={false}
-              constraints={CredentialRequest("selfie")}
+              constraints={any(CredentialRequest("proof_of_human"), CredentialRequest("selfie"))}
               onSuccess={(result) => verify(result)}
               onError={(code) => setOutcome(fromIdkitError(code))}
             />
