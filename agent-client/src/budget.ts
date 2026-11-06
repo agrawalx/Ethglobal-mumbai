@@ -32,3 +32,15 @@ export function hashscanTxUrl(txId: string, network = "testnet"): string {
   if (!m) throw new Error(`not a Hedera tx ID: ${txId}`);
   return `https://hashscan.io/${network}/transaction/${m[1]}-${m[2]}-${m[3]}`;
 }
+
+/**
+ * How to read a Hedera Portal private key: DER ("302e…" ED25519 / "3030…" ECDSA, the Portal's
+ * "DER Encoded" field) carries its type; a raw 32-byte hex key needs AGENT_KEY_TYPE (default ecdsa).
+ */
+export function portalKeyKind(raw: string, type = "ecdsa"): "der" | "ecdsa" | "ed25519" {
+  const k = raw.trim().replace(/^0x/, "");
+  if (/^30[0-9a-f]{2,}$/i.test(k) && k.length > 64) return "der";
+  if (!/^[0-9a-f]{64}$/i.test(k)) throw new Error("AGENT_PRIVATE_KEY must be the Portal's DER or 64-hex private key");
+  if (type !== "ecdsa" && type !== "ed25519") throw new Error("AGENT_KEY_TYPE must be ecdsa or ed25519");
+  return type;
+}

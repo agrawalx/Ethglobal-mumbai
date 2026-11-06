@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canAfford, hashscanTxUrl, hbarToTinybar, loadNetConfig, priceTinybar } from "../src/budget.ts";
+import { canAfford, hashscanTxUrl, hbarToTinybar, loadNetConfig, portalKeyKind, priceTinybar } from "../src/budget.ts";
 
 test("price tiers match the shared config (SPEC §7.3)", () => {
   const cfg = loadNetConfig();
@@ -35,4 +35,17 @@ test("budget cap: stop before a payment would exceed the budget", () => {
 
 test("HashScan link", () => {
   assert.equal(hashscanTxUrl("0.0.9185802@1793929496.997341480"), "https://hashscan.io/testnet/transaction/0.0.9185802-1793929496-997341480");
+});
+
+test("Portal keys: DER carries its type; raw hex needs ecdsa or ed25519", () => {
+  assert.equal(portalKeyKind("302e020100300506032b657004220420" + "ab".repeat(32)), "der");
+  assert.equal(portalKeyKind("3030020100300706052b8104000a04220420" + "ab".repeat(32)), "der");
+  assert.equal(portalKeyKind("0x" + "ab".repeat(32)), "ecdsa");
+  assert.equal(portalKeyKind("ab".repeat(32), "ed25519"), "ed25519");
+  assert.throws(() => portalKeyKind("ab".repeat(32), "rsa"));
+  assert.throws(() => portalKeyKind("not-a-key"));
+});
+
+test("top-up rate in shared config: 1 HBAR = 10 credits", () => {
+  assert.equal(loadNetConfig().topup.credits_per_hbar, 10);
 });
