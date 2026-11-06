@@ -3,6 +3,12 @@
 Spec: `docs/SPEC.md` §3. Known-good commands and quirks: `docs/HANDOFF.md` §2.2 and §3.1.
 Bash; works on Linux and macOS. Parallax is an installed dependency (`$PARALLAX_DIR`), never forked here.
 
+For a new group with the gateway on its coordinator, use `pool/kickstart.sh` and
+[`docs/POOL-KICKSTART.md`](../docs/POOL-KICKSTART.md). One manifest names the enrolled SSH
+hosts; the bootstrap discovers Ethernet IPs, prepares software and model caches, prints
+owner registration links, and starts the pool together. This workflow has local tests;
+the complete four-laptop setup still needs live validation.
+
 | Script | What it does |
 |---|---|
 | `start-scheduler.sh [env]` | `parallax run -m $MODEL -n $INIT_NODES` (default env `pool/scheduler.env`, `ROLE=scheduler`). No `HF_HUB_OFFLINE` (the scheduler downloads small config files). |

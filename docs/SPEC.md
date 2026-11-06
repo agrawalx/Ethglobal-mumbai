@@ -138,6 +138,20 @@ All on the MVP model: Parallax schedulers stay on the gateway host behind `127.0
 
 ---
 
+### 3.6 Coordinator bootstrap
+
+`pool/kickstart.sh` automates setup for an explicitly named Ethernet group, with the gateway
+and private Parallax scheduler on the coordinator laptop. A manifest selects an existing
+configured model and enrolled SSH members. The bootstrap discovers wired IPs, checks/installs
+dependencies, downloads each hardware format once on the coordinator, locks HF revisions,
+copies and SHA-256-verifies offline model caches, and prepares per-host configuration.
+It reuses the World/node-registration flow and the shared/Arkiv model catalog. Owners still
+approve their identity, payout address and machine access; OS privileges and external
+credentials are prerequisites. Only after preparation and owner registration does it launch
+all joins concurrently, warm up inference and check Arkiv-backed marketplace discovery.
+Parallax chooses actual layer placement; not every registered worker must be an active stage.
+See `docs/POOL-KICKSTART.md` for commands, permissions, recovery and live-verification limits.
+
 ## 4. C2: Node agent
 
 The node agent is a small Python program on each node. It does not replace Parallax. It runs next to it.

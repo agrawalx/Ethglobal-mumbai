@@ -268,6 +268,12 @@ verification pending. Gateway SQLite schema is 6: recreate the development DB.
 
 ## 8. Environment keys
 
+Pool onboarding can now use `pool/kickstart.sh setup <manifest>` with the gateway on the
+coordinator. See `docs/POOL-KICKSTART.md` and `pool/pool.example.json`. The manifest discovers
+Ethernet IPs from enrolled SSH hosts; no new process env keys are introduced. Generated
+node/scheduler/agent env files use the existing keys below. Operator gateway credentials
+stay on the coordinator. The bootstrap is locally tested; live four-host acceptance is pending.
+
 Each component has a `.env.example`. Copy it to `.env` and fill it. Summary:
 
 ### gateway/.env
