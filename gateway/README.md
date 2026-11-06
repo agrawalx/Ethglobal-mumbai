@@ -104,8 +104,41 @@ x402 = 1, equal ratios FIFO. Waiting does not hold credits or charge x402. Disco
 removed. Pool readiness and the layer map are checked again at admission. Completion, failure, stream
 cancel, and rejected payment preparation release the slot. Queue state is in memory.
 
-SQLite schema is now version 4. Existing older development databases must be recreated before
-startup; no files are deleted automatically. Reliability observations survive a gateway restart.
+SQLite schema is now version 6 (see "Pool checks" below). Existing older development
+databases must be recreated before startup; no files are deleted automatically. Reliability observations survive a gateway restart.
+
+## Stall detection and failover (post-MVP P5.1/P5.2)
+
+`src/stall.ts` keeps the gaps between content chunks of each pool in memory and gives two limits:
+first token (`first_token_base_ms` + `first_token_ms_per_input_token` × input) and next token
+(max of `stall_min_ms` and `stall_p95_factor` × p95 gap). Values: `shared/config` `resilience`.
+`src/chat.ts` forwards whole SSE events (never an upstream error event; `[DONE]` once at the end).
+On a stall, an error event, or an end without `usage`, it calls the billing failover hook once
+(`max_failovers`): before any token the retry starts again; after tokens it continues the partial
+answer (`continue_final_message`). The client sees `: failover` and one stream. The user pays the
+attempt that completed; failed attempts are reliability failures for their routes; the receipt has
+`attempts`. SPEC §5.3 step 12. With one pool the retry goes to the same scheduler.
+Not verified live: that the Parallax nodes (vLLM Rust frontend) accept `continue_final_message`
+with the Qwen3 chat template. If they do not, set `continuation: false` (failover then happens
+only before the first token).
+
+## Pool checks (post-MVP P5.4, P5.5, P5.7, P5.8, P5.9)
+
+`src/pools.ts`, fed by the signed heartbeats (`src/nodes.ts`) and the `pool/hooks` files on this host:
+- **Restart orders (P5.5):** a node whose layers change while online → `pools.restart_id + 1`
+  (cool-down `restart_cooldown_s`). Heartbeat responses carry `restart_id`; the pool counts as
+  restarting (router skips it, `/pools` says `loading`) until every member sends `restart_ack`,
+  at most `restart_timeout_s`.
+- **Swap (P5.7):** a member with `mem_pressure = swap_growing` takes its pool out of routing.
+- **Allow-list (P5.4):** with `PARALLAX_ALLOWED_PEERS_FILE`, every heartbeat rewrites (only on change)
+  the peer IDs of registered nodes with a fresh heartbeat; the scheduler hook admits only these.
+- **Exact route (P5.8):** with `PARALLAX_ROUTE_LOG`, requests carry `gpupool_req_id`; at completion
+  the logged `routing_table` is mapped to nodes by `peer_id`; receipts show `route_source`.
+- **Cross-check (P5.9):** `/network` `route_dispute` compares `served_sessions` reports with the route
+  log per member (`route_check_*` in `shared/config`). Flag only.
+
+SQLite schema is now version 6 (`pools`, `node_served`, P5 heartbeat columns, `requests.route_source`).
+Tests: `test/failover.test.ts`, `test/p5.test.ts`.
 
 ## Epoch settlement and provider payouts (step 3.3)
 
@@ -210,3 +243,64 @@ settlement and HCS confirmation. It verifies an existing provider claim against 
 transaction log when given testnet RPC/contract config. It never sends an x402 payment or provider
 claim. The JSON report defaults to `/tmp/gpupool-live-check.json`; use `--report` to choose another
 path. Skipped live inference and claims are explicitly reported as unverified.
+
+## SPEC §16.1 pools (SPEC §3.5)
+
+`src/formation.ts`: per-pool coordinator URLs (`POOL_COORDINATORS`, `POOL_COORDINATORS_FILE`),
+listing-writer election (`pools.writer_node`), automatic formation from `auto` nodes (`node_rtt`,
+`GET /pools/plan`, loopback only), private DHT prefixes. `src/queue.ts`: `router.max_concurrent_per_pool`
+slots. `src/router.ts`: `x-gpupool-privacy: trusted-ends` (+ `TRUSTED_ACCOUNTS`). Schema version 7.
+Tests: `test/s16.test.ts`.
+
+## Privacy (SPEC §5.6, no Parallax change)
+
+`src/privacy.ts`: `x-gpupool-privacy: trusted-ends | trusted-all` routing (router), no transcript for
+privacy requests, AES-256-GCM transcripts (`TRANSCRIPT_KEY`; read only via `readTranscript`), salted
+`prompt_hash`/`resp_hash` (salt in `requests.hash_salt`, sent to the requester as `x-gpupool-hash-salt`),
+HTTPS (`TLS_CERT_FILE`, `TLS_KEY_FILE`). Schema version 9 (`requests.hash_salt`, `requests.privacy`).
+Demo with real values: `pnpm demo:privacy`. Tests: `test/privacy.test.ts`.
+
+## SPEC §16.2 output verification
+
+`src/verification.ts` queues a configurable sample of successful requests and sends the stored
+prompt, answer, model, seed, sampling settings, and route to `VERIFIER_URL` at `POST /v1/verify`.
+The trusted reference service returns `{score, threshold, reference_hash}`. The gateway derives
+`pass` or `flag` from that threshold, records the result in SQLite, updates route-node risk estimates,
+and signs a `verification_result` HCS event. Checks run after the request has completed and never
+hold the request open. Sampled requests get a random seed if the client did not send one; the same
+seed is forwarded to Parallax and kept for replay.
+
+The gateway also sends a fixed, temperature-zero `READY` prompt directly to each idle configured
+pool once per hour. It does not bill the requester for this internal canary. It uses the same
+reference endpoint with `method: "token-difr-canary"` and records a signed `verification_canary`
+event. A canary is skipped if its pool is busy or has no valid route.
+
+Only an account that owns a node on the flagged route can read the result or appeal it:
+`GET /verifications/:id` and `POST /verifications/:id/appeal` (JSON `{ "reason": "..." }`).
+An appeal is checked by `VERIFIER_SECONDARY_URL`, whose configured owner must be outside that
+route. The second result becomes final and is written to HCS. A flag does not change credits,
+provider HBAR, or reliability.
+
+Node agents receive a random hardware challenge in a signed heartbeat response, only while the
+pool is idle and no more than once per hour. The agent runs a small deterministic integer matrix
+multiply using the Parallax CUDA or MLX runtime and returns the checksum in its next signed
+heartbeat. The gateway recomputes the expected checksum, checks the reported backend and memory,
+and excludes a failed or expired node from routing. This is a practical capability check, not a
+hardware attestation; a modified agent can fake its report.
+
+Route risk uses overlapping pass/flag observations to update a noisy-OR Bayesian estimate per node.
+This is a first group-testing pass; it does not steer canaries into new routes because the current
+deployment has no spare pipelines. It never applies a penalty automatically.
+
+The external reference service must use the published DiFR method with a trusted model matching
+the advertised weights and calibration set. Configure `VERIFIER_OWNER_ACCOUNT` and the separate
+appeal verifier owner. Without those services and calibration, these checks are disabled or cannot
+be trusted. The local tests exercise the gateway protocol and do not calibrate a live model.
+Schema version is 10; use a fresh development database after this change.
+
+## Incentives (SPEC §8.8, §16.3)
+
+`src/incentives.ts`: vesting lots, expiry, fraud penalties and bans (from 16.2 final verdicts), node cap,
+Passport tier, collusion flags, availability rewards, agent keys. Once-a-minute worker in `main.ts`.
+Endpoints: `/agents`, `/incentives/flags` (loopback). Headers: `x-gpupool-pool`, `x-gpupool-min-reliability`.
+Schema version 10. Demo: `pnpm demo:incentives`. Tests: `test/incentives.test.ts`.

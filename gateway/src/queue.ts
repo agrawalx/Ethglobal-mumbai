@@ -1,12 +1,19 @@
-/** One inference slot per pool. Highest ratio first; equal ratios retain arrival order. */
-export function createPoolQueue() {
+/**
+ * `slots` inference slots per pool (MVP 1; SPEC §16.1 batching: router.max_concurrent_per_pool, and
+ * Parallax batches the running requests). Highest ratio first; equal ratios retain arrival order.
+ */
+export function createPoolQueue(slots = 1) {
   type Waiter = { ratio: number; grant(): void };
-  const pools = new Map<string, { busy: boolean; waiting: Waiter[] }>();
+  const pools = new Map<string, { busy: number; waiting: Waiter[] }>();
   return {
+    isIdle(poolId: string): boolean {
+      const p = pools.get(poolId);
+      return !p || (p.busy === 0 && p.waiting.length === 0);
+    },
     acquire(poolId: string, ratio: number, signal: AbortSignal): Promise<() => void> {
       if (signal.aborted) return Promise.reject(new DOMException("Request cancelled", "AbortError"));
       let pool = pools.get(poolId);
-      if (!pool) { pool = { busy: false, waiting: [] }; pools.set(poolId, pool); }
+      if (!pool) { pool = { busy: 0, waiting: [] }; pools.set(poolId, pool); }
       const state = pool;
       return new Promise((resolve, reject) => {
         const cancel = () => {
@@ -17,18 +24,18 @@ export function createPoolQueue() {
         };
         const waiter: Waiter = { ratio, grant() {
           signal.removeEventListener("abort", cancel);
-          state.busy = true;
+          state.busy++;
           let released = false;
           resolve(() => {
             if (released) return;
             released = true;
-            state.busy = false;
+            state.busy--;
             const next = state.waiting.shift();
             if (next) next.grant();
-            else pools.delete(poolId);
+            else if (state.busy === 0) pools.delete(poolId);
           });
         } };
-        if (!state.busy) waiter.grant();
+        if (state.busy < slots) waiter.grant();
         else {
           state.waiting.push(waiter);
           state.waiting.sort((a, b) => b.ratio - a.ratio);

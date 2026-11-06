@@ -88,7 +88,9 @@ test("hold / settle / release: starter first, then earned; owners credited; tota
   assert.equal(b.spent_total_mc, 3500);
   assert.equal(r.split.nodes[C], 0);
   // nodes_share = floor(3500 × 0.9) = 3150; A floor(3150 × 20/40) = 1575, B floor(3150 × 9/40) = 708
-  assert.equal(balance(db, other).earned_mc, 1575 + 708);
+  // SPEC §16.3: the owner's share vests first (locked), then becomes spendable.
+  assert.equal(balance(db, other).earned_mc, 0);
+  assert.equal(balance(db, other).locked_mc, 1575 + 708);
   assert.equal(balance(db, other).earned_total_mc, 1575 + 708);
   const ev = db.prepare("SELECT payload FROM ledger_events WHERE type = 'request_settled'").get() as { payload: string };
   const parsed = LedgerEvent.parse(JSON.parse(ev.payload));

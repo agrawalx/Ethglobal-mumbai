@@ -17,6 +17,8 @@ const TX = "0.0.9185802@1793929496.997341480";
 let facilitator: Server;
 let pool: Server;
 let poolFail = false;
+/** Fail this many pool requests, then answer (post-MVP P5.2 failover). */
+let poolFailNext = 0;
 const facCalls: string[] = [];
 let facUrl = "";
 
@@ -37,7 +39,7 @@ before(async () => {
   pool = createServer((req, res) => {
     req.resume();
     req.on("end", () => {
-      if (poolFail) { res.statusCode = 500; return res.end("down"); }
+      if (poolFail || poolFailNext > 0) { poolFailNext = Math.max(0, poolFailNext - 1); res.statusCode = 500; return res.end("down"); }
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({ id: "x", object: "chat.completion", created: 1, model: "x", choices: [{ index: 0, message: { role: "assistant", content: "paid answer" }, finish_reason: "stop" }], usage: { prompt_tokens: 9, completion_tokens: 2, total_tokens: 11 } }));
     });
@@ -128,5 +130,29 @@ test("paid request: verify + settle BEFORE the pool runs; row with payer/tx/amou
   assert.equal(fr.status, "failed");
   assert.equal(fr.x402_tx, TX);
   assert.equal((db.prepare("SELECT count(*) AS n FROM ledger_events WHERE type = 'x402_payment'").get() as { n: number }).n, 1);
+  db.close();
+});
+
+test("x402 + failover: paid once, first attempt fails, retry answers; one settle, one event, snapshot of the answering route", async () => {
+  const { app, db } = setup();
+  db.prepare("UPDATE accounts SET payout_address = ? WHERE id = 'acc_router'").run(`0x${"b3".repeat(20)}`);
+  const unpaid = await send(app, { model: MODEL, messages: [{ role: "user", content: "hi" }], max_tokens: 64 });
+  const reqs = requirementsOf(unpaid);
+  const payload = { x402Version: 2, resource: reqs.resource, accepted: reqs.accepts[0], payload: { transaction: "AAAA" } };
+  facCalls.length = 0;
+  poolFailNext = 1;
+  const r = await send(app, { model: MODEL, messages: [{ role: "user", content: "hi" }], max_tokens: 64 }, { "PAYMENT-SIGNATURE": Buffer.from(JSON.stringify(payload)).toString("base64") });
+  assert.equal(r.status, 200, await r.clone().text());
+  assert.deepEqual(facCalls.filter((u) => u.endsWith("/settle")).length, 1, "the payment settles once");
+  const receipt = Receipt.parse(await (await app.request(`/requests/${r.headers.get(REQUEST_ID_HEADER)}`)).json());
+  assert.equal(receipt.status, "ok");
+  assert.deepEqual(receipt.attempts?.map((a) => a.outcome), ["pool_error", "ok"]);
+  const snapshot = JSON.parse((db.prepare("SELECT payout_snapshot FROM requests WHERE req_id = ?").get(receipt.req_id) as { payout_snapshot: string }).payout_snapshot);
+  assert.equal(snapshot[0].payout_address, `0x${"b3".repeat(20)}`);
+  assert.deepEqual(snapshot.map((h: { node_id: string; layers: number[] }) => [h.node_id, h.layers]), receipt.route!.map((h) => [h.node_id, h.layers]));
+  const events = db.prepare("SELECT payload FROM ledger_events WHERE type = 'x402_payment'").all() as { payload: string }[];
+  assert.equal(events.length, 1);
+  const ev = LedgerEvent.parse(JSON.parse(events[0]!.payload));
+  assert.deepEqual(ev.type === "x402_payment" && ev.route, receipt.route);
   db.close();
 });

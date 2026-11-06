@@ -20,8 +20,8 @@ export async function testAccount(db: Db, cfg: Config, nullifier = `0x${Math.ran
 }
 
 export const balance = (db: Db, accountId: string) =>
-  db.prepare("SELECT starter_mc, starter_expires_at, earned_mc, held_mc, earned_total_mc, spent_total_mc FROM balances WHERE account_id = ?").get(accountId) as {
-    starter_mc: number; starter_expires_at: number; earned_mc: number; held_mc: number; earned_total_mc: number; spent_total_mc: number;
+  db.prepare("SELECT starter_mc, starter_expires_at, earned_mc, held_mc, earned_total_mc, spent_total_mc, locked_mc FROM balances WHERE account_id = ?").get(accountId) as {
+    starter_mc: number; starter_expires_at: number; earned_mc: number; held_mc: number; earned_total_mc: number; spent_total_mc: number; locked_mc: number;
   };
 
 /** Fake Arkiv directory plus a fresh registered node for proxy/payment integration tests. */

@@ -12,6 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test \"test/**/*.test.ts\"",
     "test:demo": "node --test test/backend-demo.test.ts",
+    "demo:privacy": "node scripts/privacy-demo.ts",
+    "demo:incentives": "node scripts/incentives-demo.ts",
     "verify": "node --env-file-if-exists=.env scripts/verify-backend.ts"
   },
   "dependencies": {

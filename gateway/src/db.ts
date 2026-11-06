@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
  * tinybar decimal strings, times are Unix ms. No migrations (dev phase): when SCHEMA_VERSION
  * changes, delete the database file and restart.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 10;
 
 export const TABLES = [
   "accounts",
@@ -21,6 +21,20 @@ export const TABLES = [
   "epochs",
   "epoch_payouts",
   "transcripts",
+  "pools",
+  "node_served",
+  "node_rtt",
+  "verification_jobs",
+  "verification_appeals",
+  "verification_node_risk",
+  "node_challenges",
+  "verification_canaries",
+  "earned_lots",
+  "network_reserve",
+  "pool_waits",
+  "penalties",
+  "availability_epochs",
+  "agent_keys",
 ] as const;
 
 const SCHEMA = `
@@ -28,7 +42,10 @@ CREATE TABLE IF NOT EXISTS accounts (
   id               TEXT PRIMARY KEY,                 -- acc_…
   world_nullifier  TEXT NOT NULL UNIQUE,             -- never leaves the gateway
   payout_address   TEXT,                             -- lowercase EVM address
-  created_at       INTEGER NOT NULL
+  created_at       INTEGER NOT NULL,
+  credential       TEXT,                             -- §16.3: strongest World credential (orb / passport / selfie)
+  banned_at        INTEGER,                          -- §16.3: nullifier banned from running nodes
+  ban_evidence     TEXT
 );
 CREATE TABLE IF NOT EXISTS balances (
   account_id          TEXT PRIMARY KEY REFERENCES accounts(id),
@@ -37,7 +54,8 @@ CREATE TABLE IF NOT EXISTS balances (
   earned_mc           INTEGER NOT NULL DEFAULT 0 CHECK (earned_mc >= 0),
   held_mc             INTEGER NOT NULL DEFAULT 0 CHECK (held_mc >= 0),
   earned_total_mc     INTEGER NOT NULL DEFAULT 0,
-  spent_total_mc      INTEGER NOT NULL DEFAULT 0
+  spent_total_mc      INTEGER NOT NULL DEFAULT 0,
+  locked_mc           INTEGER NOT NULL DEFAULT 0 CHECK (locked_mc >= 0)  -- §16.3: earned, still vesting
 );
 CREATE TABLE IF NOT EXISTS nodes (
   node_id        TEXT PRIMARY KEY,                   -- lowercase EVM address of the node key
@@ -51,7 +69,17 @@ CREATE TABLE IF NOT EXISTS nodes (
   hb_online      INTEGER,
   hb_model       TEXT,
   hb_layers      TEXT,                               -- JSON [start, end) or NULL
-  hb_tok_s       REAL
+  hb_tok_s       REAL,
+  -- post-MVP P5 heartbeat fields
+  hb_peer_id         TEXT,                           -- Parallax peer ID (P5.4 admission, P5.8/P5.9)
+  hb_lan_ip          TEXT,                           -- P5.6
+  hb_mem_pressure    TEXT,                           -- P5.7: ok / swap_growing
+  hb_usable_mem_gb   REAL,                           -- P5.7
+  hb_restart_ack     INTEGER,                        -- P5.5: last pool restart ID executed
+  hb_p2p_port        INTEGER,                        -- §16.1 formation: Parallax TCP port
+  hb_hw_verified     INTEGER,                        -- P6.4 false after a failed capability check; null before first check
+  auto_pool          INTEGER NOT NULL DEFAULT 0,     -- §16.1 formation: registered in pool "auto"
+  banned             INTEGER NOT NULL DEFAULT 0      -- §16.3: owner banned; the router skips its pools
 );
 CREATE TABLE IF NOT EXISTS node_reliability (
   node_id              TEXT PRIMARY KEY REFERENCES nodes(node_id),
@@ -92,6 +120,13 @@ CREATE TABLE IF NOT EXISTS requests (
   prompt_hash          TEXT NOT NULL,
   resp_hash            TEXT,
   hcs_seq              INTEGER,
+  attempts             TEXT,                         -- JSON RequestAttempt[]; NULL = first attempt, no failover (P5.2)
+  route_source         TEXT,                         -- P5.8: scheduler (hook route log) / heartbeat
+  hash_salt            TEXT,                         -- privacy: salt of prompt_hash / resp_hash (never public)
+  privacy              TEXT,                         -- privacy: trusted-ends / trusted-all / NULL
+  agent_id             TEXT,                         -- §16.3: agent key that sent the request (human-backed)
+  sampling_seed       INTEGER,
+  sampling_settings   TEXT,
   ts                   INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS ledger_events (
@@ -126,6 +161,133 @@ CREATE TABLE IF NOT EXISTS epoch_payouts (
   claimed         INTEGER NOT NULL DEFAULT 0,
   claim_tx        TEXT,
   PRIMARY KEY (epoch, payout_address)
+);
+CREATE TABLE IF NOT EXISTS pools (                 -- post-MVP P5.5 clean restart orders
+  pool_id      TEXT PRIMARY KEY,
+  restart_id   INTEGER NOT NULL DEFAULT 0,           -- 0 = never ordered
+  restart_at   INTEGER,                              -- ms
+  writer_node  TEXT,                                 -- §16.1 election: node that writes the gpupool.pool listing
+  model        TEXT,                                 -- §16.1 formation: model of an "auto" pool
+  formed_at    INTEGER
+);
+CREATE TABLE IF NOT EXISTS node_rtt (                -- §16.1 formation: measured delay a → b
+  a    TEXT NOT NULL,
+  b    TEXT NOT NULL,
+  ms   REAL NOT NULL,
+  ts   INTEGER NOT NULL,
+  PRIMARY KEY (a, b)
+);
+CREATE TABLE IF NOT EXISTS node_served (             -- post-MVP P5.9 node reports from --notify-url
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  node_id   TEXT NOT NULL REFERENCES nodes(node_id),
+  peer_id   TEXT,
+  sessions  INTEGER NOT NULL,
+  ts        INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS node_served_window ON node_served(node_id, ts);
+CREATE TABLE IF NOT EXISTS verification_jobs (
+  id               TEXT PRIMARY KEY,
+  req_id           TEXT NOT NULL UNIQUE REFERENCES requests(req_id),
+  pool_id          TEXT NOT NULL,
+  route            TEXT NOT NULL,
+  owner_accounts   TEXT NOT NULL,
+  model            TEXT NOT NULL,
+  seed             INTEGER NOT NULL,
+  settings         TEXT NOT NULL,
+  score            REAL,
+  threshold        REAL,
+  verdict          TEXT NOT NULL CHECK (verdict IN ('queued','pass','flag','error','appealed','final_pass','final_flag')),
+  reference_hash   TEXT,
+  verifier_owner   TEXT,
+  created_at       INTEGER NOT NULL,
+  checked_at       INTEGER,
+  appeal_until     INTEGER NOT NULL,
+  final_at         INTEGER
+);
+CREATE INDEX IF NOT EXISTS verification_jobs_queue ON verification_jobs(verdict, created_at);
+CREATE TABLE IF NOT EXISTS verification_canaries (
+  id             TEXT PRIMARY KEY,
+  pool_id        TEXT NOT NULL,
+  model          TEXT NOT NULL,
+  route_hash     TEXT NOT NULL,
+  score          REAL NOT NULL,
+  threshold      REAL NOT NULL,
+  verdict        TEXT NOT NULL CHECK (verdict IN ('pass','flag')),
+  ts             INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS verification_appeals (
+  id               TEXT PRIMARY KEY,
+  verification_id  TEXT NOT NULL REFERENCES verification_jobs(id),
+  account_id       TEXT NOT NULL REFERENCES accounts(id),
+  reason           TEXT NOT NULL,
+  status           TEXT NOT NULL CHECK (status IN ('queued','checked','error')),
+  score            REAL,
+  verdict          TEXT,
+  created_at       INTEGER NOT NULL,
+  checked_at       INTEGER,
+  UNIQUE(verification_id)
+);
+CREATE TABLE IF NOT EXISTS verification_node_risk (
+  node_id          TEXT PRIMARY KEY REFERENCES nodes(node_id),
+  alpha            REAL NOT NULL DEFAULT 1,
+  beta             REAL NOT NULL DEFAULT 1,
+  flagged          INTEGER NOT NULL DEFAULT 0,
+  updated_at       INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS node_challenges (
+  challenge_id     TEXT PRIMARY KEY,
+  node_id          TEXT NOT NULL REFERENCES nodes(node_id),
+  nonce            TEXT NOT NULL,
+  expires_at       INTEGER NOT NULL,
+  status           TEXT NOT NULL CHECK (status IN ('issued','passed','failed','expired')),
+  issued_at        INTEGER NOT NULL,
+  returned_at      INTEGER,
+  result_hash      TEXT,
+  elapsed_ms       INTEGER
+);
+CREATE TABLE IF NOT EXISTS earned_lots (              -- §16.3 vesting + expiry: one lot per credit to an owner
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id    TEXT NOT NULL REFERENCES accounts(id),
+  source        TEXT NOT NULL CHECK (source IN ('request', 'availability')),
+  ref           TEXT,                                 -- req_id or epoch
+  amount_mc     INTEGER NOT NULL CHECK (amount_mc > 0),
+  remaining_mc  INTEGER NOT NULL CHECK (remaining_mc >= 0),  -- unlocked and not yet spent / expired
+  created_at    INTEGER NOT NULL,
+  unlock_at     INTEGER NOT NULL,
+  status        TEXT NOT NULL CHECK (status IN ('locked', 'unlocked', 'clawed'))
+);
+CREATE INDEX IF NOT EXISTS earned_lots_account ON earned_lots(account_id, status, unlock_at);
+CREATE TABLE IF NOT EXISTS network_reserve (          -- §16.3: reserve share of every settled request
+  id          INTEGER PRIMARY KEY CHECK (id = 1),
+  balance_mc  INTEGER NOT NULL DEFAULT 0 CHECK (balance_mc >= 0)
+);
+CREATE TABLE IF NOT EXISTS pool_waits (               -- §16.3 availability: requests that waited for a pool slot
+  pool_id  TEXT NOT NULL,
+  ts       INTEGER NOT NULL,
+  wait_ms  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS pool_waits_ts ON pool_waits(ts);
+CREATE TABLE IF NOT EXISTS penalties (                -- §16.3: one row per final fraud verdict handled
+  verification_id  TEXT PRIMARY KEY,
+  nodes            TEXT NOT NULL,                     -- JSON node IDs blamed (may be empty)
+  accounts         TEXT NOT NULL,                     -- JSON accounts penalized
+  clawed_mc        INTEGER NOT NULL,
+  ts               INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS availability_epochs (      -- §16.3: standby rewards paid once per epoch
+  epoch_start  INTEGER PRIMARY KEY,
+  paid_mc      INTEGER NOT NULL,
+  ts           INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agent_keys (               -- §16.3 Agent Pass (MVP form): human-backed agent keys
+  id           TEXT PRIMARY KEY,                      -- agt_…
+  account_id   TEXT NOT NULL REFERENCES accounts(id),
+  name         TEXT NOT NULL,
+  secret_hash  TEXT NOT NULL,                         -- sha256 of the secret part; the token is shown once
+  budget_mc    INTEGER NOT NULL CHECK (budget_mc >= 0),
+  spent_mc     INTEGER NOT NULL DEFAULT 0,
+  created_at   INTEGER NOT NULL,
+  revoked_at   INTEGER
 );
 CREATE TABLE IF NOT EXISTS transcripts (
   req_id      TEXT PRIMARY KEY REFERENCES requests(req_id),

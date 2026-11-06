@@ -6,6 +6,10 @@ import type { Db } from "./db.ts";
 import { errorResponse } from "./errors.ts";
 import { recordHeartbeat } from "./reliability.ts";
 import { recordEvent, type Signer } from "./events.ts";
+import { orderRestart, restartId, writeAllowedPeers } from "./pools.ts";
+import { isBanned, nodeCap } from "./incentives.ts";
+import { coordinatorFor, dhtPrefix, formPools, poolWriter, probeList, urlHash } from "./formation.ts";
+import { challengeForHeartbeat, recordChallengeReply } from "./verification.ts";
 
 /** shared/README.md "Signatures": the exact string the node key signs at registration. */
 export const registerMessage = (nodeId: string, poolId: string, ts: number): string => `gpupool-register:${nodeId}:${poolId}:${ts}`;
@@ -44,13 +48,17 @@ export function registerHandler(db: Db, cfg: Config, signer: Signer) {
       if (owner && owner.account_id !== accountId) return errorResponse(c, 409, "bad_request", "node is registered to another account");
       if (!owner) {
         const n = (db.prepare("SELECT count(*) AS n FROM nodes WHERE account_id = ?").get(accountId) as { n: number }).n;
-        if (n >= cfg.net.max_nodes_per_account) return errorResponse(c, 403, "node_limit_reached", `an account can register at most ${cfg.net.max_nodes_per_account} nodes`);
+        // SPEC §16.3: reputation-based cap (banned → 0).
+        const cap = nodeCap(db, cfg, accountId, now);
+        if (n >= cap) return errorResponse(c, 403, "node_limit_reached", cap === 0 ? "this account is banned from running nodes" : `this account can register at most ${cap} nodes now`);
       }
       if (!acc.payout_address && !r.payout_address) return errorResponse(c, 400, "bad_request", "payout_address is required for the first node (SPEC §10.4)");
       if (owner) {
-        db.prepare("UPDATE nodes SET pool_id = ?, gpu = ?, mem_gb = ? WHERE node_id = ?").run(r.pool_id, r.gpu, r.mem_gb, r.node_id);
+        // SPEC §16.1 formation: re-registering an "auto" node keeps the pool the gateway gave it.
+        db.prepare(`UPDATE nodes SET pool_id = CASE WHEN ? = 'auto' AND auto_pool = 1 THEN pool_id ELSE ? END,
+          auto_pool = CASE WHEN ? = 'auto' THEN 1 ELSE 0 END, gpu = ?, mem_gb = ? WHERE node_id = ?`).run(r.pool_id, r.pool_id, r.pool_id, r.gpu, r.mem_gb, r.node_id);
       } else {
-        db.prepare("INSERT INTO nodes (node_id, account_id, pool_id, gpu, mem_gb, registered_at) VALUES (?, ?, ?, ?, ?, ?)").run(r.node_id, accountId, r.pool_id, r.gpu, r.mem_gb, now);
+        db.prepare("INSERT INTO nodes (node_id, account_id, pool_id, gpu, mem_gb, registered_at, auto_pool) VALUES (?, ?, ?, ?, ?, ?, ?)").run(r.node_id, accountId, r.pool_id, r.gpu, r.mem_gb, now, r.pool_id === "auto" ? 1 : 0);
         db.prepare("INSERT INTO node_reliability (node_id, score, updated_at) VALUES (?, ?, ?)").run(r.node_id, cfg.net.reliability.initial_score, now);
       }
       if (r.payout_address && r.payout_address !== acc.payout_address) {
@@ -68,7 +76,7 @@ export function registerHandler(db: Db, cfg: Config, signer: Signer) {
  * over the RAW body bytes. The body is checked against the signature before it is parsed. ts must
  * be within 60 s. Stores the latest status + layers; records one online observation per heartbeat slot for the rolling uptime score (SPEC §9.1).
  */
-export function heartbeatHandler(db: Db, cfg: Config) {
+export function heartbeatHandler(db: Db, cfg: Config, signer: Signer, isPoolIdle: (poolId: string) => boolean = () => true) {
   return async (c: Context): Promise<Response> => {
     const raw = await c.req.text();
     const sig = c.req.header(NODE_SIGNATURE_HEADER);
@@ -91,15 +99,60 @@ export function heartbeatHandler(db: Db, cfg: Config) {
     if (!ok) return errorResponse(c, 401, "unauthorized", "heartbeat signature does not match node_id");
     const now = Date.now();
     if (Math.abs(now - hb.ts) > HEARTBEAT_SKEW_MS) return errorResponse(c, 400, "bad_request", "heartbeat ts is more than 60 s from gateway time");
-    const node = db.prepare("SELECT account_id, pool_id FROM nodes WHERE node_id = ?").get(hb.node_id) as { account_id: string; pool_id: string } | undefined;
+    const node = db.prepare("SELECT account_id, pool_id, auto_pool FROM nodes WHERE node_id = ?").get(hb.node_id) as { account_id: string; pool_id: string; auto_pool: number } | undefined;
     if (!node) return errorResponse(c, 404, "not_found", "node is not registered (open the gpupool-node init link)");
-    if (node.pool_id !== hb.pool_id) return errorResponse(c, 400, "bad_request", `node is registered in pool ${node.pool_id}, heartbeat says ${hb.pool_id}`);
+    if (isBanned(db, node.account_id)) return errorResponse(c, 403, "unauthorized", "the owner of this node is banned (SPEC §16.3)");
+    // An "auto" node may still say "auto" until it has seen its assigned pool.
+    if (node.pool_id !== hb.pool_id && !(node.auto_pool === 1 && hb.pool_id === "auto")) return errorResponse(c, 400, "bad_request", `node is registered in pool ${node.pool_id}, heartbeat says ${hb.pool_id}`);
+    if (hb.challenge_result) recordChallengeReply(db, cfg, signer, hb.node_id, hb.challenge_result, now);
     const score = db.transaction(() => {
-      db.prepare("UPDATE nodes SET hb_ts = ?, hb_online = ?, hb_model = ?, hb_layers = ?, hb_tok_s = ? WHERE node_id = ?").run(
-        now, hb.online ? 1 : 0, hb.model, hb.layers ? JSON.stringify(hb.layers) : null, hb.tok_s, hb.node_id);
+      const prev = db.prepare("SELECT hb_online, hb_layers, hb_model FROM nodes WHERE node_id = ?").get(hb.node_id) as { hb_online: number | null; hb_layers: string | null; hb_model: string | null };
+      db.prepare(`UPDATE nodes SET hb_ts = ?, hb_online = ?, hb_model = ?, hb_layers = ?, hb_tok_s = ?,
+        hb_peer_id = ?, hb_lan_ip = ?, hb_mem_pressure = ?, hb_usable_mem_gb = ?, hb_restart_ack = ?, hb_p2p_port = ? WHERE node_id = ?`).run(
+        now, hb.online ? 1 : 0, hb.model, hb.layers ? JSON.stringify(hb.layers) : null, hb.tok_s,
+        hb.peer_id, hb.lan_ip, hb.mem_pressure, hb.usable_mem_gb, hb.restart_ack, hb.p2p_port, hb.node_id);
+      // SPEC §16.1 formation: delays this node measured to the peers it was asked to probe.
+      const rtt = db.prepare("INSERT INTO node_rtt (a, b, ms, ts) VALUES (?, ?, ?, ?) ON CONFLICT(a, b) DO UPDATE SET ms = excluded.ms, ts = excluded.ts");
+      for (const [peer, ms] of Object.entries(hb.rtt_ms ?? {})) if (peer !== hb.node_id) rtt.run(hb.node_id, peer, ms, now);
       recordHeartbeat(db, cfg, hb.node_id, hb.online, now);
+      // P5.9: what the node says it served (Parallax --notify-url), kept for the cross-check window.
+      if (hb.served_sessions) {
+        db.prepare("INSERT INTO node_served (node_id, peer_id, sessions, ts) VALUES (?, ?, ?, ?)").run(hb.node_id, hb.peer_id, hb.served_sessions, now);
+      }
+      db.prepare("DELETE FROM node_served WHERE node_id = ? AND ts < ?").run(hb.node_id, now - cfg.net.resilience.route_check_window_s * 1000);
+      // P5.5: layers changed while the node stayed online = live re-placement by Parallax. Do not trust
+      // it: order a clean restart of the whole pool (a restart passes through offline, so never loops).
+      const newLayers = hb.layers ? JSON.stringify(hb.layers) : null;
+      if (hb.online && prev.hb_online === 1 && prev.hb_layers && newLayers && prev.hb_layers !== newLayers && prev.hb_model === hb.model
+          && (hb.restart_ack ?? 0) >= restartId(db, node.pool_id)) {
+        orderRestart(db, cfg, node.pool_id, `node ${hb.node_id} layers ${prev.hb_layers} -> ${newLayers}`, now);
+      }
       return (db.prepare("SELECT score FROM node_reliability WHERE node_id = ?").get(hb.node_id) as { score: number } | undefined)?.score;
     })();
-    return c.json(HeartbeatResponse.parse({ ok: true, owner_account: node.account_id, reliability: score ?? cfg.net.reliability.initial_score }));
+    try {
+      writeAllowedPeers(db, cfg, now);
+    } catch (e) {
+      console.error(`allow-list write failed: ${(e as Error).message}`);
+    }
+    // SPEC §16.1: form pools from "auto" nodes, elect the listing writer, hand out probes.
+    let poolId = node.pool_id;
+    if (node.auto_pool === 1 && poolId === "auto") {
+      formPools(db, cfg, now);
+      poolId = (db.prepare("SELECT pool_id FROM nodes WHERE node_id = ?").get(hb.node_id) as { pool_id: string }).pool_id;
+    }
+    const auto = node.auto_pool === 1 && poolId !== "auto"
+      ? { pool_id: poolId, dht_prefix: dhtPrefix(cfg, poolId), model: (db.prepare("SELECT model FROM pools WHERE pool_id = ?").get(poolId) as { model: string } | undefined)?.model ?? cfg.net.models[0]!.model_id }
+      : null;
+    const inPool = poolId !== "auto";
+    const challenge = inPool ? challengeForHeartbeat(db, signer, hb.node_id, poolId, isPoolIdle(poolId), cfg.env.HEARTBEAT_SECONDS, now) : null;
+    return c.json(HeartbeatResponse.parse({
+      ok: true, owner_account: node.account_id, reliability: score ?? cfg.net.reliability.initial_score,
+      restart_id: inPool ? restartId(db, poolId) : 0,
+      pool_writer: inPool && poolWriter(db, cfg, poolId, now) === hb.node_id,
+      coordinator_url_hash: inPool ? urlHash(coordinatorFor(cfg, poolId)) : null,
+      assigned_pool: auto,
+      probe: node.auto_pool === 1 && !inPool ? probeList(db, cfg, hb.node_id, now) : [],
+      challenge,
+    }));
   };
 }

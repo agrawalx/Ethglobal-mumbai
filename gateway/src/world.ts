@@ -1,3 +1,4 @@
+import { credentialOf, upgradeCredential } from "./incentives.ts";
 import type { Context } from "hono";
 import { signRequest } from "@worldcoin/idkit-core/signing";
 import { RpSignatureResponse, WorldVerifyRequest, type WorldVerifyResponse } from "@gpupool/shared";
@@ -18,7 +19,9 @@ import type { Signer } from "./events.ts";
  *   (`selfie`, legacy alias `face`).
  */
 
-export const ACCEPTED_CREDENTIALS = new Set(["proof_of_human", "orb", "selfie", "face"]);
+export const ACCEPTED_CREDENTIALS = new Set(["proof_of_human", "orb", "selfie", "face",
+  // SPEC §16.3 Passport tier: World NFC document credential (passport / eID); stronger than Selfie Check.
+  "passport", "document", "secure_document"]);
 export const WORLD_VERIFY_URL = "https://developer.world.org/api/v4/verify";
 
 /** fetch for the World API, injected so tests can mock the World API. */
@@ -78,11 +81,13 @@ export function verifyHandler(db: Db, cfg: Config, signer: Signer, worldFetch: W
     if (!/^0x[0-9a-f]{1,64}$/.test(nullifier)) return errorResponse(c, 502, "internal", "World verify response has no nullifier");
     if (ok.environment !== undefined && ok.environment !== w.environment) return errorResponse(c, 401, "unauthorized", `World verified in ${ok.environment}, expected ${w.environment}`);
     const used = (ok.results ?? []).filter((r) => r.success !== false).map((r) => r.identifier ?? "");
-    if (!used.some((id) => ACCEPTED_CREDENTIALS.has(id))) return errorResponse(c, 401, "unauthorized", `credential ${used.join(",") || "unknown"} is not accepted (Orb or Selfie Check only)`);
+    if (!used.some((id) => ACCEPTED_CREDENTIALS.has(id))) return errorResponse(c, 401, "unauthorized", `credential ${used.join(",") || "unknown"} is not accepted (Orb, Passport or Selfie Check only)`);
 
     // Normalise to 32-byte 0x hex so the same human always maps to the same row.
     const key = `0x${nullifier.slice(2).padStart(64, "0")}`;
     const login = loginOrCreate(db, cfg, signer, key);
+    // SPEC §16.3: same nullifier = same account; keep the strongest credential shown (node cap tier).
+    upgradeCredential(db, login.accountId, credentialOf(used));
     const token = await issueToken(cfg.env.JWT_SECRET!, login.accountId, cfg.net.session_ttl_s);
     const out: WorldVerifyResponse = { token, account_id: login.accountId as WorldVerifyResponse["account_id"], new_account: login.newAccount, starter_granted_mc: login.starterGrantedMc };
     return c.json(out);

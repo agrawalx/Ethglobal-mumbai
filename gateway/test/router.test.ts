@@ -137,7 +137,7 @@ test("billing credits only the selected Arkiv pool, ignoring another pool and th
     const receipt = await (await app.request(`/requests/${response.headers.get("x-gpupool-request-id")}`)).json();
     assert.deepEqual(receipt.route, [{ node_id: TEST_NODE, layers: [0, 40] }]);
     assert.deepEqual(Object.keys(receipt.split.nodes), [TEST_NODE]);
-    assert.ok(balance(db, "acc_router").earned_mc > 0);
+    assert.ok(balance(db, "acc_router").locked_mc > 0); // SPEC §16.3: earnings vest first
     assert.equal(balance(db, account.accountId).held_mc, 0);
   } finally { globalThis.fetch = originalFetch; db.close(); }
 });

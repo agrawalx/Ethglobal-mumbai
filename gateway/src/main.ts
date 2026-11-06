@@ -1,15 +1,22 @@
 import { serve } from "@hono/node-server";
+import { createServer as createHttpsServer } from "node:https";
+import { tlsOptions } from "./privacy.ts";
 import { loadConfig, type Config } from "./config.ts";
 import { openDb } from "./db.ts";
 import { createApp } from "./app.ts";
+import { createPoolQueue } from "./queue.ts";
+import { arkivDirectory, createRouter } from "./router.ts";
+import { logCompletion } from "./chat.ts";
 import { signerFromSeed } from "./events.ts";
 import { hederaSubmitter, startHcsWriter } from "./hcs.ts";
 import { expireStarterCredits } from "./ledger.ts";
 import { refreshReliability } from "./reliability.ts";
+import { expireEarned, payAvailability, runPenalties, unlockDue } from "./incentives.ts";
 import { createSettlement, startSettlementWorker } from "./settlement.ts";
 import { hederaSettlementChain } from "./payout-chain.ts";
 import { arkivStatsWriter, startAccountStatsPublisher } from "./account-stats.ts";
 import { createX402 } from "./x402.ts";
+import { maybeQueueVerification, startCanaryWorker, startVerificationWorker } from "./verification.ts";
 
 let cfg: Config;
 let signer;
@@ -50,6 +57,22 @@ const expiry = setInterval(() => {
   }
 }, 60_000);
 
+// SPEC §16.3 incentives: unlock vested credits, expire old earnings, act on final fraud verdicts,
+// pay standby rewards for the last epoch. Local SQLite + HCS events (async writer); once a minute.
+const incentiveTick = () => {
+  try {
+    unlockDue(db);
+    expireEarned(db, cfg.net, signer);
+    runPenalties(db, cfg.net, signer);
+    const paid = payAvailability(db, cfg, signer);
+    if (paid > 0) console.log(JSON.stringify({ msg: "availability_paid", mc: paid }));
+  } catch (err) {
+    console.error(`incentives tick failed: ${(err as Error).message}`);
+  }
+};
+incentiveTick();
+const incentivesTimer = setInterval(incentiveTick, 60_000);
+
 refreshReliability(db, cfg);
 const reliabilityTimer = setInterval(() => {
   try { refreshReliability(db, cfg); }
@@ -70,16 +93,39 @@ const statsPublisher = e.ARKIV_PRIVATE_KEY
   : null;
 if (!statsPublisher) console.warn("Arkiv account stats disabled: ARKIV_PRIVATE_KEY is not configured");
 
-const app = createApp({ cfg, db, signer, x402 });
-const server = serve({ fetch: app.fetch, port: e.PORT, hostname: e.HOST }, (info) => {
-  console.log(`gateway listening on http://${info.address}:${info.port} → pool ${e.POOL_COORDINATOR_URL}; gateway pubkey ${signer.publicKeyHex}`);
+const router = createRouter(cfg, db, arkivDirectory(cfg));
+const queue = createPoolQueue(cfg.net.router.max_concurrent_per_pool);
+let stopVerification = () => {};
+let stopCanaries = () => {};
+if (e.VERIFIER_URL && e.VERIFIER_OWNER_ACCOUNT) {
+  stopVerification = startVerificationWorker(db, cfg, signer);
+  stopCanaries = startCanaryWorker(db, cfg, signer, router, queue);
+} else {
+  console.warn("output verification disabled: configure a trusted VERIFIER_URL and VERIFIER_OWNER_ACCOUNT");
+}
+
+const app = createApp({ cfg, db, signer, x402, router, queue, onComplete: (completion) => {
+  logCompletion(completion);
+  if (completion.ok) {
+    const id = maybeQueueVerification(db, cfg, completion.reqId);
+    if (id) console.log(JSON.stringify({ msg: "verification_queued", verification_id: id, req_id: completion.reqId }));
+  }
+} });
+// Privacy: HTTPS when TLS_CERT_FILE + TLS_KEY_FILE are set (src/privacy.ts); else HTTP (MVP).
+let tls: ReturnType<typeof tlsOptions> = null;
+try { tls = tlsOptions(cfg); } catch (err) { console.error((err as Error).message); process.exit(1); }
+const server = serve({ fetch: app.fetch, port: e.PORT, hostname: e.HOST, ...(tls ? { createServer: createHttpsServer, serverOptions: tls } : {}) }, (info) => {
+  console.log(`gateway listening on ${tls ? "https" : "http"}://${info.address}:${info.port} → pool ${e.POOL_COORDINATOR_URL}; gateway pubkey ${signer.publicKeyHex}`);
 });
 
 const shutdown = () => {
   clearInterval(expiry);
   clearInterval(reliabilityTimer);
+  clearInterval(incentivesTimer);
   void statsPublisher?.stop();
   stopSettlement();
+  stopVerification();
+  stopCanaries();
   stopHcs();
   closeHcs();
   server.close();

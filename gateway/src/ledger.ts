@@ -1,3 +1,4 @@
+import { addReserve, consumeEarned, creditEarned } from "./incentives.ts";
 import type { CreditSplit, GpupoolConfig, ModelConfig, Route } from "@gpupool/shared";
 import type { Db } from "./db.ts";
 import { recordEvent, type Signer } from "./events.ts";
@@ -137,11 +138,14 @@ export function settle(db: Db, cfg: GpupoolConfig, signer: Signer, s: SettleInpu
     const owner = db.prepare("SELECT account_id FROM nodes WHERE node_id = ?");
     const ownerOf = (nodeId: string) => (owner.get(nodeId) as { account_id: string } | undefined)?.account_id ?? null;
     const split = splitCost(cfg, cost, s.route, s.model.num_layers, ownerOf, s.accountId);
-    const credit = db.prepare("UPDATE balances SET earned_mc = earned_mc + @mc, earned_total_mc = earned_total_mc + @mc WHERE account_id = @id");
+    // SPEC §16.3: spending from earned uses the oldest lots; each owner's share vests as a new lot;
+    // the reserve share is kept for availability rewards and clawbacks.
+    if (fromEarned > 0) consumeEarned(db, s.accountId, fromEarned);
     for (const [nodeId, mc] of Object.entries(split.nodes)) {
       const acc = ownerOf(nodeId);
-      if (mc > 0 && acc) credit.run({ mc, id: acc });
+      if (mc > 0 && acc) creditEarned(db, cfg, acc, mc, "request", s.reqId, now);
     }
+    addReserve(db, split.reserve_mc);
 
     db.prepare(
       `UPDATE requests SET status = 'ok', in_tokens = ?, out_tokens = ?, cost_mc = ?, split = ?, resp_hash = ? WHERE req_id = ?`,
@@ -173,7 +177,7 @@ export function expireStarterCredits(db: Db, signer: Signer, now = Date.now()): 
     const zero = db.prepare("UPDATE balances SET starter_mc = 0 WHERE account_id = ?");
     for (const r of rows) {
       zero.run(r.account_id);
-      recordEvent(db, signer, { type: "credits_expired", account_id: r.account_id, amount_mc: r.starter_mc }, now);
+      recordEvent(db, signer, { type: "credits_expired", account_id: r.account_id as `acc_${string}`, amount_mc: r.starter_mc, kind: "starter" }, now);
     }
     return rows.length;
   })();

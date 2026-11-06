@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { privateKeyToAccount } from "viem/accounts";
+import { keccak256, toBytes } from "viem";
 import { ErrorResponse, HeartbeatResponse, LedgerEvent, MeResponse, NODE_SIGNATURE_HEADER, PoolStateResponse, Receipt, REQUEST_ID_HEADER } from "@gpupool/shared";
 import { loadConfig } from "../src/config.ts";
 import { openDb, type Db } from "../src/db.ts";
@@ -105,7 +106,10 @@ test("heartbeat: signed raw body; bad sig / stale ts / unregistered rejected; co
   await register(app, owner.auth, 0);
   const r = await heartbeat(app, 0, [29, 40]);
   assert.equal(r.status, 200);
-  assert.deepEqual(HeartbeatResponse.parse(await r.json()), { ok: true, owner_account: owner.accountId, reliability: 0.86 });
+  const { challenge: _challenge, ...hbResp } = HeartbeatResponse.parse(await r.json()) as Record<string, unknown>; // challenge: 16.2 hardware check (random)
+  assert.deepEqual(hbResp, { ok: true, owner_account: owner.accountId, reliability: 0.86, restart_id: 0,
+    // §16.1: the only fresh member writes the pool listing; the hash is of this pool's coordinator URL.
+    pool_writer: true, coordinator_url_hash: keccak256(toBytes(cfg.env.POOL_COORDINATOR_URL)), assigned_pool: null, probe: [] });
   const row = db.prepare("SELECT hb_layers, hb_model FROM nodes WHERE node_id = ?").get(id(0)) as { hb_layers: string; hb_model: string };
   assert.deepEqual(JSON.parse(row.hb_layers), [29, 40]);
   assert.equal((db.prepare("SELECT heartbeats_received AS n FROM node_reliability WHERE node_id = ?").get(id(0)) as { n: number }).n, 1);
@@ -139,7 +143,10 @@ test("credits end to end: hold → settle → split to node owners by layers (se
   assert.equal(receipt.cost_mc, 189_000);
   assert.equal(receipt.split!.reserve_mc, 189_000 - 9450);
 
-  // Heartbeats: 0 → [0,20) (GPU model id), 1 → [20,29), 2 → [29,40) (MLX variant)
+  // Heartbeats: 0 → [0,20) (GPU model id), 1 → [20,29), 2 → [29,40) (MLX variant).
+  // Node 0 goes through "no layers" first (a rejoin); a direct online [0,10) → [0,20) change would be
+  // a live re-placement and order a pool restart (post-MVP P5.5, tested in p5.test.ts).
+  await heartbeat(app, 0, null);
   await heartbeat(app, 0, [0, 20]);
   await heartbeat(app, 1, [20, 29]);
   await heartbeat(app, 2, [29, 40]);
@@ -166,7 +173,7 @@ test("credits end to end: hold → settle → split to node owners by layers (se
   assert.equal(after.held_mc, 0);
   assert.equal(after.spent_total_mc, 2 * 189_000);
   assert.equal(after.earned_mc, 0); // own node earns nothing
-  assert.equal(balance(db, provider.accountId).earned_mc, 85_050 + 38_272);
+  assert.equal(balance(db, provider.accountId).locked_mc, 85_050 + 38_272); // SPEC §16.3: vesting
   const me = MeResponse.parse(await (await app.request("/me", { headers: provider.auth })).json());
   assert.equal(me.balance.earned_total_mc, 85_050 + 38_272);
   assert.equal(me.nodes.length, 2);
@@ -190,8 +197,10 @@ test("credits end to end: hold → settle → split to node owners by layers (se
   assert.equal(receipt.status, "failed");
   assert.equal(receipt.cost_mc, null);
   assert.deepEqual(balance(db, user.accountId), after);
+  // Post-MVP P5.2: one failover (same pool, the only one) → two failed attempts, each one counted.
+  assert.deepEqual(receipt.attempts?.map((a) => [a.outcome, a.streamed_tokens]), [["pool_error", 0], ["pool_error", 0]]);
   const rel2 = db.prepare("SELECT requests_routed, requests_ok FROM node_reliability WHERE node_id = ?").get(id(0)) as { requests_routed: number; requests_ok: number };
-  assert.deepEqual({ ...rel2 }, { requests_routed: 2, requests_ok: 1 });
+  assert.deepEqual({ ...rel2 }, { requests_routed: 3, requests_ok: 1 });
   assert.equal(events(db, "request_settled").length, 2);
   db.close();
 });

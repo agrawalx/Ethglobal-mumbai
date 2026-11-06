@@ -105,9 +105,9 @@ test("World rejects → 401, no account", async () => {
   db.close();
 });
 
-test("credential not Orb/Selfie (passport) → 401; wrong action/environment → 400 without calling World", async () => {
-  const { verify, calls, db } = setup((b) => ok(b.responses[0].nullifier, "passport"));
-  assert.equal((await verify(idkitResult("0xcc", "passport"))).status, 401);
+test("credential not Orb/Passport/Selfie (device) → 401; wrong action/environment → 400 without calling World", async () => {
+  const { verify, calls, db } = setup((b) => ok(b.responses[0].nullifier, "device"));
+  assert.equal((await verify(idkitResult("0xcc", "device"))).status, 401);
   assert.equal((await verify({ ...idkitResult("0xcc"), action: "other" })).status, 400);
   assert.equal((await verify({ ...idkitResult("0xcc"), environment: "production" })).status, 400);
   assert.equal(calls.length, 1);

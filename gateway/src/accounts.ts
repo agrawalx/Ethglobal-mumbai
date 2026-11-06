@@ -1,3 +1,4 @@
+import { incentivesFor } from "./incentives.ts";
 import { randomBytes } from "node:crypto";
 import type { MeResponse } from "@gpupool/shared";
 import type { Config } from "./config.ts";
@@ -53,6 +54,7 @@ export function me(db: Db, cfg: Config, accountId: string, now = Date.now()): Me
     balance: b,
     // SPEC §8.2: earned_total / max(spent_total, 1 credit). Both in mc, so the floor is 1000 mc.
     ratio: contributionRatio(b.earned_total_mc, b.spent_total_mc),
+    incentives: incentivesFor(db, cfg, accountId, now),
     nodes: nodes.map((n) => ({
       node_id: n.node_id as `0x${string}`,
       pool_id: n.pool_id,
