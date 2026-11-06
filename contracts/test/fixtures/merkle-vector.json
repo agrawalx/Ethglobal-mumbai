@@ -1,0 +1,42 @@
+{
+  "description": "EpochPayout Merkle vector (shared/README.md 'Merkle tree'). Generated with foundry cast.",
+  "leaf_encoding": "keccak256(abi.encodePacked(address,uint256))",
+  "pair": "keccak256(sorted(a,b))",
+  "tree_build": "leaves sorted ascending by leaf hash; pair neighbours left to right; an unpaired last node is promoted unchanged",
+  "root": "0x1a127f05e7e6773c2201647977726aa22d391b15afb77f17438563f2c6953b61",
+  "leaves": [
+    {
+      "payout_address": "0xb1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+      "amount_tinybar": "1280000",
+      "leaf": "0x7a1162be8bcf80d9244a44f3c7f425811353d217c57b821230a2107a106311d9",
+      "proof": [
+        "0x38c8f52940f7496cfbeb1951897dd1be41e10789a28f9079fe0e4d4eea52f0c9"
+      ]
+    },
+    {
+      "payout_address": "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "amount_tinybar": "640000",
+      "leaf": "0x403e6b5d057be088930be4532f1b8108241b97d40addbf12dae3eb83d6f99580",
+      "proof": [
+        "0x252f43c9da111dee5f6c4b6579f9d1ce1aa2d7bc0ef41d9dfb182b865a214271",
+        "0x7a1162be8bcf80d9244a44f3c7f425811353d217c57b821230a2107a106311d9"
+      ]
+    },
+    {
+      "payout_address": "0xb3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3",
+      "amount_tinybar": "80000",
+      "leaf": "0x252f43c9da111dee5f6c4b6579f9d1ce1aa2d7bc0ef41d9dfb182b865a214271",
+      "proof": [
+        "0x403e6b5d057be088930be4532f1b8108241b97d40addbf12dae3eb83d6f99580",
+        "0x7a1162be8bcf80d9244a44f3c7f425811353d217c57b821230a2107a106311d9"
+      ]
+    }
+  ],
+  "single": {
+    "payout_address": "0xb1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+    "amount_tinybar": "1280000",
+    "leaf": "0x7a1162be8bcf80d9244a44f3c7f425811353d217c57b821230a2107a106311d9",
+    "root": "0x7a1162be8bcf80d9244a44f3c7f425811353d217c57b821230a2107a106311d9",
+    "proof": []
+  }
+}
