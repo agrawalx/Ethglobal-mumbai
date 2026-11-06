@@ -7,6 +7,28 @@ import { estimateInputTokens } from "../src/ledger.ts";
 const MODEL = "Qwen/Qwen3-14B-FP8";
 const READ = { type: "function" as const, function: { name: "read", description: "Reads a file.\n\n" + "Long usage notes. ".repeat(80), parameters: { type: "object", properties: { filePath: { type: "string" } }, required: ["filePath"] } } };
 
+test("context: a full tool set gets shorter descriptions without losing tools, schema or the user turn", () => {
+  const tools = Array.from({ length: 10 }, (_, i) => ({ type: "function" as const, function: {
+    name: `tool_${i}`, description: "Function description with essential usage hints. ".repeat(8),
+    parameters: { type: "object", properties: { path: { type: "string", description: "Path parameter documentation and examples. ".repeat(8) },
+      mode: { type: "string", enum: ["read", "write"], description: "Mode parameter documentation and examples. ".repeat(8) } }, required: ["path"] },
+  } }));
+  const req: ChatCompletionRequest = { model: MODEL, tools, messages: [{ role: "system", content: "System rules. ".repeat(300) }, { role: "user", content: "Read the file." }] };
+  const fit = fitContext(req, 3500, 64, true);
+  assert.ok(fit.ok);
+  assert.equal(fit.trimmed, 0);
+  assert.deepEqual(fit.req.messages, req.messages);
+  assert.deepEqual(fit.req.tools?.map(t => t.function.name), tools.map(t => t.function.name));
+  for (const tool of fit.req.tools!) {
+    const schema = tool.function.parameters as any;
+    assert.deepEqual(schema.required, ["path"]);
+    assert.deepEqual(schema.properties.mode.enum, ["read", "write"]);
+    assert.equal(schema.properties.path.type, "string");
+    assert.equal(schema.properties.path.description, undefined);
+    assert.ok(tool.function.description!.length <= 80);
+  }
+});
+
 /** An OpenCode-shaped session of about `turns` read-and-answer rounds, ~30k tokens in total. */
 function session(turns: number, fileChars = 3900): ChatCompletionRequest {
   const messages: ChatMessage[] = [{ role: "system", content: "You are opencode. " + "Be concise. ".repeat(200) }];

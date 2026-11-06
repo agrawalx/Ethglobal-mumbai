@@ -329,7 +329,34 @@ test("toolStream: an upstream that never sends finish_reason still closes a tool
   const withFinish = events(await read(sse({ choices: [{ index: 0, delta: { content: '<tool_call>{"name":"read","arguments":{}}</tool_call>' } }] }) + sse({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }) + "data: [DONE]\n\n"));
   assert.deepEqual(withFinish.flatMap((e) => e.choices.map((c: any) => c.finish_reason).filter(Boolean)), ["tool_calls"]);
 
-  // plain text without a finish chunk: nothing is invented
+  // A final plain answer must also close the turn, or OpenCode keeps generating.
   const text = events(await read(sse({ choices: [{ index: 0, delta: { content: "hi" } }] }) + "data: [DONE]\n\n"));
-  assert.deepEqual(text.flatMap((e) => e.choices.map((c: any) => c.finish_reason).filter(Boolean)), []);
+  assert.deepEqual(text.flatMap((e) => e.choices.map((c: any) => c.finish_reason).filter(Boolean)), ["stop"]);
+});
+
+test("toolStream: final text after a tool result closes once before usage; length is preserved", async () => {
+  const { toolStream } = await import("../src/tools.ts");
+  const sse = (o: unknown) => `data: ${JSON.stringify(o)}\n\n`;
+  const usage = { prompt_tokens: 20, completion_tokens: 4, total_tokens: 24 };
+  for (const reason of [undefined, "length"]) {
+    const source = sse({ choices: [{ index: 0, delta: { content: "The file says hello." }, finish_reason: reason }] })
+      + sse({ choices: [], usage }) + "data: [DONE]\n\n";
+    const text = await new Response(toolStream(new Response(source).body!)).text();
+    const events = text.split("\n\n").filter(e => e.startsWith("data: {")).map(e => JSON.parse(e.slice(6)));
+    assert.deepEqual(events.flatMap(e => e.choices.map((c: any) => c.finish_reason).filter(Boolean)), [reason ?? "stop"]);
+    assert.ok(events.findIndex(e => e.choices[0]?.finish_reason) < events.findIndex(e => e.usage));
+  }
+  const out = (await import("../src/tools.ts")).rewriteCompletion({ choices: [{ message: { content: "Done." } }] });
+  assert.equal(out.choices[0].finish_reason, "stop");
+});
+
+test("toolStream: errors and truncated streams never flush a held call as successful", async () => {
+  const { toolStream } = await import("../src/tools.ts");
+  const held = 'data: '+JSON.stringify({ choices: [{ delta: { content: '<tool_call>{"name":"read","arguments":{}}' } }] })+'\n\n';
+  for (const suffix of ["", 'data: {"error":{"code":"pool_error","message":"stalled"}}\n\n']) {
+    const out = await new Response(toolStream(new Response(held + suffix).body!)).text();
+    assert.ok(!out.includes('"tool_calls"'));
+    assert.ok(!out.includes('"finish_reason"'));
+    if (suffix) assert.match(out, /pool_error/);
+  }
 });
