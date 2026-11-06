@@ -63,7 +63,9 @@ def wired_addresses(interface=None):
         for block in ports.split("\n\n"):
             name = re.search(r"Hardware Port: (.+)", block)
             device = re.search(r"Device: (\S+)", block)
-            if not name or not device or not re.search(r"Ethernet|LAN", name[1], re.I):
+            # USB adapters often show only their chip name (e.g. "AX88179A"), so exclude the known
+            # non-Ethernet ports instead of requiring "Ethernet" in the name. Ports without an IPv4 drop out below.
+            if not name or not device or re.search(r"Wi-?Fi|AirPort|Bluetooth|Thunderbolt|iPhone|iPad|Bridge", name[1], re.I):
                 continue
             dev = device[1]
             ip = subprocess.run(["/usr/sbin/ipconfig", "getifaddr", dev], capture_output=True, text=True)

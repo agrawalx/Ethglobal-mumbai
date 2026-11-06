@@ -211,3 +211,37 @@ class BootstrapTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MacWiredAddressTests(unittest.TestCase):
+    PORTS = """Hardware Port: Ethernet Adapter (en4)
+Device: en4
+Ethernet Address: ce:0f:6c:e0:13:65
+
+Hardware Port: AX88179A
+Device: en12
+Ethernet Address: f8:e4:3b:3c:3e:71
+
+Hardware Port: Thunderbolt Bridge
+Device: bridge0
+Ethernet Address: 36:86:b6:f4:33:40
+
+Hardware Port: Wi-Fi
+Device: en0
+Ethernet Address: 5c:9b:a6:6e:83:d1
+
+Hardware Port: Thunderbolt 1
+Device: en1
+Ethernet Address: 36:86:b6:f4:33:40
+"""
+    IPS = {"en0": "10.163.187.188", "en12": "10.73.125.54"}
+
+    def ipconfig(self, args, **_):
+        ip = self.IPS.get(args[-1], "")
+        return type("R", (), {"returncode": 0 if ip else 1, "stdout": ip + "\n" if ip else ""})()
+
+    def test_usb_adapter_named_by_chip_is_found_and_wifi_ignored(self):
+        with patch.object(host.platform, "system", return_value="Darwin"), \
+             patch.object(host, "run", return_value=self.PORTS), \
+             patch.object(host.subprocess, "run", side_effect=self.ipconfig):
+            self.assertEqual(host.wired_addresses(), ("en12", "10.73.125.54"))
