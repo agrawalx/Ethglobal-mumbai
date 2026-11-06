@@ -1,8 +1,3 @@
-# Live integration branch override
-
-The user explicitly authorizes integration of main frontend with this branch's advanced backend and specification. The original section-16 implementation prohibition below does not apply to integrating and validating existing advanced code here. Use testnet assets only; preserve original worktrees and databases; do not push. Frontend is Vite/React, not Next.js. Report unverified live dependencies honestly.
-
-
 # CLAUDE.md: Rules for agents in this repository
 
 ## 0. Read first
@@ -30,15 +25,11 @@ If these documents conflict, `docs/SPEC.md` wins. If the spec is unclear or wron
 
 ## 2. Scope rules (do not steer away)
 
-1. **Build the MVP only.** The MVP is defined in `docs/SPEC.md` §1–§15.
-2. **Do not build anything in `docs/SPEC.md` §16 (out of scope)**, even if it looks easy. This includes:
-   - fault tolerance, failover, stall detection;
-   - node join/leave handling, rebalancing, Parallax patches;
-   - output verification, canaries, Token-DiFR;
-   - vesting, fraud penalties, bans, disputes;
-   - automatic pool formation, multiple pools in the demo, coordinator election;
-   - USDC, ERC-8004, Swarm, Postgres, multiple gateways.
-3. **Do not design against out-of-scope items.** Keep the data that the spec says to keep (hashes, routes, transcripts).
+1. **The MVP (`docs/SPEC.md` §1–§15) is complete.** The team also built most post-MVP items in `docs/SPEC.md` §16 on purpose (user decision, 6 Nov 2026). §16 gives the status of each item.
+2. **Output verification (§16.2) is disabled** (`VERIFICATION_ENABLED=false`) and will be designed again later. Do not turn it on, extend it, or build on its draft code (`gateway/src/verification.ts`) unless the user asks.
+   - Still out of scope: Postgres, multiple gateways, speculative decoding, any change inside Parallax (runtime hooks in `pool/hooks/` are allowed).
+   - Live-test the §16 features before you rely on them; many have unit tests only.
+3. **Do not design against planned items.** Keep the data that the spec says to keep (hashes, routes, transcripts).
 4. **No new features, abstractions, or "improvements"** that the current task does not need. No plugin systems, no generic frameworks, no premature configuration.
 5. **Work on one task at a time.** Each task maps to a step in `docs/HANDOFF.md` §5. Finish it, meet its "done when", then stop and report.
 6. If you think the spec should change, **propose** the change and wait for approval. Do not change scope on your own.
