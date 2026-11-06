@@ -10,6 +10,7 @@ import { useSession } from "../auth/context";
 
 const LiveLayerSim = lazy(() => import("../components/sim/LiveLayerSim"));
 const GpuHero = lazy(() => import("../components/anatomy/GpuHero"));
+const LayerLine = lazy(() => import("../components/anatomy/LayerLine"));
 
 /* The earn → spend loop, in order (SPEC §8). */
 const steps = [
@@ -212,6 +213,11 @@ export default function Landing() {
               Scroll through what happens between installing the node agent
               and the first HBAR claim.
             </p>
+          </div>
+          <div className="story-figure">
+            <FigureBoundary ratio="760 / 460">
+              <LayerLine />
+            </FigureBoundary>
           </div>
           <PoolStory />
         </section>

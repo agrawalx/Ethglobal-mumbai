@@ -1203,3 +1203,14 @@
   }
 }
 
+/* Fig 2, the layer press line, opens the how-it-works story. */
+.story-figure {
+  max-width: 980px;
+  margin: 0 auto 72px;
+  padding: 0 4.15%;
+}
+.story-figure .ll.iso {
+  --anatomy-page: #030407;
+  --anatomy-card: #05070b;
+  --anatomy-paper: #05070b;
+}

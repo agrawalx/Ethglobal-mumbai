@@ -183,6 +183,21 @@ ok(layers.coversExactly(r7, 40) && r7.length === 7, "7 laptops: route covers [0,
 ok(layers.allocateLayers([4, 4], 40, 16.3) === null, "too little memory: the pool cannot hold the model");
 ok(!layers.coversExactly([{ node_id: "a", layers: [0, 20] }, { node_id: "b", layers: [19, 40] }], 40), "overlapping ranges are not a valid layer map");
 
+console.log("layer press line (Fig W1)");
+const ln = await import("../src/components/anatomy/line/model.ts");
+const live = ln.lineOf(ln.LIVE_BENCHES, true);
+ok([0, 1, 2].map((i) => ln.layersOf(live, i)).join() === "14,15,11", "live view: 14 / 15 / 11 layers");
+ok(Math.abs((live.tokS ?? 0) - ln.tokSOf(ln.LIVE_BENCHES, ln.LIVE_ROUTE)) < 0.01 && Math.abs((live.tokS ?? 0) - 8) < 1e-9, "live view: 8 tok/s, and the per-layer calibration agrees");
+ok(live.costMc === credits.costMc(1.75, 120, 200) && live.costMc === 392000, "cost = 1.75 × (200 + 0.2 × 120) = 392 credits");
+ok(live.nodesMc.reduce((a, b) => a + b, 0) + live.burnMc + live.reserveMc === live.costMc, "benches + burn + reserve = cost, to the millicredit");
+ok(live.burnMc === 19600 && live.nodesMc[0] === Math.floor((352800 * 14) / 40), "90/5/5: burn 5%, bench 1 gets 14/40 of the 90%");
+const mine = ln.lineOf(ln.LIVE_BENCHES, true, 2);
+ok(mine.nodesMc[2] === 0 && mine.reserveMc === live.reserveMc + live.nodesMc[2], "own request: that bench gets 0, the reserve takes its share");
+ok(ln.coinsOf(mine).perBench[2] === 0 && ln.coinsOf(mine).reserve === 2 + 11 && ln.coinsOf(live).perBench.join() === "14,15,11", "coins: one per layer; own bench's coins go to the reserve");
+const edited = ln.lineOf([...ln.LIVE_BENCHES, { gpu: "M4", memGb: 16, msPerLayer: 2.6, id: "bench-3" }], false);
+ok(edited.route !== null && layers.coversExactly(edited.route, 40) && !edited.live, "add a laptop: layers re-divide and still cover [0,40)");
+ok(ln.lineOf([{ ...ln.LIVE_BENCHES[2] }], false).route === null, "one 8 GB laptop cannot hold Qwen3-14B: no route, no speed");
+
 console.log("API keys (mock)");
 const keyToken = (await mockApi.auth.verify({ simulate: "new" })).token;
 const k1 = await mockApi.createKey(keyToken, "opencode", null);
