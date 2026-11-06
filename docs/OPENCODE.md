@@ -44,7 +44,7 @@ Any OpenAI client works the same way: use base URL `<gateway>/v1` and the key as
 - **What you pay for.** Only the tokens the pool ran: `cost = model_factor × (completion_tokens + 0.2 × prompt_tokens)`, taken from Parallax's `usage`.
   - The hold is only a reservation while the answer streams.
   - A failed or aborted request costs 0.
-- **Price per token.** 1 credit is not 1 token. The price depends on the model (`model_factor`). A load multiplier is planned (Person 2, below); until it lands the multiplier is 1.
+- **Price per token.** 1 credit is not 1 token. The price depends on the model (`model_factor`). The load multiplier floats from 0.5× to 2× and is locked per request (see Floating credit price below).
 
 ## What the gateway does for agent clients
 
@@ -87,8 +87,75 @@ To be filled from the live pool:
 - the largest safe `--max-sequence-length` per node;
 - prefill and tok/s at 4k, 8k and 16k tokens.
 
-## Still open (Person 2)
+## Person 2 status
 
-- Per-node `max_seq` in the heartbeat (`NodeHeartbeat.max_seq`), and the pool `context_length` = the minimum of its nodes. Until then the gateway uses `context_length` from `shared/config`.
-- The floating price: a load multiplier of 0.5×–2×, locked per request, in `requests.price_multiplier`, `/v1/models[].price` (`PriceQuote`) and `x-gpupool-price`.
-- The live end-to-end run with OpenCode, twice. Record request ids, HCS sequence numbers, multipliers and the picked `max_tokens` here.
+Local implementation on `api`: signed heartbeat `max_seq`, fresh-node pool context
+minimum, Arkiv pool `context_length`, `/v1/models` context and price, and locked
+floating credit prices. These changes do not certify a live pool run.
+
+## Pool measurements
+
+Pending hardware access. This checkout has no Parallax coordinator listening on
+`127.0.0.1:3001`, no pool runtime state, and no agent bridge at the path in HANDOFF.
+The historical results in HANDOFF are not new measurements for this task.
+
+The following must be measured directly against the coordinator, bypassing the gateway:
+
+- Native tools: whether definitions survive and responses contain `tool_calls`, raw
+  `<tool_call>` text, or neither. Keep the current `TOOLS_MODE` until this is measured.
+- M4 16 GB, M5 16 GB and 4060 8 GB: 8192, 12288 and 16384 sequence lengths, with
+  the KV fraction and assigned layers recorded. Observe macOS `vm.swapusage`
+  before and during inference; record CUDA memory on the 4060.
+- Actual 4096, 8192 and 16384 prompt tokens: prefill latency and generation tokens/s.
+
+Do not raise the known-good Mac sequence limit before these measurements. The
+memory formula and automatic launch limit remain pending calibration against
+usable memory, assigned weight memory, runtime overhead, and KV bytes per token
+for each assigned layer. No measured constants have been invented.
+
+`pool/lib.sh` records an explicit `--max-sequence-length` in the current process's
+log. The agent signs that value as `max_seq`; a restart clears it. An unknown
+runtime limit stays unknown. The gateway excludes stale and offline heartbeats
+from the minimum. If a fresh member has no limit, the optional pool/model context
+is omitted so the request-path config fallback can apply.
+
+## Floating credit price
+
+Quotes begin at 1×. Each model's quote refreshes lazily on the first read after
+30 seconds. The multiplier is `clamp(0.5 + 0.5 × (active + queued), 0.5, 2)`.
+Idle demand therefore costs 0.5×, one request 1×, and three requests 2×.
+Input weight remains 0.2; model factors and the 90/5/5 split are unchanged.
+
+`/v1/models[].price` contains credits per 1000 input/output tokens, the multiplier,
+and the quote timestamp. `/v1/chat/completions` locks a quote before waiting for
+a pool slot, returns it as JSON in `x-gpupool-price`, and stores its multiplier
+in `requests.price_multiplier`. Credit holds and actual-usage settlement use
+that locked multiplier, including across retries and load changes. Charges never
+exceed the hold. The signed `request_settled` HCS event includes the multiplier.
+x402's existing fixed HBAR tiers are unchanged.
+
+SQLite schema is 15. Use a fresh development database. No live database was changed.
+
+Person 1 integration points: `router.pricing.quote(model)` gives a copy of the current
+quote; `SelectedPool.context_length` gives that pool's optional runtime limit.
+`holdMc` and `costMc` take an optional final multiplier (default 1). The existing
+billing path locks and passes the multiplier to settlement and affordability budgeting.
+Person 1's Keys page, per-user budgeting and context fitting are integrated from `origin/api`.
+
+Verification after integration: `pnpm --filter @gpupool/gateway test` (171 passed),
+`pnpm --filter @gpupool/shared --filter @gpupool/arkiv test` (60 + 10 passed),
+and gateway/shared/Arkiv `typecheck` passed. Node-agent pytest passed 24 tests;
+`bash -n pool/lib.sh pool/join-node.sh` and `git diff --check` passed.
+The test suites needed permission to bind local fixture ports and run subprocesses
+outside the sandbox. No live pool was used.
+
+## Live end-to-end evidence
+
+Pending pool access and live verification of the integrated Keys page, context fitting
+and per-user budget work. No live runs have been claimed. Run the acceptance sequence
+twice after integration: fresh World login, key creation, OpenCode tool/result/answer,
+exact receipt/balance reconciliation, three parallel clients, long-session trimming,
+provider earnings, drain to 403, and revoked-key 401.
+
+Record request IDs, HCS sequence numbers, locked multipliers and picked `max_tokens`
+here for both runs. Never record API keys. Use Hedera testnet only.

@@ -45,6 +45,15 @@ export function poolLayerMap(db: Db, cfg: GpupoolConfig, poolId: string, model: 
   return validLayerMap(hops, model.num_layers);
 }
 
+/** Unknown members keep the contract optional; stale/offline nodes never constrain the minimum. */
+export function poolContextLength(db: Db, cfg: GpupoolConfig, poolId: string, model?: ModelConfig, now = Date.now()): number | undefined {
+  const rows = db.prepare(`SELECT hb_max_seq, hb_model FROM nodes WHERE pool_id = ? AND hb_online = 1
+    AND hb_ts >= ? AND hb_ts <= ?`).all(poolId, now - cfg.router.pool_heartbeat_max_age_s * 1000, now + 60_000) as { hb_max_seq: number | null; hb_model: string | null }[];
+  const members = rows.filter((n) => !model || configModelFor(cfg, n.hb_model)?.model_id === model.model_id);
+  if (!members.length || members.some((n) => !n.hb_max_seq)) return undefined;
+  return Math.min(...members.map((n) => n.hb_max_seq!));
+}
+
 /** GET /pools/:pool_id. The coordinator's node agent writes gpupool.pool from this. */
 export function poolState(db: Db, cfg: Config, poolId: string, now = Date.now()): PoolStateResponse {
   const net = cfg.net;
@@ -54,7 +63,7 @@ export function poolState(db: Db, cfg: Config, poolId: string, now = Date.now())
   const restarting = isRestarting(db, cfg, poolId, now);
   for (const m of net.models) {
     const map = poolLayerMap(db, net, poolId, m, now);
-    if (map) return { pool_id: poolId, models: [m.model_id], members, status: restarting ? "loading" : "ready", layer_map: map, restarting };
+    if (map) return { pool_id: poolId, models: [m.model_id], members, status: restarting ? "loading" : "ready", layer_map: map, restarting, context_length: poolContextLength(db, net, poolId, m, now) };
   }
   // No valid map: list the config models the fresh nodes report (so the listing still says what it loads).
   const models = [...new Set(fresh.map((n) => configModelFor(net, n.hb_model)?.model_id).filter((x): x is string => !!x))];

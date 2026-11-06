@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
  * tinybar decimal strings, times are Unix ms. No migrations (dev phase): when SCHEMA_VERSION
  * changes, delete the database file and restart.
  */
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 
 export const TABLES = [
   "accounts",
@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   hb_model       TEXT,
   hb_layers      TEXT,                               -- JSON [start, end) or NULL
   hb_tok_s       REAL,
+  hb_max_seq     INTEGER,
   -- post-MVP P5 heartbeat fields
   hb_peer_id         TEXT,                           -- Parallax peer ID (P5.4 admission, P5.8/P5.9)
   hb_lan_ip          TEXT,                           -- P5.6
@@ -115,6 +116,7 @@ CREATE TABLE IF NOT EXISTS requests (
   in_tokens            INTEGER,
   out_tokens           INTEGER,
   cost_mc              INTEGER,
+  price_multiplier     REAL,
   split                TEXT,                         -- JSON CreditSplit
   payout_snapshot      TEXT,                         -- x402 provider attribution frozen at request start
   route                TEXT,                         -- JSON Route (node → layers); NULL = unknown (SPEC §5.5)

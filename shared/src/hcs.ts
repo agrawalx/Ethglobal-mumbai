@@ -47,6 +47,7 @@ export const StarterGrantEvent = z.object({
 export const RequestSettledEvent = z.object({
   ...base,
   type: z.literal("request_settled"),
+  price_multiplier: z.number().min(0.5).max(2).optional(),
   req_id: RequestId,
   account_id: AccountId,
   model: ModelId,

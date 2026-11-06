@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { EvmAddress, LedgerEventsResponse, ModelsResponse, NetworkResponse, PayoutsResponse, PoolId, Receipt, REQUEST_ID_HEADER, RequestId } from "@gpupool/shared";
+import { EvmAddress, LedgerEventsResponse, ModelsResponse, NetworkResponse, PayoutsResponse, PoolId, Receipt, REQUEST_ID_HEADER, RequestId, PRICE_HEADER } from "@gpupool/shared";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { chatHandler, logCompletion, type OnComplete } from "./chat.ts";
@@ -54,12 +54,12 @@ type RequestRow = {
 export function createApp({ cfg, db, signer, x402 = null, worldFetch, directory, router: injectedRouter, queue: injectedQueue, onComplete = logCompletion }: Deps): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
   const secret = cfg.env.JWT_SECRET;
-  const router = injectedRouter ?? createRouter(cfg, db, directory ?? arkivDirectory(cfg));
   const queue = injectedQueue ?? createPoolQueue(cfg.net.router.max_concurrent_per_pool);
+  const router = injectedRouter ?? createRouter(cfg, db, directory ?? arkivDirectory(cfg), queue);
   const stall = createStallTracker(cfg.net);
 
   if (cfg.corsOrigins.length > 0) {
-    app.use("*", cors({ origin: cfg.corsOrigins, exposeHeaders: [REQUEST_ID_HEADER, "PAYMENT-REQUIRED", "PAYMENT-RESPONSE", HASH_SALT_HEADER] }));
+    app.use("*", cors({ origin: cfg.corsOrigins, exposeHeaders: [REQUEST_ID_HEADER, "PAYMENT-REQUIRED", "PAYMENT-RESPONSE", HASH_SALT_HEADER, PRICE_HEADER] }));
   }
 
   // Every /v1/chat/completions response carries the request id, errors included.

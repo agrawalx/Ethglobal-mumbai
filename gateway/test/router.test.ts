@@ -6,9 +6,30 @@ import { loadConfig } from "../src/config.ts";
 import { openDb } from "../src/db.ts";
 import { createApp } from "../src/app.ts";
 import { createRouter, type Directory } from "../src/router.ts";
+import { poolContextLength, poolState } from "../src/route.ts";
 import { balance, signer, testAccount, testDirectory, TEST_JWT_SECRET, TEST_NODE } from "./helpers.ts";
 
 const MODEL = "Qwen/Qwen3-14B-FP8";
+
+test("context minimum uses fresh nodes; stale/offline limits ignored and unknown limits stay optional", async () => {
+  const { cfg, db, fake, model } = setup();
+  try {
+    const now = Date.now();
+    db.prepare("UPDATE nodes SET hb_max_seq = 16384").run();
+    const other = "0x" + "d".repeat(40);
+    db.prepare(`INSERT INTO nodes (node_id, account_id, pool_id, gpu, mem_gb, registered_at, hb_ts, hb_online, hb_model, hb_max_seq)
+      VALUES (?, 'acc_router', 'pool-router-test', 'fixture', 16, ?, ?, 1, ?, 8192)`).run(other, now, now, MODEL);
+    assert.equal(poolContextLength(db, cfg.net, "pool-router-test", model, now), 8192);
+    assert.equal(poolState(db, cfg, "pool-router-test", now).context_length, 8192);
+    assert.equal((await createRouter(cfg, db, fake).models()).data.find((m) => m.id === MODEL)?.context_length, 8192);
+    db.prepare("UPDATE nodes SET hb_ts = ? WHERE node_id = ?").run(now - 31_000, other);
+    assert.equal(poolContextLength(db, cfg.net, "pool-router-test", model, now), 16384);
+    db.prepare("UPDATE nodes SET hb_ts = ?, hb_online = 0 WHERE node_id = ?").run(now, other);
+    assert.equal(poolContextLength(db, cfg.net, "pool-router-test", model, now), 16384);
+    db.prepare("UPDATE nodes SET hb_online = 1, hb_max_seq = NULL WHERE node_id = ?").run(other);
+    assert.equal(poolContextLength(db, cfg.net, "pool-router-test", model, now), undefined);
+  } finally { db.close(); }
+});
 function setup() {
   const cfg = loadConfig({ DATABASE_PATH: ":memory:", POOL_COORDINATOR_URL: "http://127.0.0.1:3001", JWT_SECRET: TEST_JWT_SECRET });
   const db = openDb(":memory:");

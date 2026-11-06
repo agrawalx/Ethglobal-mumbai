@@ -35,13 +35,13 @@ export function learnedNeed(db: Db, accountId: string, agentId: string | null): 
 }
 
 /** Largest answer (tokens) whose cost with `inTokens` of prompt fits `availableMc`. */
-export function affordableTokens(cfg: GpupoolConfig, model: ModelConfig, availableMc: number, inTokens: number): number {
-  if (costMc(cfg, model, inTokens, 0) > availableMc) return 0;
+export function affordableTokens(cfg: GpupoolConfig, model: ModelConfig, availableMc: number, inTokens: number, priceMultiplier = 1): number {
+  if (costMc(cfg, model, inTokens, 0, priceMultiplier) > availableMc) return 0;
   let lo = 0;
   let hi = 1 << 20;
   while (lo < hi) {
     const mid = Math.ceil((lo + hi) / 2);
-    if (costMc(cfg, model, inTokens, mid) <= availableMc) lo = mid;
+    if (costMc(cfg, model, inTokens, mid, priceMultiplier) <= availableMc) lo = mid;
     else hi = mid - 1;
   }
   return lo;
@@ -60,9 +60,10 @@ export function pickMaxTokens(o: {
   /** Spendable credits: the account's available balance, within the key's budget. */
   availableMc: number;
   inTokens: number;
+  priceMultiplier?: number;
 }): Pick {
   const want = Math.min(o.ceiling, o.learned ?? o.asked ?? o.cfg.cost.default_max_tokens);
-  const affordable = affordableTokens(o.cfg, o.model, o.availableMc, o.inTokens);
+  const affordable = affordableTokens(o.cfg, o.model, o.availableMc, o.inTokens, o.priceMultiplier ?? 1);
   const pick = Math.min(want, affordable);
   return pick >= Math.min(MIN_ANSWER, want) ? { maxTokens: pick } : { maxTokens: null, affordable };
 }

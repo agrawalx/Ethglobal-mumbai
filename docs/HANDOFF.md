@@ -16,6 +16,14 @@ We build an open GPU pool network. People bring computers (gaming laptops, MacBo
 
 ## 2. What we have proved already (measured, 5–6 Nov 2026)
 
+Person 2 OpenCode work on `api` (6 Nov): context-limit reporting and floating credit
+pricing are implemented locally. See `docs/OPENCODE.md` for the contract, pricing
+formula, pending hardware measurements and live acceptance runs. SQLite schema is
+15. Verification after integration: gateway 171 tests, node-agent 24 tests, shared 60 tests, Arkiv 10
+tests; gateway/shared/Arkiv typechecks pass. These are local fixtures. The automatic
+memory-based launch limit still needs live calibration; Mac launch limits have not
+been raised. No new live pool or public-chain evidence is claimed.
+
 ### 2.1 Results
 
 | # | Result | Evidence |

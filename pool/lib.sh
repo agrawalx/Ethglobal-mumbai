@@ -98,6 +98,23 @@ start_group() {
 
   # Start marker: the node agent ignores log lines before it (old process; P5.5 no stale layers).
   echo "=== gpupool start $name $(date -u +%Y-%m-%dT%H:%M:%SZ) ===" >>"$log"
+  # Record the limit actually passed to this process, rather than a possibly edited env file.
+  if [ "$name" = "node" ]; then
+    local arg expect_seq=0
+    for arg in "$@"; do
+      if [ "$expect_seq" = "1" ]; then
+        case "$arg" in *[!0-9]*|"") die "invalid --max-sequence-length" ;; esac
+        [ "$arg" -gt 0 ] || die "--max-sequence-length must be positive"
+        echo "gpupool max_seq=$arg" >>"$log"
+        expect_seq=0
+      elif [ "$arg" = "--max-sequence-length" ]; then
+        expect_seq=1
+      elif [[ "$arg" == --max-sequence-length=* ]]; then
+        echo "gpupool max_seq=${arg#*=}" >>"$log"
+      fi
+    done
+    [ "$expect_seq" = "0" ] || die "missing --max-sequence-length value"
+  fi
   rm -f "$RUN_DIR/node.peer-id"
   # p2p.key (scheduler identity) lives in the cwd of `parallax run`.
   cd "$PARALLAX_DIR" || die "cannot cd to $PARALLAX_DIR"

@@ -39,6 +39,7 @@ export const ArkivPool = z.object({
   coordinator_url_hash: Hex32,
   /** Null while the pool has no valid layer map (status is then not "ready"). */
   layer_map: Route.nullable(),
+  context_length: z.number().int().positive().optional(),
 });
 export type ArkivPool = z.infer<typeof ArkivPool>;
 

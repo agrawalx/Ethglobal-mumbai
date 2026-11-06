@@ -15,11 +15,13 @@ const factorMilli = (m: ModelConfig): number => Math.round(m.model_factor * 1000
 const weightBps = (cfg: GpupoolConfig): number => Math.round(cfg.cost.input_token_weight * BPS);
 
 /**
- * cost_mc = floor(model_factor × (output_tokens + input_token_weight × input_tokens) × 1000).
- * Integer form: floor(factor_milli × (out × 10000 + in × weight_bps) / 10000).
+ * cost_mc = floor(model_factor × locked_multiplier × (out + input_token_weight × in) × 1000).
+ * BigInt intermediates retain exact integer rounding for both holds and settlement.
  */
-export function costMc(cfg: GpupoolConfig, model: ModelConfig, inTokens: number, outTokens: number): number {
-  return Math.floor((factorMilli(model) * (outTokens * BPS + inTokens * weightBps(cfg))) / BPS);
+export function costMc(cfg: GpupoolConfig, model: ModelConfig, inTokens: number, outTokens: number, multiplier = 1): number {
+  if (!Number.isFinite(multiplier) || multiplier < 0.5 || multiplier > 2) throw new Error("invalid price multiplier");
+  const priceBps = Math.round(multiplier * BPS);
+  return Number(BigInt(factorMilli(model)) * (BigInt(outTokens) * BigInt(BPS) + BigInt(inTokens) * BigInt(weightBps(cfg))) * BigInt(priceBps) / BigInt(BPS * BPS));
 }
 
 /** Characters a message adds to the prompt: its text, plus tool-call names and arguments. */
@@ -37,8 +39,8 @@ export function estimateInputTokens(messages: ChatMessage[], tools: Tool[] = [])
 }
 
 /** Hold (SPEC §5.3 step 4) = the cost formula with max_tokens output and the estimated input. */
-export function holdMc(cfg: GpupoolConfig, model: ModelConfig, maxTokens: number, estInputTokens: number): number {
-  return costMc(cfg, model, estInputTokens, maxTokens);
+export function holdMc(cfg: GpupoolConfig, model: ModelConfig, maxTokens: number, estInputTokens: number, multiplier = 1): number {
+  return costMc(cfg, model, estInputTokens, maxTokens, multiplier);
 }
 
 /**
@@ -114,6 +116,7 @@ export type SettleInput = {
   route: Route | null;
   promptHash: string;
   respHash: string;
+  priceMultiplier?: number;
 };
 
 export type SettleResult = { cost: number; split: CreditSplit };
@@ -129,7 +132,7 @@ export type SettleResult = { cost: number; split: CreditSplit };
 export function settle(db: Db, cfg: GpupoolConfig, signer: Signer, s: SettleInput, now = Date.now()): SettleResult {
   return db.transaction((): SettleResult => {
     const b = db.prepare("SELECT starter_mc, starter_expires_at, earned_mc, held_mc FROM balances WHERE account_id = ?").get(s.accountId) as BalanceRow;
-    const raw = costMc(cfg, s.model, s.inTokens, s.outTokens);
+    const raw = costMc(cfg, s.model, s.inTokens, s.outTokens, s.priceMultiplier ?? 1);
     const starter = starterValid(b, now);
     let cost = Math.min(raw, s.hold);
     if (cost > starter + b.earned_mc) {
@@ -161,6 +164,7 @@ export function settle(db: Db, cfg: GpupoolConfig, signer: Signer, s: SettleInpu
     ).run(s.inTokens, s.outTokens, cost, JSON.stringify(split), s.respHash, s.reqId);
     recordEvent(db, signer, {
       type: "request_settled",
+      price_multiplier: s.priceMultiplier ?? 1,
       req_id: s.reqId,
       account_id: s.accountId,
       model: s.model.model_id,

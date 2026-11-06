@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Context } from "hono";
-import { canonicalJson, MAX_TOKENS_HEADER, type ChatCompletionRequest, type ModelConfig, type PayoutRoute, type RequestAttempt, type Route } from "@gpupool/shared";
+import { canonicalJson, MAX_TOKENS_HEADER, PRICE_HEADER, type ChatCompletionRequest, type ModelConfig, type PayoutRoute, type RequestAttempt, type Route } from "@gpupool/shared";
 import type { Completion, Failover, OnComplete, Prepare, Prepared } from "./chat.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
@@ -39,7 +39,7 @@ function payoutSnapshot(db: Db, route: Route | null): PayoutRoute | null {
   }) ?? null;
 }
 
-function insertRequest(db: Db, cfg: Config, row: { reqId: string; accountId: string | null; payer?: string; tx?: string; amount?: string; asset?: string; raw?: string; model: string; payType: "credits" | "x402"; route: Route | null; promptHash: string; prompt: string; seed: number; settings: string; salt: string; privacy: string | null; maxTokens: number }, now: number) {
+function insertRequest(db: Db, cfg: Config, row: { reqId: string; accountId: string | null; payer?: string; tx?: string; amount?: string; asset?: string; raw?: string; model: string; payType: "credits" | "x402"; route: Route | null; promptHash: string; prompt: string; seed: number; settings: string; salt: string; privacy: string | null; maxTokens: number; priceMultiplier: number }, now: number) {
   db.transaction(() => {
     db.prepare(
       `INSERT INTO requests (req_id, account_id, x402_payer, x402_tx, x402_amount_tinybar, x402_asset, x402_amount_raw, model, pay_type, route, status, prompt_hash, sampling_seed, sampling_settings, max_tokens, ts)
@@ -49,7 +49,7 @@ function insertRequest(db: Db, cfg: Config, row: { reqId: string; accountId: str
       const snapshot = payoutSnapshot(db, row.route);
       db.prepare("UPDATE requests SET payout_snapshot = ? WHERE req_id = ?").run(snapshot ? JSON.stringify(snapshot) : null, row.reqId);
     }
-    db.prepare("UPDATE requests SET hash_salt = ?, privacy = ? WHERE req_id = ?").run(row.salt, row.privacy, row.reqId);
+    db.prepare("UPDATE requests SET hash_salt = ?, privacy = ?, price_multiplier = ? WHERE req_id = ?").run(row.salt, row.privacy, row.priceMultiplier, row.reqId);
     // Privacy requests keep only hashes; other transcripts are encrypted when TRANSCRIPT_KEY is set.
     if (!row.privacy) {
       db.prepare("INSERT INTO transcripts (req_id, prompt, response, expires_at) VALUES (?, ?, NULL, ?)").run(row.reqId, seal(cfg, row.prompt), now + cfg.net.transcript_retention_days * 86_400_000);
@@ -131,6 +131,10 @@ export function makePrepare(d: BillingDeps): Prepare {
       c.header("Retry-After", String(cfg.net.router.retry_after_s));
       return errorResponse(c, 503, "no_pool_available", `no ready pool for ${model.model_id}`);
     }
+    // Lock before queueing: queue/load changes and failover never reprice this request.
+    const price = d.router.pricing.quote(model);
+    const priceHeader = JSON.stringify(price);
+    c.header(PRICE_HEADER, priceHeader);
     const ratioRow = accountId ? db.prepare("SELECT earned_total_mc, spent_total_mc FROM balances WHERE account_id = ?").get(accountId) as { earned_total_mc: number; spent_total_mc: number } | undefined : undefined;
     const ratio = accountId ? contributionRatio(ratioRow?.earned_total_mc ?? 0, ratioRow?.spent_total_mc ?? 0) : 1;
     let releaseQueue: () => void;
@@ -232,12 +236,12 @@ export function makePrepare(d: BillingDeps): Prepare {
         const inTokens = estimateInputTokens(req.messages, req.tools);
         const spendable = Math.min(availableMc(db, accountId, now), agentId ? agentBudgetLeft(db, agentId) : Infinity);
         const asked = req.max_tokens ?? req.max_completion_tokens ?? null;
-        const pick = pickMaxTokens({ cfg: cfg.net, model, ceiling: maxTokens, asked, learned: learnedNeed(db, accountId, agentId), availableMc: spendable, inTokens });
+        const pick = pickMaxTokens({ cfg: cfg.net, model, ceiling: maxTokens, asked, learned: learnedNeed(db, accountId, agentId), availableMc: spendable, inTokens, priceMultiplier: price.multiplier });
         if (pick.maxTokens === null) {
           return errorResponse(c, 403, "insufficient_credits", `available ${spendable} mc pays for ${pick.affordable} answer tokens; at least ${MIN_ANSWER} are needed`);
         }
         maxTokens = pick.maxTokens;
-        const hold = holdMc(cfg.net, model, maxTokens, inTokens);
+        const hold = holdMc(cfg.net, model, maxTokens, inTokens, price.multiplier);
         if (agentId && hold > agentBudgetLeft(db, agentId)) {
           return errorResponse(c, 403, "insufficient_credits", `agent budget left ${agentBudgetLeft(db, agentId)} mc; this request needs a hold of ${hold} mc`);
         }
@@ -245,14 +249,14 @@ export function makePrepare(d: BillingDeps): Prepare {
           return errorResponse(c, 403, "insufficient_credits", `this request needs a hold of ${hold} mc; available ${availableMc(db, accountId, now)} mc`);
         }
         try {
-          insertRequest(db, cfg, { reqId, accountId, model: model.model_id, payType: "credits", route: cur.route, promptHash: pHash, prompt, seed: req.seed!, settings: samplingSettings, salt, privacy: privacy ?? null, maxTokens }, now);
+          insertRequest(db, cfg, { reqId, accountId, model: model.model_id, payType: "credits", route: cur.route, promptHash: pHash, prompt, seed: req.seed!, settings: samplingSettings, salt, privacy: privacy ?? null, maxTokens, priceMultiplier: price.multiplier }, now);
         } catch (e) {
           releaseHold(db, accountId, hold);
           throw e;
         }
         return {
           maxTokens,
-          headers: { [HASH_SALT_HEADER]: salt, [MAX_TOKENS_HEADER]: String(maxTokens) },
+          headers: { [HASH_SALT_HEADER]: salt, [MAX_TOKENS_HEADER]: String(maxTokens), [PRICE_HEADER]: priceHeader },
           coordinatorUrl: cur.coordinatorUrl,
           poolId: cur.poolId,
           failover,
@@ -264,7 +268,7 @@ export function makePrepare(d: BillingDeps): Prepare {
                 // Commit billing, the transcript and its reliability outcome together. A later
                 // database failure must not leave a charged request marked as failed.
                 db.transaction(() => {
-                  const settled = settle(db, cfg.net, signer, { reqId, accountId, model, hold, inTokens: comp.usage!.prompt_tokens, outTokens: comp.usage!.completion_tokens, route, promptHash: pHash, respHash: respHashOf(comp.text) });
+                  const settled = settle(db, cfg.net, signer, { reqId, accountId, model, hold, inTokens: comp.usage!.prompt_tokens, outTokens: comp.usage!.completion_tokens, route, promptHash: pHash, respHash: respHashOf(comp.text), priceMultiplier: price.multiplier });
                   if (agentId) chargeAgent(db, agentId, reqId, settled.cost);
                   db.prepare("UPDATE transcripts SET response = ? WHERE req_id = ?").run(seal(cfg, comp.text), reqId);
                   countRouted(db, cfg, route, true);
@@ -289,10 +293,10 @@ export function makePrepare(d: BillingDeps): Prepare {
       if (!d.x402) return errorResponse(c, 402, "payment_required", "no session token, and x402 is not configured on this gateway");
       const paid = await d.x402.charge(c, req, maxTokens);
       if (paid instanceof Response) return paid;
-      insertRequest(db, cfg, { reqId, accountId: null, payer: paid.payer, tx: paid.tx, amount: paid.amountTinybar, asset: paid.asset, raw: paid.amountRaw, model: model.model_id, payType: "x402", route: cur.route, promptHash: pHash, prompt, seed: req.seed!, settings: samplingSettings, salt, privacy: privacy ?? null, maxTokens }, Date.now());
+      insertRequest(db, cfg, { reqId, accountId: null, payer: paid.payer, tx: paid.tx, amount: paid.amountTinybar, asset: paid.asset, raw: paid.amountRaw, model: model.model_id, payType: "x402", route: cur.route, promptHash: pHash, prompt, seed: req.seed!, settings: samplingSettings, salt, privacy: privacy ?? null, maxTokens, priceMultiplier: price.multiplier }, Date.now());
       console.log(JSON.stringify({ msg: "x402_settled", reqId, payer: paid.payer, tx: paid.tx, amount_tinybar: paid.amountTinybar }));
       return {
-        headers: { ...paid.headers, [HASH_SALT_HEADER]: salt },
+        headers: { ...paid.headers, [HASH_SALT_HEADER]: salt, [PRICE_HEADER]: priceHeader },
         coordinatorUrl: cur.coordinatorUrl,
         poolId: cur.poolId,
         failover,

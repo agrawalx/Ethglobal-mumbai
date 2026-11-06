@@ -44,7 +44,8 @@ def send_heartbeat(cfg: Config, acct: LocalAccount, client: httpx.Client, extra:
     p5 = dict(extra or {})
     # P5.4: the peer ID the hook wrote before the join (also known while loading), else the join log.
     p5["peer_id"] = (parallax.read_peer_id(cfg.peer_id_file) or a.peer_id) if running else None
-    p5["challenge_result"] = extra.get("challenge_result")
+    p5["challenge_result"] = p5.get("challenge_result")
+    p5["max_seq"] = a.max_seq if online else None
     port = system.env_value(cfg.node_env, "TCP_PORT")
     p5["p2p_port"] = int(port) if port and port.isdigit() and port != "0" else None
     body = heartbeat_body(node_id(acct), cfg.pool_id, now_ms(), online, a.model, a.layers if online else None, None, p5)
@@ -74,7 +75,8 @@ def pool_entity(cfg: Config, client: httpx.Client, url_hash: str | None = None) 
         return None
     return {"type": "gpupool.pool", "pool_id": cfg.pool_id, "models": s["models"], "members": s["members"], "status": s["status"],
             # §16.1 many pools: the gateway knows each pool's private coordinator URL and sends its hash.
-            "coordinator_url_hash": url_hash or "0x" + keccak(text=cfg.coordinator_url).hex().removeprefix("0x"), "layer_map": s["layer_map"]}
+            "coordinator_url_hash": url_hash or "0x" + keccak(text=cfg.coordinator_url).hex().removeprefix("0x"), "layer_map": s["layer_map"],
+            **({"context_length": s["context_length"]} if s.get("context_length") else {})}
 
 
 def load_state() -> dict:

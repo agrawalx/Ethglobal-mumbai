@@ -109,9 +109,9 @@ export function heartbeatHandler(db: Db, cfg: Config, signer: Signer, isPoolIdle
     const score = db.transaction(() => {
       const prev = db.prepare("SELECT hb_online, hb_layers, hb_model FROM nodes WHERE node_id = ?").get(hb.node_id) as { hb_online: number | null; hb_layers: string | null; hb_model: string | null };
       db.prepare(`UPDATE nodes SET hb_ts = ?, hb_online = ?, hb_model = ?, hb_layers = ?, hb_tok_s = ?,
-        hb_peer_id = ?, hb_lan_ip = ?, hb_mem_pressure = ?, hb_usable_mem_gb = ?, hb_restart_ack = ?, hb_p2p_port = ? WHERE node_id = ?`).run(
+        hb_peer_id = ?, hb_lan_ip = ?, hb_mem_pressure = ?, hb_usable_mem_gb = ?, hb_restart_ack = ?, hb_p2p_port = ?, hb_max_seq = ? WHERE node_id = ?`).run(
         now, hb.online ? 1 : 0, hb.model, hb.layers ? JSON.stringify(hb.layers) : null, hb.tok_s,
-        hb.peer_id, hb.lan_ip, hb.mem_pressure, hb.usable_mem_gb, hb.restart_ack, hb.p2p_port, hb.node_id);
+        hb.peer_id, hb.lan_ip, hb.mem_pressure, hb.usable_mem_gb, hb.restart_ack, hb.p2p_port, hb.max_seq, hb.node_id);
       // SPEC §16.1 formation: delays this node measured to the peers it was asked to probe.
       const rtt = db.prepare("INSERT INTO node_rtt (a, b, ms, ts) VALUES (?, ?, ?, ?) ON CONFLICT(a, b) DO UPDATE SET ms = excluded.ms, ts = excluded.ts");
       for (const [peer, ms] of Object.entries(hb.rtt_ms ?? {})) if (peer !== hb.node_id) rtt.run(hb.node_id, peer, ms, now);
