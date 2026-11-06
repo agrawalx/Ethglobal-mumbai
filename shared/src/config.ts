@@ -27,6 +27,11 @@ export const ModelConfig = z.object({
   license: z.string().min(1),
   /** SPEC §7.3. A request with max_tokens above the last tier is rejected. */
   x402_prices: z.array(X402PriceTier).min(1),
+  /**
+   * Prompt + answer tokens a pool takes when its nodes report no `max_seq` (Mac nodes run
+   * --max-sequence-length 4096). The gateway trims prompts to fit (gateway/src/context.ts).
+   */
+  context_length: z.number().int().positive(),
 });
 export type ModelConfig = z.infer<typeof ModelConfig>;
 

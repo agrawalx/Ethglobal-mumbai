@@ -4,8 +4,14 @@ import { ChatCompletionRequest, REQUEST_ID_HEADER, Usage, type ModelConfig } fro
 import type { Config } from "./config.ts";
 import { errorResponse } from "./errors.ts";
 import { estimateInputTokens } from "./ledger.ts";
+import { fitContext, marginTokens } from "./context.ts";
 import { compactTools, emulatedMessages, rewriteCompletion, toolStream, usesTools, type ToolsMode } from "./tools.ts";
 import type { StallTracker } from "./stall.ts";
+
+/** Smallest answer room kept when trimming a prompt (tokens). */
+const MIN_OUTPUT = 256;
+/** Set when the gateway trimmed the prompt to fit the pool's context: number of messages cut or dropped. */
+export const TRIMMED_HEADER = "x-gpupool-trimmed";
 
 /** Why an attempt or a request failed. */
 export type FailReason = "pool_error" | "no_usage" | "client_aborted" | "stalled";
@@ -143,17 +149,28 @@ export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker) 
     }
     // P6.1 needs the exact sampling seed later for a Token-DiFR replay. Keep client-provided
     // seeds; assign one when absent and send it to Parallax with every completion request.
-    const req = { ...parsed.data, seed: parsed.data.seed ?? randomInt(0, 2 ** 31) };
-    const model: ModelConfig | undefined = cfg.model(req.model);
-    if (!model) return errorResponse(c, 404, "model_not_found", `unknown model ${req.model}`);
+    const asked = { ...parsed.data, seed: parsed.data.seed ?? randomInt(0, 2 ** 31) };
+    const model: ModelConfig | undefined = cfg.model(asked.model);
+    if (!model) return errorResponse(c, 404, "model_not_found", `unknown model ${asked.model}`);
 
-    const maxTokens = effectiveMaxTokens(req, cfg.net.cost.default_max_tokens);
+    let maxTokens = effectiveMaxTokens(asked, cfg.net.cost.default_max_tokens);
     const limit = model.x402_prices[model.x402_prices.length - 1]!.max_tokens;
-    if (maxTokens > limit) return errorResponse(c, 400, "bad_request", `max_tokens ${maxTokens} is above the limit ${limit} for ${req.model}`);
+    if (maxTokens > limit) return errorResponse(c, 400, "bad_request", `max_tokens ${maxTokens} is above the limit ${limit} for ${asked.model}`);
+
+    // Fit the prompt into the pool's context; the answer gets the room that is left.
+    const toolsMode: ToolsMode = cfg.env.TOOLS_MODE;
+    const ctx = model.context_length;
+    const fit = fitContext(asked, ctx, Math.min(maxTokens, MIN_OUTPUT), toolsMode === "emulate" && usesTools(asked));
+    if (!fit.ok) {
+      return errorResponse(c, 400, "context_length_exceeded",
+        `the prompt needs about ${fit.promptTokens} tokens even after trimming; this pool takes ${fit.budget} prompt tokens (context ${ctx}). Start a new session or compact it.`);
+    }
+    const req = fit.req;
+    maxTokens = Math.max(1, Math.min(maxTokens, ctx - fit.promptTokens - marginTokens(ctx)));
 
     const prep = await prepare(c, req, model, maxTokens, reqId);
     if (prep instanceof Response) return prep;
-    const extra = prep.headers;
+    const extra = { ...prep.headers, ...(fit.trimmed ? { [TRIMMED_HEADER]: String(fit.trimmed) } : {}) };
     const clientSignal = c.req.raw.signal;
     const complete = (usage: Usage | null, text: string, ok: boolean, reason?: FailReason, streamedTokens = 0) =>
       prep.finish({ reqId, model: req.model, usage, text, ok, ...(reason ? { reason } : {}), ...(streamedTokens ? { streamedTokens } : {}) });
@@ -174,7 +191,6 @@ export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker) 
       return true;
     };
 
-    const toolsMode: ToolsMode = cfg.env.TOOLS_MODE;
     const emulate = toolsMode === "emulate" && usesTools(req);
     const inputTokens = estimateInputTokens(req.messages, req.tools);
     const headerMs = req.stream ? stall.firstTokenMs(inputTokens) : cfg.env.POOL_TIMEOUT_MS;

@@ -225,3 +225,29 @@ test("TOOLS_MODE=native passes tools through unchanged", () => {
   const native = loadConfig({ POOL_COORDINATOR_URL: "http://127.0.0.1:1", DATABASE_PATH: ":memory:", TOOLS_MODE: "native" });
   assert.equal(native.env.TOOLS_MODE, "native");
 });
+
+test("context: a long session is trimmed to the pool's context (header says how much), max_tokens shrinks to the room left", async () => {
+  const messages: any[] = [{ role: "system", content: "You are opencode." }];
+  for (let i = 0; i < 12; i++) {
+    messages.push({ role: "user", content: `Question ${i}` });
+    messages.push({ role: "assistant", content: `Answer ${i} ` + "words ".repeat(600) });
+  }
+  messages.push({ role: "user", content: "last question" });
+  const r = await post({ model: MODEL, max_tokens: 2048, messages });
+  assert.equal(r.status, 200);
+  assert.ok(Number(r.headers.get("x-gpupool-trimmed")) > 0);
+  const up = seen.at(-1);
+  assert.equal(up.messages[0].content, "You are opencode.");
+  assert.equal(up.messages.at(-1).content, "last question");
+  assert.ok(up.max_tokens < 2048 && up.max_tokens >= 256, `max_tokens ${up.max_tokens}`);
+});
+
+test("context: a prompt that cannot fit gets 400 context_length_exceeded and costs nothing", async () => {
+  const before = balance(db, acc);
+  const r = await post({ model: MODEL, messages: [{ role: "system", content: "s".repeat(40_000) }, { role: "user", content: "hi" }] });
+  assert.equal(r.status, 400);
+  const body = await r.json() as any;
+  assert.equal(body.error.code, "context_length_exceeded");
+  assert.match(body.error.message, /context 4096/);
+  assert.deepEqual(balance(db, acc), before);
+});
