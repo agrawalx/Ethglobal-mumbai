@@ -29,10 +29,10 @@
   line-height: 1.75;
 }
 
-/* relative h-[740vh] */
+/* relative h-[560vh]: five chapters */
 .story {
   position: relative;
-  height: 740vh;
+  height: 560vh;
 }
 /* sticky top-0 h-screen overflow-hidden flex items-start justify-center lg:justify-end */
 .story-stage {
@@ -45,18 +45,13 @@
   justify-content: center;
   padding: 0 4px;
 }
-@media (min-width: 1024px) {
-  .story-stage {
-    justify-content: flex-end;
-    padding-right: 48px;
-  }
-}
-/* w-full max-w-6xl h-[78%] mt-10 */
+/* the pool sits in the middle of the stage */
 .story-svg {
   width: 100%;
-  max-width: 1152px;
-  height: 78%;
-  margin-top: 64px;
+  max-width: 1040px;
+  /* ends above the centred caption card, so nothing on the stage sits under it */
+  height: calc(100% - 330px);
+  margin-top: 96px;
 }
 .story-svg-name {
   font: 13px var(--display);
@@ -96,7 +91,7 @@
 /* phase chip: absolute top-6 left-10 rounded-lg border bg-[#0E0E11]/90 px-3.5 py-2.5 backdrop-blur */
 .story-phase {
   position: absolute;
-  top: 24px;
+  top: 104px; /* below the fixed 92px site header */
   left: 16px;
   pointer-events: none;
   padding: 10px 14px;
@@ -121,7 +116,7 @@
 /* live HUD: absolute top-6 right-10 hidden sm:block */
 .story-hud {
   position: absolute;
-  top: 24px;
+  top: 104px; /* below the fixed 92px site header */
   right: 16px;
   display: none;
   min-width: 236px;
@@ -229,17 +224,24 @@
     right: 12px;
   }
   .story-caption {
-    left: 40px;
+    left: 50%;
     right: auto;
-    bottom: 40px;
-    max-width: 28rem;
-    padding: 24px;
+    bottom: 32px;
+    width: min(36rem, calc(100% - 80px));
+    margin-left: calc(min(36rem, calc(100% - 80px)) / -2);
+    padding: 18px 24px;
+  }
+  .story-caption h3 {
+    font-size: 22px;
+  }
+  .story-caption p {
+    font-size: 14px;
   }
 }
 @media (max-width: 639px) {
   .story-svg {
-    height: 56%;
-    margin-top: 92px;
+    height: calc(100% - 430px);
+    margin-top: 168px;
   }
   .story-section > .story-intro {
     flex-direction: column;

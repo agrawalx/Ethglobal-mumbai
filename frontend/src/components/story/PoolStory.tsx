@@ -1,36 +1,33 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef } from "react";
 import type { ReactNode } from "react";
 import { motion, useReducedMotion, useScroll, useSpring, useTransform } from "motion/react";
 import type { MotionValue } from "motion/react";
 import {
   ARI,
   BALANCE,
-  BAR,
   BURN,
   C,
-  CLAIM_HBAR,
-  CLOCK_R,
+  COORD,
   COST,
-  EPOCH,
-  EPOCH_MIN,
-  GATE,
+  EDGES,
   HOLD,
   IN_TOK,
-  LINKS,
+  MAX_CREDITS,
   MODEL,
   NODES,
   OUT_TOK,
   POD,
   POOLED_GB,
   RESERVE,
+  SPOKES,
   TOK_S,
   VB_H,
   VB_W,
   WINDOWS,
-  cellW,
-  clockPoint,
+  ariToCoord,
   creditsFor,
-  linkPath,
+  curvePath,
+  layersOf,
   requestPoint,
 } from "./stage";
 import type { StoryNode } from "./stage";
@@ -38,8 +35,10 @@ import type { StoryNode } from "./stage";
 /* ════════════════════════════════════════════════════════════════════════
    How it works: a pinned scroll story, adapted from the omniverse docs
    ScrollStory (sticky stage + crossfading captions + phase chip + HUD + rail).
-   Seven chapters follow the flow from install to payout. The three laptops are illustrative;
-   live pools can have any number of nodes (see LayerSim and /network).
+   Five chapters: a three-laptop pool → a new computer asks → the coordinator
+   routes the query → tokens pay for it → the coordinator splits them by compute.
+   The three laptops are illustrative; live pools can have any number of nodes
+   (see LayerSim and /network).
    ════════════════════════════════════════════════════════════════════════ */
 
 type Chapter = {
@@ -51,50 +50,39 @@ type Chapter = {
 
 const CHAPTERS: Chapter[] = [
   {
-    phase: "01 — INSTALL THE NODE AGENT",
-    title: "Install the node agent.",
-    body: "One command on your gaming laptop or Mac. It makes a node key and prints a link to register the node.",
-    foot: "gpupool-node init · start · stop",
+    phase: "01 — THE POOL",
+    title: "Three laptops, one pool.",
+    body: "None of these laptops can run the model alone. Parallax gives each one a slice of layers that fits its memory, and they pass work around the ring like one machine.",
+    foot: `Parallax · ${MODEL.id} · ${MODEL.layers} layers over 8 + 16 + 16 GB`,
   },
   {
-    phase: "02 — LOG IN WITH WORLD",
-    title: "Log in with World ID.",
-    body: "Open the link and prove you’re a real person. One human gets one account and 10,000 starter credits. An account starts with up to 3 nodes and can grow to 5 once its nodes prove reliable.",
-    foot: "World ID · Orb or Selfie Check · one account per nullifier",
+    phase: "02 — A NEW COMPUTER",
+    title: "A new computer asks.",
+    body: "Someone outside the pool sends a prompt. They don’t need a GPU. They need credits on their account, an API key, or an agent that pays per request with x402.",
+    foot: "OpenAI-compatible API · browser, app or agent",
   },
   {
-    phase: "03 — THE MODEL ARRIVES",
-    title: "Split one model across the pool.",
-    body: "Each laptop downloads the weights before it joins. Parallax gives each one a slice of layers that fits its memory, however many laptops there are. Here, none of them could run the model alone.",
-    foot: "Parallax · private network · weights pre-downloaded",
+    phase: "03 — THE COORDINATOR ROUTES",
+    title: "The coordinator routes it.",
+    body: "The coordinator is the gateway. It picks this pool from the Arkiv directory, hands the prompt to the first laptop, and streams the answer back as it leaves the last one.",
+    foot: "gateway · route captured per request · tok/s measured",
   },
   {
-    phase: "04 — LISTED ON ARKIV",
-    title: "The pool appears on Arkiv.",
-    body: "Each laptop signs its own listing and renews it every 30 seconds. If a laptop stops, its listing expires by itself. No cleanup needed.",
-    foot: "Arkiv · gpupool.node · gpupool.pool · 120 s expiry",
+    phase: "04 — TOKENS IN",
+    title: "Tokens pay for the work.",
+    body: "Before the run, the coordinator holds the maximum cost. After it, it settles the real cost from the tokens in and out and gives the rest back.",
+    foot: "hold → settle · (out + 0.2 × in) × model factor",
   },
   {
-    phase: "05 — A REQUEST COMES IN",
-    title: "Ask from any laptop.",
-    body: "A user outside the pool sends a prompt. The gateway picks the pool from Arkiv and streams the answer back through every laptop in the pipeline, stage by stage.",
-    foot: "OpenAI-compatible API · route captured per request",
-  },
-  {
-    phase: "06 — CREDITS SETTLE",
-    title: "Credits split by work.",
-    body: "The gateway holds the maximum cost, then settles the real cost. 90% goes to the nodes by layers served, 5% is burned and 5% goes to the reserve. The owners can spend what they earned on any other pool. The receipt goes to Hedera HCS.",
-    foot: "HCS · request_settled · HashScan",
-  },
-  {
-    phase: "07 — EPOCH PAYOUT",
-    title: "Get paid in HBAR.",
-    body: "AI agents pay per request with x402. At the end of each epoch, the providers’ share is posted to a contract, and each owner claims HBAR with a Merkle proof.",
-    foot: "x402 on Hedera · EpochPayout.sol · claim on HashScan",
+    phase: "05 — SPLIT BY COMPUTE",
+    title: "Split by compute.",
+    body: "The coordinator gives 90% of the cost to the laptops by the layers each one served. More work, bigger share. 5% is burned, 5% goes to the reserve, and the receipt goes to Hedera HCS.",
+    foot: "spec §8 · 90 / 5 / 5 · HCS request_settled",
   },
 ];
 
 const fmt = (v: number, d = 1) => v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+const pct = (n: StoryNode) => `${((layersOf(n) / MODEL.layers) * 100).toFixed(1)}%`;
 
 /* ── caption card (omniverse docs.tsx Caption) ─────────────────────────── */
 function Caption({ t, win, num, chapter }: { t: MotionValue<number>; win: [number, number, number, number]; num: string; chapter: Chapter }) {
@@ -113,35 +101,29 @@ function Caption({ t, win, num, chapter }: { t: MotionValue<number>; win: [numbe
 /* ── one laptop on the stage ───────────────────────────────────────────── */
 function Laptop({ n, i, t }: { n: StoryNode; i: number; t: MotionValue<number> }) {
   const requester = !n.layers;
-  // ch 01 (Rex) / ch 02 (Mika, Nova) / ch 05 (the requester): arrive
-  const inA = requester ? 0.52 : i === 0 ? 0.0 : 0.15 + i * 0.018;
-  const inB = requester ? 0.56 : i === 0 ? 0.04 : inA + 0.05;
+  // ch 01: the pool forms (staggered) · ch 02: the new computer arrives
+  // the pool is already on stage when the section scrolls in (no blank stage); the new computer arrives in ch 02
+  const inA = requester ? 0.2 : -0.05;
+  const inB = requester ? 0.26 : 0;
   const arrive = useTransform(t, [inA, inB], [0, 1]);
   const dx = useTransform(arrive, (a) => n.from[0] * (1 - a));
   const dy = useTransform(arrive, (a) => n.from[1] * (1 - a));
-  // ch 02: World ID badge (the requester logs in too, in ch 05)
-  const bA = requester ? 0.55 : 0.2 + i * 0.01;
-  const badge = useTransform(t, [bA, bA + 0.035], [0, 1]);
-  // ch 03: memory fills as the layers load
-  const loaded = n.layers ? (n.layers[1] - n.layers[0]) * MODEL.gbPerLayer : 0;
-  const memW = useTransform(t, [0.31 + i * 0.01, 0.37 + i * 0.01], [0, (loaded / n.memGb) * 72]);
-  const memO = useTransform(t, [0.29, 0.31], [0, 1]);
+  // ch 01: memory fills as the layers load
+  const loaded = layersOf(n) * MODEL.gbPerLayer;
+  const memW = useTransform(t, [0.0 + i * 0.01, 0.06 + i * 0.01], [0, (loaded / n.memGb) * 72]);
   const memText = useTransform(memW, (w) => `${fmt((w / 72) * n.memGb)} / ${n.memGb} GB`);
-  const layerO = useTransform(t, requester ? [0.54, 0.57] : [0.36, 0.39], [0, 1]);
-  // ch 04: health ring
-  const healthO = useTransform(t, [0.45, 0.48], [0, 1]);
-  // ch 06: credits earned for this request, by layers served
+  const layerO = useTransform(t, requester ? [0.24, 0.27] : [-0.05, 0], [0, 1]);
+  const healthO = useTransform(t, [-0.05, 0], [0, 1]);
+  // ch 05: credits earned for this request, by layers served
   const credits = creditsFor(n);
-  const earnW = useTransform(t, [0.7, 0.76], [0, (credits / creditsFor(NODES[1])) * 92]);
-  const earnText = useTransform(earnW, (w) => `+${fmt((w / 92) * creditsFor(NODES[1]))} cr`);
-  const earnO = useTransform(t, [0.69, 0.71, 0.82, 0.85], [0, 1, 1, 0.35]);
-  // ch 07: Mika's owner claims HBAR
-  const claimO = useTransform(t, [0.95, 0.98], [0, 1]);
+  const earnW = useTransform(t, [0.89 + i * 0.012, 0.94 + i * 0.012], [0, (credits / MAX_CREDITS) * 92]);
+  const earnText = useTransform(earnW, (w) => `+${fmt((w / 92) * MAX_CREDITS)} cr`);
+  const earnO = useTransform(t, [0.86, 0.88], [0, 1]);
 
   return (
     <motion.g style={{ opacity: arrive, x: dx, y: dy }}>
       <g transform={`translate(${n.x} ${n.y})`}>
-        {!requester && <motion.circle r={60} fill="none" stroke={C.ok} strokeWidth={1} className="story-pulse" style={{ opacity: healthO }} />}
+        {!requester && <motion.circle r={60} fill="none" stroke={n.color} strokeWidth={1} className="story-pulse" style={{ opacity: healthO }} />}
         {/* screen + base */}
         <rect x={-48} y={-36} width={96} height={60} rx={7} fill="#070b14" stroke={n.color} strokeWidth={1.4} strokeDasharray={requester ? "4 3" : undefined} />
         <path d="M-58 28h116l-8 8h-100z" fill="#0b111d" stroke={n.color} strokeWidth={1.2} strokeLinejoin="round" />
@@ -150,28 +132,21 @@ function Laptop({ n, i, t }: { n: StoryNode; i: number; t: MotionValue<number> }
         </text>
         {/* memory bar (pool nodes) */}
         {!requester && (
-          <motion.g style={{ opacity: memO }}>
+          <g>
             <rect x={-36} y={-6} width={72} height={6} rx={3} fill="rgba(255,255,255,0.07)" />
             <motion.rect x={-36} y={-6} height={6} rx={3} width={memW} fill={n.color} />
             <motion.text y={12} textAnchor="middle" className="story-svg-micro" fill={C.mut}>
               {memText}
             </motion.text>
-          </motion.g>
+          </g>
         )}
         {requester && (
           <text y={6} textAnchor="middle" className="story-svg-micro" fill={C.mut}>
             browser · agent
           </text>
         )}
-        {/* World ID badge */}
-        <g transform="translate(44 -34)">
-          <motion.g style={{ opacity: badge, scale: badge }}>
-            <circle r={9} fill={C.bg} stroke={C.ok} strokeWidth={1.3} />
-            <path d="M-4 0l2.6 2.6L4-3" fill="none" stroke={C.ok} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
-          </motion.g>
-        </g>
         {/* labels under the laptop */}
-        <motion.text y={54} textAnchor="middle" className="story-svg-label" fill={C.mut} style={requester ? { opacity: layerO } : undefined}>
+        <motion.text y={54} textAnchor="middle" className="story-svg-label" fill={C.mut} style={{ opacity: layerO }}>
           {n.gpu}
         </motion.text>
         {!requester && (
@@ -188,84 +163,120 @@ function Laptop({ n, i, t }: { n: StoryNode; i: number; t: MotionValue<number> }
             </motion.text>
           </motion.g>
         )}
-        {n.key === "mika" && (
-          <motion.g style={{ opacity: claimO }} transform="translate(0 -62)">
-            <rect x={-104} y={-12} width={208} height={22} rx={11} fill={C.bg} stroke={C.ok} />
-            <text y={3} textAnchor="middle" className="story-svg-micro" fill={C.ok}>
-              +{CLAIM_HBAR} HBAR claimed · HashScan
-            </text>
-          </motion.g>
-        )}
       </g>
     </motion.g>
   );
 }
 
-/* ── a request packet on its round trip (ch 05–06) ─────────────────────── */
-function Packet({ t, k }: { t: MotionValue<number>; k: number }) {
-  const u = useTransform(t, (v) => {
-    const p = Math.max(0, (v - 0.555) / 0.245) * 2.4 + k / 3;
-    return p - Math.floor(p);
-  });
-  const cx = useTransform(u, (x) => requestPoint(x)[0]);
-  const cy = useTransform(u, (x) => requestPoint(x)[1]);
-  const o = useTransform(t, [0.555, 0.575, 0.77, 0.8], [0, 1, 1, 0]);
-  return <motion.circle r={4.5} cx={cx} cy={cy} fill={C.accentLt} style={{ opacity: o, filter: "drop-shadow(0 0 6px #278cff)" }} />;
-}
-
-/* ── one model-layer segment that flies from the bar to its laptop (ch 03) ─ */
-function Segment({ n, t }: { n: StoryNode; t: MotionValue<number> }) {
-  const [a, b] = n.layers!;
-  const x0 = BAR.x + a * cellW;
-  const w = (b - a) * cellW;
-  const fly = useTransform(t, [0.315, 0.365], [0, 1]);
-  const tx = useTransform(fly, (f) => (n.x - (x0 + w / 2)) * f);
-  const ty = useTransform(fly, (f) => (n.y - 52 - BAR.y) * f);
-  const sc = useTransform(fly, [0, 1], [1, 0.55]);
-  const o = useTransform(t, [0.305, 0.32, 0.36, 0.38], [0, 1, 1, 0]);
+/* ── the pool talking: packets run along the triangle on a clock, not on scroll (ch 01–02, 04–05) ── */
+function Chatter({ t }: { t: MotionValue<number> }) {
+  const o = useTransform(t, [-0.05, 0, 0.4, 0.43, 0.6, 0.64], [0, 0.85, 0.85, 0, 0, 0.45]);
   return (
-    <motion.g style={{ x: tx, y: ty, opacity: o }}>
-      <motion.rect x={x0} y={BAR.y} width={w} height={BAR.h} rx={3} fill={n.color} style={{ scale: sc }} />
+    <motion.g style={{ opacity: o }}>
+      {EDGES.map((e, k) =>
+        [0, 1].map((dir) => (
+          <circle key={`${k}-${dir}`} r={3} fill={C.white} fillOpacity={0.8}>
+            <animateMotion
+              dur={`${2.2 + k * 0.35}s`}
+              begin={`${dir * 1.1 + k * 0.4}s`}
+              repeatCount="indefinite"
+              path={curvePath(e)}
+              keyPoints={dir ? "1;0" : "0;1"}
+              keyTimes="0;1"
+              calcMode="linear"
+            />
+          </circle>
+        )),
+      )}
     </motion.g>
   );
 }
 
-/* ── a coin flying between two points (ch 07) ──────────────────────────── */
-function Coin({ t, from, to, win, label }: { t: MotionValue<number>; from: [number, number]; to: [number, number]; win: [number, number]; label: string }) {
+/* ── a request packet on its round trip (ch 03) ───────────────────────── */
+function Packet({ t, k }: { t: MotionValue<number>; k: number }) {
+  const u = useTransform(t, (v) => {
+    const p = Math.max(0, (v - 0.43) / 0.14) * 2 + k / 3;
+    return p - Math.floor(p);
+  });
+  const cx = useTransform(u, (x) => requestPoint(x)[0]);
+  const cy = useTransform(u, (x) => requestPoint(x)[1]);
+  const o = useTransform(t, [0.43, 0.45, 0.55, 0.58], [0, 1, 1, 0]);
+  return <motion.circle r={4.5} cx={cx} cy={cy} fill={C.white} style={{ opacity: o, filter: "drop-shadow(0 0 5px rgba(255,255,255,0.5))" }} />;
+}
+
+/* ── a coin flying between two points (ch 04–05) ───────────────────────── */
+function Coin({
+  t,
+  from,
+  to,
+  win,
+  label,
+  r = 9,
+  color = C.warn,
+  arc = 40,
+}: {
+  t: MotionValue<number>;
+  from: [number, number];
+  to: [number, number];
+  win: [number, number];
+  label: string;
+  r?: number;
+  color?: string;
+  arc?: number;
+}) {
   const f = useTransform(t, win, [0, 1]);
   const cx = useTransform(f, (v) => from[0] + (to[0] - from[0]) * v);
-  const cy = useTransform(f, (v) => from[1] + (to[1] - from[1]) * v - Math.sin(v * Math.PI) * 40);
+  const cy = useTransform(f, (v) => from[1] + (to[1] - from[1]) * v - Math.sin(v * Math.PI) * arc);
   const ty = useTransform(cy, (y) => y + 3.5);
-  const o = useTransform(t, [win[0] - 0.01, win[0], win[1], win[1] + 0.015], [0, 1, 1, 0]);
+  const o = useTransform(t, [win[0] - 0.01, win[0], win[1], win[1] + 0.012], [0, 1, 1, 0]);
   return (
     <motion.g style={{ opacity: o }}>
-      <motion.circle r={9} cx={cx} cy={cy} fill="#0b111d" stroke={C.warn} strokeWidth={1.4} />
-      <motion.text x={cx} y={ty} textAnchor="middle" className="story-svg-badge" fill={C.warn}>
+      <motion.circle r={r} cx={cx} cy={cy} fill="#0b111d" stroke={color} strokeWidth={1.4} />
+      <motion.text x={cx} y={ty} textAnchor="middle" className="story-svg-badge" fill={color}>
         {label}
       </motion.text>
     </motion.g>
   );
 }
 
+/* ── speech bubble above the new computer (ch 02–03) ───────────────────── */
+function Bubble({ t, win, text, typeWin, color }: { t: MotionValue<number>; win: [number, number, number, number]; text: string; typeWin?: [number, number]; color: string }) {
+  const o = useTransform(t, win, [0, 1, 1, 0]);
+  const typed = useTransform(t, typeWin ?? [win[0], win[1]], [typeWin ? 0 : text.length, text.length]);
+  const shown = useTransform(typed, (v) => text.slice(0, Math.round(v)));
+  const w = text.length * 7.3 + 28;
+  return (
+    <motion.g style={{ opacity: o }}>
+      <rect x={ARI.x - w / 2} y={ARI.y - 104} width={w} height={32} rx={9} fill="#070a12" stroke={color} />
+      <path d={`M${ARI.x - 7} ${ARI.y - 72.5}l7 9 7-9`} fill="#070a12" stroke={color} strokeLinejoin="round" />
+      <motion.text x={ARI.x - w / 2 + 14} y={ARI.y - 84} className="story-svg-code" fill={C.text}>
+        {shown}
+      </motion.text>
+    </motion.g>
+  );
+}
+
 function Hud({ t }: { t: MotionValue<number> }) {
-  const o = useTransform(t, [0.2, 0.24], [0, 1]);
-  const humans = useTransform(t, (v): string => (v < 0.555 ? "3 verified" : "4 verified"));
-  const mem = useTransform(t, [0.27, 0.33], [0, POOLED_GB]);
+  const o = useTransform(t, [-0.05, 0], [0, 1]);
+  const mem = useTransform(t, [0, 0.07], [0, POOLED_GB]);
   const memText = useTransform(mem, (v) => (v < 0.5 ? "—" : `${Math.round(v)} GB`));
-  const layers = useTransform(t, [0.34, 0.38], [0, MODEL.layers]);
+  const layers = useTransform(t, [0, 0.07], [0, MODEL.layers]);
   const layersText = useTransform(layers, (v) => (v < 0.5 ? "—" : `${Math.round(v)} / ${MODEL.layers} placed`));
-  const status = useTransform(t, (v): string => (v < 0.28 ? "forming" : v < 0.37 ? "loading" : v < 0.46 ? "joining" : "● ready"));
-  const statusColor = useTransform(t, (v): string => (v < 0.46 ? C.warn : C.ok));
-  const toks = useTransform(t, [0.58, 0.62], [0, TOK_S]);
+  const coord = useTransform(t, (v): string =>
+    v < 0.4 ? "idle" : v < 0.6 ? "routing" : v < 0.72 ? "holding" : v < 0.84 ? "settled" : v < 0.95 ? "splitting" : "● paid",
+  );
+  const coordColor = useTransform(t, (v): string => (v < 0.4 ? C.mut : v < 0.95 ? C.warn : C.ok));
+  const toks = useTransform(t, [0.45, 0.5], [0, TOK_S]);
   const toksText = useTransform(toks, (v) => (v < 0.05 ? "—" : `${v.toFixed(1)} tok/s`));
-  const bal = useTransform(t, [0.71, 0.75], [BALANCE, BALANCE - COST]);
-  const balText = useTransform(bal, (v) => `${fmt(v)} cr`);
-  const payout = useTransform(t, (v): string => (v < 0.8 ? "—" : v < 0.9 ? `epoch ${EPOCH} · open` : v < 0.95 ? `epoch ${EPOCH} · posted` : `claimed ${CLAIM_HBAR} HBAR`));
+  const bal = useTransform(t, [0.62, 0.66, 0.73, 0.77], [BALANCE, BALANCE - HOLD, BALANCE - HOLD, BALANCE - COST]);
+  const balText = useTransform([t, bal], ([v, b]: number[]) => (v < 0.22 ? "—" : `${fmt(b)} cr`));
+  const earned = useTransform(t, [0.89, 0.964], [0, COST * 0.9]);
+  const earnedText = useTransform(earned, (v) => (v < 0.05 ? "—" : `${fmt(v)} cr`));
   return (
     <motion.div style={{ opacity: o }} className="story-hud">
       <div>
-        <span>humans</span>
-        <motion.span>{humans}</motion.span>
+        <span>nodes</span>
+        <span>3 online</span>
       </div>
       <div>
         <span>pooled mem</span>
@@ -276,258 +287,204 @@ function Hud({ t }: { t: MotionValue<number> }) {
         <motion.span>{layersText}</motion.span>
       </div>
       <div>
-        <span>pool</span>
-        <motion.span style={{ color: statusColor }}>{status}</motion.span>
+        <span>coordinator</span>
+        <motion.span style={{ color: coordColor }}>{coord}</motion.span>
       </div>
       <div className="story-hud-split">
         <span>throughput</span>
         <motion.span>{toksText}</motion.span>
       </div>
       <div>
-        <span>balance</span>
+        <span>Ari balance</span>
         <motion.span>{balText}</motion.span>
       </div>
       <div>
-        <span>payout</span>
-        <motion.span className="story-hud-ok">{payout}</motion.span>
+        <span>nodes earned</span>
+        <motion.span className="story-hud-ok">{earnedText}</motion.span>
       </div>
     </motion.div>
   );
 }
 
-/** On phones, crop the empty left side of the stage so the pool fills the width. */
-function useNarrow() {
-  const [narrow, setNarrow] = useState(() => matchMedia("(max-width: 639px)").matches);
-  useEffect(() => {
-    const mq = matchMedia("(max-width: 639px)");
-    const change = () => setNarrow(mq.matches);
-    mq.addEventListener("change", change);
-    return () => mq.removeEventListener("change", change);
-  }, []);
-  return narrow;
-}
-
-/** A chip in the middle of the pool: the World ID check (ch 02), then the gateway (ch 05–07). */
-function CenterChip({ t, win, label, sub, stroke, w = 120 }: { t: MotionValue<number>; win: [number, number, number, number]; label: string; sub?: string; stroke: string; w?: number }) {
-  const o = useTransform(t, win, [0, 1, 1, 0]);
-  const s = useTransform(t, [win[0], win[1]], [0.6, 1]);
+/** The coordinator chip in the middle of the pool (ch 03–05). */
+function Coordinator({ t }: { t: MotionValue<number> }) {
+  const o = useTransform(t, [0.4, 0.43], [0, 1]);
+  const s = useTransform(t, [0.4, 0.43], [0.6, 1]);
+  const ring = useTransform(t, [0.42, 0.45, 0.56, 0.6, 0.83, 0.86, 0.94, 0.97], [0, 1, 1, 0.25, 0.25, 1, 1, 0.25]);
+  // the pot it holds: hold → settle → paid out to the nodes
+  const pot = useTransform(t, [0.62, 0.66, 0.72, 0.74, 0.86, 0.95], [0, HOLD, HOLD, COST, COST, 0]);
+  const potText = useTransform(pot, (v) => `holding ${fmt(v)} cr`);
+  const potO = useTransform(t, [0.62, 0.64, 0.95, 0.97], [0, 1, 1, 0]);
+  const w = 164;
   return (
     <motion.g style={{ opacity: o, scale: s }}>
-      <rect x={GATE[0] - w / 2} y={GATE[1] - 16} width={w} height={sub ? 44 : 32} rx={16} fill={C.bg} stroke={stroke} />
-      <text x={GATE[0]} y={GATE[1] + 4.5} textAnchor="middle" className="story-svg-code" fill={C.accentLt}>
-        {label}
+      <motion.circle cx={COORD[0]} cy={COORD[1]} r={56} fill="none" stroke="rgba(242,243,247,0.5)" strokeWidth={1} className="story-pulse" style={{ opacity: ring }} />
+      <rect x={COORD[0] - w / 2} y={COORD[1] - 22} width={w} height={44} rx={22} fill={C.bg} stroke={C.white} />
+      <text x={COORD[0]} y={COORD[1] - 2} textAnchor="middle" className="story-svg-code" fill={C.text}>
+        COORDINATOR
       </text>
-      {sub && (
-        <text x={GATE[0]} y={GATE[1] + 20} textAnchor="middle" className="story-svg-micro" fill={C.mut}>
-          {sub}
-        </text>
-      )}
+      <text x={COORD[0]} y={COORD[1] + 13} textAnchor="middle" className="story-svg-micro" fill={C.mut}>
+        gateway · Hedy
+      </text>
+      <motion.text x={COORD[0]} y={COORD[1] + 40} textAnchor="middle" className="story-svg-micro" fill={C.warn} style={{ opacity: potO }}>
+        {potText}
+      </motion.text>
     </motion.g>
   );
 }
 
-/** Top band text card (route ch 05, cost ch 06, receipt ch 06). */
+/** Top band text card (route ch 03, cost ch 04, receipt ch 05). */
 function TopCard({ t, win, children }: { t: MotionValue<number>; win: [number, number, number, number]; children: ReactNode }) {
   const o = useTransform(t, win, [0, 1, 1, 0]);
   const y = useTransform(t, [win[0], win[1]], [-10, 0]);
   return (
     <motion.g style={{ opacity: o, y }}>
-      <rect x={290} y={14} width={500} height={56} rx={8} fill="#070a12" stroke={C.line} />
+      <rect x={250} y={8} width={500} height={56} rx={8} fill="#070a12" stroke={C.line} />
       {children}
     </motion.g>
   );
 }
 
-function Stage({ t }: { t: MotionValue<number> }) {
-  const narrow = useNarrow();
-  /* ch 01: the terminal types under Rex */
-  const cmd = "$ gpupool-node init";
-  const typed = useTransform(t, [0.005, 0.05], [0, cmd.length]);
-  const typedText = useTransform(typed, (v) => cmd.slice(0, Math.round(v)));
-  const line2O = useTransform(t, [0.06, 0.08], [0, 1]);
-  const termO = useTransform(t, [0.02, 0.04, 0.13, 0.16], [0, 1, 1, 0]);
-
-  /* ch 02: the pool ring */
-  const ringP = useTransform(t, [0.15, 0.23], [0, 1]);
-  const ringO = useTransform(t, [0.15, 0.17, 0.95, 1], [0, 0.9, 0.9, 0.5]);
-
-  /* ch 03: model bar */
-  const barO = useTransform(t, [0.27, 0.29, 0.36, 0.4], [0, 1, 1, 0]);
-  const dl = useTransform(t, [0.28, 0.31], [0, BAR.w]);
-  const dlText = useTransform(dl, (w) => `${MODEL.id} · ${MODEL.layers} layers · ${Math.round((w / BAR.w) * 100)}%`);
-
-  /* ch 04: links + Arkiv listing card with its expiry ring */
-  const linkP = useTransform(t, [0.41, 0.46], [0, 1]);
-  const linkColor = useTransform(t, [0.43, 0.47], [C.faint, C.ok]);
-  const cardO = useTransform(t, [0.44, 0.48, 0.62, 0.66], [0, 1, 1, 0]);
-  const cardX = useTransform(t, [0.44, 0.49], [120, 0]);
-  // drains for 30 s of its 120 s life, then the renewal refills it (four renewals across the chapter)
-  const expiry = useTransform(t, (v) => {
-    const p = Math.max(0, (v - 0.46) / 0.06) * 4;
-    return 1 - (p - Math.floor(p)) * 0.25;
-  });
-
-  /* ch 06: cost hold → settle */
-  const costV = useTransform(t, [0.69, 0.71, 0.73], [0, HOLD, COST]);
-  const costText = useTransform(costV, (v) => (v < 1 ? "—" : `${fmt(v)} cr`));
-  const costLabel = useTransform(t, (v): string => (v < 0.71 ? "hold (max_tokens 2048)" : "settled (256 out + 0.2 × 412 in) × 1.75"));
-  const bpO = useTransform(t, [0.72, 0.745, 0.8, 0.83], [0, 1, 1, 0]);
-
-  /* ch 07: the 10-minute epoch timer around the pool */
-  const clockO = useTransform(t, [0.8, 0.82, 0.97, 1], [0, 1, 1, 0.6]);
-  const arcP = useTransform(t, [0.82, 0.9], [0, 1]);
-  const handM = useTransform(t, [0.82, 0.9], [0, EPOCH_MIN]);
-  const handX = useTransform(handM, (m) => clockPoint(m, CLOCK_R - 18)[0]);
-  const handY = useTransform(handM, (m) => clockPoint(m, CLOCK_R - 18)[1]);
-
-  const [, mika] = NODES;
+/** A burn / reserve pill that peels off the coordinator (ch 05). */
+function Peel({ t, x, label, color, delay }: { t: MotionValue<number>; x: number; label: string; color: string; delay: number }) {
+  const f = useTransform(t, [0.9 + delay, 0.935 + delay], [0, 1]);
+  const o = useTransform(t, [0.9 + delay, 0.91 + delay], [0, 1]);
+  const px = useTransform(f, (v) => (x - COORD[0]) * v);
+  const py = useTransform(f, (v) => 178 * v);
   return (
-    <svg viewBox={narrow ? `284 0 ${VB_W - 284} ${VB_H}` : `0 0 ${VB_W} ${VB_H}`} preserveAspectRatio="xMidYMid meet" className="story-svg" aria-hidden="true">
+    <motion.g style={{ opacity: o, x: px, y: py }}>
+      <rect x={COORD[0] - 44} y={COORD[1] - 10} width={88} height={20} rx={10} fill={C.bg} stroke={color} />
+      <text x={COORD[0]} y={COORD[1] + 3.5} textAnchor="middle" className="story-svg-micro" fill={color}>
+        {label}
+      </text>
+    </motion.g>
+  );
+}
+
+function Stage({ t }: { t: MotionValue<number> }) {
+  /* ch 01: the pool ring + the triangle */
+  const ringP = useTransform(t, [-0.05, 0], [0, 1]);
+  const ringO = useTransform(t, [-0.05, 0], [0, 0.9]);
+  const edgeP = useTransform(t, [-0.05, 0], [0, 1]);
+  const edgeColor = useTransform(t, [0.41, 0.44, 0.56, 0.6], [C.edge, C.white, C.white, C.edge]);
+
+  /* ch 03 + ch 05: coordinator spokes */
+  const spokeP = useTransform(t, [0.42, 0.46], [0, 1]);
+  const spokeO = useTransform(t, [0.42, 0.44, 0.58, 0.62, 0.83, 0.86], [0, 0.9, 0.9, 0.3, 0.3, 1]);
+  const shareO = useTransform(t, [0.84, 0.87], [0, 1]);
+  const ariLinkO = useTransform(t, [0.42, 0.44, 0.78, 0.82], [0, 0.8, 0.8, 0]);
+
+  return (
+    <svg viewBox={`0 0 ${VB_W} ${VB_H}`} preserveAspectRatio="xMidYMid meet" className="story-svg" aria-hidden="true">
       <defs>
         <radialGradient id="story-glow" cx="50%" cy="50%" r="50%">
-          <stop offset="0" stopColor="#0d2a55" stopOpacity="0.5" />
-          <stop offset="1" stopColor="#0d2a55" stopOpacity="0" />
+          <stop offset="0" stopColor="#ffffff" stopOpacity="0.04" />
+          <stop offset="1" stopColor="#ffffff" stopOpacity="0" />
         </radialGradient>
       </defs>
-      <circle cx={POD.x} cy={POD.y} r={260} fill="url(#story-glow)" />
+      <circle cx={POD.x} cy={POD.y} r={290} fill="url(#story-glow)" />
 
-      {/* epoch dial (ch 07) */}
-      <motion.g style={{ opacity: clockO }}>
-        <circle cx={POD.x} cy={POD.y} r={CLOCK_R} fill="none" stroke={C.line} strokeWidth={1} strokeDasharray="2 6" />
-        {Array.from({ length: EPOCH_MIN }, (_, m) => {
-          const [x1, y1] = clockPoint(m, CLOCK_R - 4);
-          const [x2, y2] = clockPoint(m, CLOCK_R + (m % 5 === 0 ? 8 : 4));
-          return <line key={m} x1={x1} y1={y1} x2={x2} y2={y2} stroke={C.faint} strokeWidth={1} />;
-        })}
-        <motion.circle
-          cx={POD.x}
-          cy={POD.y}
-          r={CLOCK_R}
-          fill="none"
-          stroke={C.accent}
-          strokeWidth={5}
-          strokeLinecap="round"
-          style={{ pathLength: arcP, rotate: -90 }}
-        />
-        <text x={POD.x} y={POD.y - CLOCK_R - 18} textAnchor="middle" className="story-svg-micro" fill={C.accentLt}>
-          epoch {EPOCH} · 0 min
-        </text>
-        <motion.line x1={POD.x} y1={POD.y} x2={handX} y2={handY} stroke={C.accentLt} strokeWidth={1.4} strokeLinecap="round" />
-      </motion.g>
+      {/* pool ring (ch 01) */}
+      <motion.circle cx={POD.x} cy={POD.y} r={POD.r} fill="none" stroke="rgba(242,243,247,0.35)" strokeWidth={1} strokeDasharray="3 7" style={{ pathLength: ringP, opacity: ringO, rotate: -90 }} />
 
-      {/* pool ring (ch 02) */}
-      <motion.circle cx={POD.x} cy={POD.y} r={POD.r} fill="none" stroke={C.accent} strokeWidth={1} strokeDasharray="3 7" style={{ pathLength: ringP, opacity: ringO, rotate: -90 }} />
-
-      {/* pipeline links (ch 04) */}
-      {LINKS.map((l, i) => (
-        <motion.path key={i} d={linkPath(l)} fill="none" stroke={linkColor} strokeWidth={2} strokeLinecap="round" style={{ pathLength: linkP }} />
+      {/* triangle: the laptops talking (ch 01), lit while the query runs (ch 03) */}
+      {EDGES.map((e, i) => (
+        <motion.path key={i} d={curvePath(e)} fill="none" stroke={edgeColor} strokeWidth={2} strokeLinecap="round" style={{ pathLength: edgeP }} />
       ))}
+      <Chatter t={t} />
 
-      {/* model bar (ch 03) */}
-      <motion.g style={{ opacity: barO }}>
-        <rect x={BAR.x} y={BAR.y} width={BAR.w} height={BAR.h} rx={3} fill="rgba(255,255,255,0.05)" stroke={C.line} />
-        <motion.rect x={BAR.x} y={BAR.y} height={BAR.h} rx={3} width={dl} fill="rgba(39,140,255,0.35)" />
-        {Array.from({ length: MODEL.layers - 1 }, (_, i) => (
-          <line key={i} x1={BAR.x + (i + 1) * cellW} x2={BAR.x + (i + 1) * cellW} y1={BAR.y + 3} y2={BAR.y + BAR.h - 3} stroke="rgba(255,255,255,0.12)" />
-        ))}
-        <motion.text x={BAR.x + BAR.w / 2} y={BAR.y - 10} textAnchor="middle" className="story-svg-label" fill={C.mut}>
-          {dlText}
-        </motion.text>
-      </motion.g>
-      {NODES.map((n) => (
-        <Segment key={n.key} n={n} t={t} />
+      {/* coordinator spokes + compute shares (ch 03, ch 05) */}
+      {SPOKES.map((s, i) => (
+        <motion.line key={i} x1={s.a[0]} y1={s.a[1]} x2={s.b[0]} y2={s.b[1]} stroke={NODES[i].color} strokeWidth={1.2} strokeDasharray="3 5" style={{ pathLength: spokeP, opacity: spokeO }} />
       ))}
+      {/* each laptop's measured share of the work, beside it (left laptop: left side) */}
+      {NODES.map((n) => {
+        const cx = n.x < COORD[0] ? n.x - 124 : n.x + 124;
+        return (
+          <motion.g key={n.key} style={{ opacity: shareO }}>
+            <rect x={cx - 58} y={n.y - 11} width={116} height={22} rx={11} fill={C.bg} stroke={n.color} />
+            <text x={cx} y={n.y + 3.5} textAnchor="middle" className="story-svg-micro" fill={n.color}>
+              {layersOf(n)} layers · {pct(n)}
+            </text>
+          </motion.g>
+        );
+      })}
 
-      {/* laptops: the pool, then the requester */}
+      {/* the link from the new computer to the coordinator (ch 03–04) */}
+      <motion.line
+        x1={ariToCoord(0)[0]}
+        y1={ariToCoord(0)[1]}
+        x2={ariToCoord(1)[0]}
+        y2={ariToCoord(1)[1]}
+        stroke={ARI.color}
+        strokeWidth={1.2}
+        strokeDasharray="3 5"
+        style={{ opacity: ariLinkO }}
+      />
+
+      {/* laptops: the pool, then the new computer */}
       {NODES.map((n, i) => (
         <Laptop key={n.key} n={n} i={i} t={t} />
       ))}
       <Laptop n={ARI} i={3} t={t} />
 
-      {/* centre chips: World ID check (ch 02), the gateway (ch 05–07), the epoch post (ch 07) */}
-      <CenterChip t={t} win={[0.13, 0.16, 0.25, 0.28]} label="WORLD ID ✓" sub="1 human · 1 account" stroke={C.ok} w={150} />
-      <CenterChip t={t} win={[0.53, 0.56, 0.895, 0.91]} label="HEDY · gateway" stroke={C.accent} />
-      <CenterChip t={t} win={[0.9, 0.915, 0.99, 1.05]} label={`postEpoch(${EPOCH}, root)`} sub="EpochPayout.sol" stroke={C.warn} w={170} />
+      <Coordinator t={t} />
 
-      {/* burn / reserve (ch 06) */}
-      <motion.g style={{ opacity: bpO }}>
-        <text x={GATE[0]} y={GATE[1] + 40} textAnchor="middle" className="story-svg-micro" fill={C.mut}>
-          burn {fmt(BURN)} · reserve {fmt(RESERVE)}
-        </text>
-      </motion.g>
+      {/* the prompt and the answer (ch 02–03) */}
+      <Bubble t={t} win={[0.26, 0.27, 0.48, 0.51]} typeWin={[0.27, 0.34]} text="> explain x402 in one line" color={ARI.color} />
+      <Bubble t={t} win={[0.52, 0.55, 0.62, 0.65]} text="pay per HTTP request ✓" color={C.white} />
 
-      {/* terminal (ch 01) */}
-      <motion.g style={{ opacity: termO }}>
-        <rect x={NODES[0].x - 100} y={NODES[0].y + 86} width={276} height={46} rx={6} fill="#02030a" stroke={C.line} />
-        <motion.text x={NODES[0].x - 88} y={NODES[0].y + 105} className="story-svg-code" fill={C.accentLt}>
-          {typedText}
-        </motion.text>
-        <motion.text x={NODES[0].x - 88} y={NODES[0].y + 122} className="story-svg-micro" fill={C.mut} style={{ opacity: line2O }}>
-          key saved · open the link to register
-        </motion.text>
-      </motion.g>
-
-      {/* packets: requester → gateway → Rex → Mika → Nova → back (ch 05–06) */}
+      {/* query packets: Ari → coordinator → Rex → Mika → Nova → coordinator → Ari (ch 03) */}
       {[0, 1, 2].map((k) => (
         <Packet key={k} k={k} t={t} />
       ))}
 
-      {/* x402 payment from an agent into the treasury, then Mika's HBAR claim (ch 07) */}
-      <Coin t={t} from={[ARI.x + 40, ARI.y - 30]} to={[GATE[0] + 20, GATE[1] + 10]} win={[0.83, 0.87]} label="x402" />
-      <Coin t={t} from={[GATE[0], GATE[1] - 18]} to={[mika.x, mika.y - 44]} win={[0.92, 0.955]} label="ℏ" />
+      {/* tokens in: Ari pays the hold, then gets the change back (ch 04) */}
+      {[0, 1, 2].map((k) => (
+        <Coin key={k} t={t} from={ariToCoord(0)} to={ariToCoord(1)} win={[0.62 + k * 0.018, 0.66 + k * 0.018]} label="cr" />
+      ))}
+      <Coin t={t} from={ariToCoord(1)} to={ariToCoord(0)} win={[0.73, 0.77]} label="↩" color={C.ok} arc={-30} />
 
-      {/* Arkiv listing card (ch 04) */}
-      <motion.g style={{ opacity: cardO, x: cardX }}>
-        <rect x={736} y={430} width={252} height={92} rx={10} fill="#070a12" stroke={C.line} />
-        <rect x={750} y={443} width={48} height={16} rx={8} fill="rgba(180,160,237,0.12)" stroke="rgba(180,160,237,0.4)" />
-        <text x={774} y={454.5} textAnchor="middle" className="story-svg-badge" fill="#c9b8ff">
-          ARKIV
-        </text>
-        <text x={808} y={455} className="story-svg-micro" fill={C.ok}>
-          ● ready
-        </text>
-        <g transform="translate(962 452)">
-          <circle r={10} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={3} />
-          <motion.circle r={10} fill="none" stroke={C.ok} strokeWidth={3} style={{ pathLength: expiry, rotate: -90 }} />
-        </g>
-        <text x={750} y={482} className="story-svg-name" fill={C.text}>
-          gpupool.pool · pool-1
-        </text>
-        <text x={750} y={503} className="story-svg-micro" fill={C.mut}>
-          {NODES.length} nodes in this example · renews every 30 s
-        </text>
-      </motion.g>
+      {/* the split: one coin per laptop, sized by its share of the work (ch 05) */}
+      {NODES.map((n, i) => (
+        <Coin
+          key={n.key}
+          t={t}
+          from={SPOKES[i].a}
+          to={SPOKES[i].b}
+          win={[0.87 + i * 0.012, 0.91 + i * 0.012]}
+          label="cr"
+          r={7 + 6 * Math.sqrt(creditsFor(n) / MAX_CREDITS)}
+          color={n.color}
+          arc={24}
+        />
+      ))}
+      <Peel t={t} x={COORD[0] - 50} label={`burn ${fmt(BURN)}`} color={C.bad} delay={0} />
+      <Peel t={t} x={COORD[0] + 50} label={`reserve ${fmt(RESERVE)}`} color={C.mut} delay={0.008} />
 
-      {/* route (ch 05) */}
-      <TopCard t={t} win={[0.565, 0.59, 0.64, 0.665]}>
-        <text x={306} y={36} className="story-svg-code" fill={C.mut}>
-          <tspan fill={C.ok}>route</tspan> Ari → Hedy → pool-1 · {TOK_S} tok/s
+      {/* route (ch 03) */}
+      <TopCard t={t} win={[0.44, 0.47, 0.55, 0.58]}>
+        <text x={266} y={30} className="story-svg-code" fill={C.mut}>
+          <tspan fill={C.ok}>route</tspan> Ari → coordinator → pool-1 · {TOK_S} tok/s
         </text>
-        <text x={306} y={56} className="story-svg-code" fill={C.mut}>
+        <text x={266} y={50} className="story-svg-code" fill={C.mut}>
           {NODES.map((n, i) => (
             <tspan key={n.key} fill={n.color}>
-              {n.gpu.split(" ·")[0]} [{n.layers![0]}–{n.layers![1]}){i < NODES.length - 1 ? " → " : ""}
+              {n.name} [{n.layers![0]}–{n.layers![1]}){i < NODES.length - 1 ? " → " : ""}
             </tspan>
           ))}
         </text>
       </TopCard>
 
-      {/* cost (ch 06, first half) */}
-      <TopCard t={t} win={[0.675, 0.69, 0.735, 0.75]}>
-        <motion.text x={306} y={36} className="story-svg-code" fill={C.mut}>
-          {costLabel}
-        </motion.text>
-        <motion.text x={306} y={57} className="story-svg-name" fill={C.text}>
-          {costText}
-        </motion.text>
-      </TopCard>
+      {/* cost: hold → settle (ch 04) */}
+      <CostCard t={t} />
 
-      {/* receipt (ch 06, second half) */}
-      <TopCard t={t} win={[0.75, 0.765, 0.81, 0.83]}>
-        <text x={306} y={36} className="story-svg-code" fill={C.mut}>
-          <tspan fill={C.ok}>receipt</tspan> 7f3a…c2 · {IN_TOK} in / {OUT_TOK} out · {fmt(COST)} cr · HCS #1877
+      {/* receipt (ch 05) */}
+      <TopCard t={t} win={[0.93, 0.95, 1.0, 1.1]}>
+        <text x={266} y={30} className="story-svg-code" fill={C.mut}>
+          <tspan fill={C.ok}>receipt</tspan> 7f3a…c2 · {IN_TOK} in / {OUT_TOK} out · {fmt(COST)} cr · HCS
         </text>
-        <text x={306} y={56} className="story-svg-code" fill={C.mut}>
+        <text x={266} y={50} className="story-svg-code" fill={C.mut}>
           {NODES.map((n, i) => (
             <tspan key={n.key} fill={n.color}>
               {n.name} {fmt(creditsFor(n))}
@@ -538,6 +495,22 @@ function Stage({ t }: { t: MotionValue<number> }) {
         </text>
       </TopCard>
     </svg>
+  );
+}
+
+function CostCard({ t }: { t: MotionValue<number> }) {
+  const costV = useTransform(t, [0.62, 0.66, 0.72, 0.74], [0, HOLD, HOLD, COST]);
+  const costText = useTransform(costV, (v) => (v < 1 ? "—" : `${fmt(v)} cr`));
+  const costLabel = useTransform(t, (v): string => (v < 0.73 ? "hold · max_tokens 2048" : `settled · (${OUT_TOK} out + 0.2 × ${IN_TOK} in) × 1.75`));
+  return (
+    <TopCard t={t} win={[0.61, 0.63, 0.77, 0.8]}>
+      <motion.text x={266} y={30} className="story-svg-code" fill={C.mut}>
+        {costLabel}
+      </motion.text>
+      <motion.text x={266} y={51} className="story-svg-name" fill={C.text}>
+        {costText}
+      </motion.text>
+    </TopCard>
   );
 }
 

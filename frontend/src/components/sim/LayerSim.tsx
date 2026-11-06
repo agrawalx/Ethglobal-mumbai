@@ -9,7 +9,6 @@ import config from "../../../../shared/config/gpupool.config.json";
 import { costMc, splitMc } from "../../lib/credits";
 import { allocateLayers, coversExactly, RESERVED_GB, toRoute } from "../../lib/layers";
 import { fmtLayers, fmtMc, fmtNum, gpuShort, nodeName } from "../../lib/format";
-import { nodeColor } from "../../lib/nodeColor";
 
 type Laptop = { id: string; name: string; gpu: string; mem: number; owner: string };
 type ModelCfg = (typeof config.models)[number];
@@ -95,7 +94,7 @@ export default function LayerSim({ pools = [], nodes = [], preferLive = false }:
   const add = () => setLaptops((ls) => (ls.length >= MAX_LAPTOPS ? ls : [...ls, mkLaptop(ls.length, 16)]));
   const remove = () => setLaptops((ls) => (ls.length <= 1 ? ls : ls.slice(0, -1)));
   const stageOf = (id: string) => stages.findIndex((h) => h.node_id === id);
-  const color = (id: string, i: number) => (live ? nodeColor(id) : SIM_COLORS[i % SIM_COLORS.length]);
+  const color = (_id: string, i: number) => BLUES[i % BLUES.length];
 
   return (
     <div className={`sim${settled ? " is-settled" : ""}${activeStage >= 0 ? " is-running" : ""}`}>
@@ -279,4 +278,5 @@ export default function LayerSim({ pools = [], nodes = [], preferLive = false }:
   );
 }
 
-const SIM_COLORS = ["#83caff", "#b4a0ed", "#8ecab3", "#dfb69a", "#e7a3c6", "#f2d27a", "#7fd1d9", "#f0a07a"];
+/* the landing's blues: neighbouring laptops alternate light/dark blue; the active stage lights up pale (sim.css) */
+const BLUES = ["#5aa6ff", "#2f6fbf", "#8cc4f7", "#24508a", "#4a90e2", "#386cb0", "#6aaef5", "#2a5c9c"];

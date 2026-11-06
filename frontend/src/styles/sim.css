@@ -136,13 +136,13 @@
   background: color-mix(in srgb, var(--c, #3a3f4c) 70%, #0b0f19);
 }
 .sim-cell.is-hot {
-  background: var(--c);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--c) 70%, transparent);
+  background: #cfe6ff;
+  box-shadow: 0 0 12px rgba(39, 140, 255, 0.7);
   transform: scaleY(1.25);
 }
 .sim-warn {
   margin: 10px 0 0;
-  color: var(--warn, #dfb69a);
+  color: var(--muted, #9297a6);
   font-size: 13px;
 }
 
@@ -196,9 +196,9 @@
   font-size: 11px;
 }
 .sim-laptop.is-hot .sim-screen {
-  border-color: var(--c);
-  background: color-mix(in srgb, var(--c) 22%, #05070d);
-  box-shadow: 0 0 26px 2px color-mix(in srgb, var(--c) 45%, transparent);
+  border-color: #278cff;
+  background: color-mix(in srgb, #278cff 14%, #05070d);
+  box-shadow: 0 0 20px rgba(39, 140, 255, 0.3);
 }
 .sim-laptop.is-done .sim-screen {
   border-color: color-mix(in srgb, var(--c) 85%, transparent);
@@ -238,7 +238,7 @@
   font-variant-numeric: tabular-nums;
 }
 .sim.is-settled .sim-earn {
-  color: var(--ok, #8ecab3);
+  color: var(--text, #f2f3f7);
   animation: sim-credit 0.5s calc(var(--i) * 90ms) both;
 }
 @keyframes sim-credit {
@@ -261,8 +261,8 @@
   font-size: 11px;
 }
 .sim-you.is-on {
-  border-color: var(--ok, #8ecab3);
-  color: var(--ok, #8ecab3);
+  border-color: #278cff;
+  color: var(--cyan, #a1d6ff);
 }
 .sim-token {
   position: absolute;
@@ -272,8 +272,8 @@
   height: 10px;
   margin-left: -5px;
   border-radius: 50%;
-  background: var(--cyan, #a1d6ff);
-  box-shadow: 0 0 12px 3px #278cffaa;
+  background: #ffffff;
+  box-shadow: 0 0 10px 2px rgba(39, 140, 255, 0.5);
   transition: left 0.45s cubic-bezier(0.5, 0, 0.3, 1);
   pointer-events: none;
 }
@@ -341,15 +341,15 @@
   white-space: nowrap;
 }
 .sim-split-nodes {
-  background: #8ecab32e;
-  color: var(--ok, #8ecab3);
+  background: rgba(39, 140, 255, 0.16);
+  color: #cfe6ff;
 }
 .sim-split-burn {
-  background: #ef6b6b24;
-  color: #f19a9a;
+  background: rgba(242, 243, 247, 0.06);
+  color: var(--muted, #9297a6);
 }
 .sim-split-reserve {
-  background: #278cff26;
+  background: rgba(161, 214, 255, 0.12);
   color: var(--cyan, #a1d6ff);
 }
 .sim-note {
@@ -359,7 +359,7 @@
   transition: border-color 0.3s;
 }
 .sim-loop.is-on {
-  border-color: color-mix(in srgb, var(--ok, #8ecab3) 55%, transparent);
+  border-color: rgba(39, 140, 255, 0.55);
 }
 .sim-source {
   margin: -8px 0 0;
@@ -389,13 +389,3 @@
   }
 }
 
-/* landing section around the simulator */
-.sim-section {
-  border-top: 1px solid #bdcff412;
-}
-.sim-section > .sim {
-  margin-top: 44px;
-}
-.sim-loading {
-  min-height: 520px;
-}

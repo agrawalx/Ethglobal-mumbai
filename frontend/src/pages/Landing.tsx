@@ -1,16 +1,15 @@
-import { Suspense, lazy, useCallback, useState } from "react";
+import { useState } from "react";
 import GooeyNav from "../components/GooeyNav";
 import { Brand } from "../components/Shared";
 import { Icon } from "../components/Icon";
 import type { IconName } from "../components/Icon";
 import CrewScene from "../components/CrewScene";
-import ParticleStage from "../components/ParticleStage";
+import GpuBoard from "../components/GpuBoard";
 import PoolStory from "../components/story/PoolStory";
 import { BRAND } from "../config/brand";
 import { navigate } from "../lib/router";
 import { useSession } from "../auth/context";
 
-const LiveLayerSim = lazy(() => import("../components/sim/LiveLayerSim"));
 
 /* One request, executing across a pool. */
 const EXEC: { title: string; tag: string; icon: IconName }[] = [
@@ -21,12 +20,7 @@ const EXEC: { title: string; tag: string; icon: IconName }[] = [
 ];
 
 export default function Landing() {
-  const [phase, setPhase] = useState<"cube" | "tree">("cube"),
-    [menu, setMenu] = useState(false);
-  const phaseChange = useCallback(
-    (next: "cube" | "tree") => setPhase(next),
-    [],
-  );
+  const [menu, setMenu] = useState(false);
   const session = useSession();
   const openChat = () => navigate("/chat");
   // Logged in already → straight to the playground; otherwise World ID first.
@@ -42,7 +36,6 @@ export default function Landing() {
             { label: "Platform", href: "#platform" },
             { label: "How it works", href: "#how-it-works" },
             { label: "Earn and spend", href: "#the-pool" },
-            { label: "Simulator", href: "#simulator" },
             { label: "Network", href: "/network" },
             { label: "Become a provider", href: "/getting-started" },
           ]}
@@ -81,7 +74,7 @@ export default function Landing() {
       <main>
         <section className="hero-section" id="platform">
           <div className="hero-atmosphere" aria-hidden="true" />
-          <ParticleStage onPhase={phaseChange} />
+          <GpuBoard />
           <div className="hero-copy">
             <h1>
               Your laptop, idle tonight.
@@ -92,9 +85,7 @@ export default function Landing() {
           <div className="scene-caption">
             <span className="tiny-cross">+</span>
             <span>
-              {phase === "cube"
-                ? "MANY SMALL GPUS. ONE MODEL."
-                : "ONE HUMAN. ONE ACCOUNT."}
+              MANY SMALL GPUS. ONE MODEL.
             </span>
           </div>
           <a
@@ -131,45 +122,22 @@ export default function Landing() {
             ))}
           </ol>
         </section>
-        <section className="content-section sim-section" id="simulator">
-          <div className="section-topline">
-            <span className="section-label">
-              <span className="tiny-cross">+</span> SPLIT A MODEL, FOLLOW A QUERY
-            </span>
-            <span className="section-index">02 / SIMULATOR</span>
-          </div>
-          <div className="section-intro">
-            <h2>
-              Add laptops.
-              <br />
-              Watch the layers move.
-            </h2>
-            <p>
-              Change how many laptops are in the pool and how much memory each has.
-              <br className="desktop-break" /> The layers split by memory, a query runs stage by stage, and the
-              <br className="desktop-break" /> credits settle with the gateway's real formula. Switch to a live pool to use a real layer map.
-            </p>
-          </div>
-          <Suspense fallback={<div className="sim sim-loading" aria-busy="true" />}>
-            <LiveLayerSim />
-          </Suspense>
-        </section>
         <section className="story-section" id="how-it-works">
           <div className="section-topline">
             <span className="section-label">
-              <span className="tiny-cross">+</span> FROM INSTALL TO PAYOUT
+              <span className="tiny-cross">+</span> FROM QUERY TO PAYOUT
             </span>
-            <span className="section-index">03 / HOW IT WORKS</span>
+            <span className="section-index">02 / HOW IT WORKS</span>
           </div>
           <div className="story-intro">
             <h2>
-              Seven steps.
+              Three laptops.
               <br />
-              One shared model.
+              One coordinator.
             </h2>
             <p>
-              Scroll through what happens between installing the node agent
-              and the first HBAR claim.
+              Scroll to watch a query come in, run across the pool, and get
+              split among the laptops by the work each one did.
             </p>
           </div>
           <PoolStory />
@@ -179,7 +147,7 @@ export default function Landing() {
             <span className="section-label">
               <span className="tiny-cross">+</span> EVERY CREDIT ON THE RECORD
             </span>
-            <span className="section-index">04 / THE LEDGER</span>
+            <span className="section-index">03 / THE LEDGER</span>
           </div>
           <div className="conversation-layout">
             <div>
@@ -275,6 +243,9 @@ export default function Landing() {
         <div className="footer-bottom">
           <Brand />
           <span>Built at ETHGlobal Mumbai.</span>
+          <a className="footer-credit" href="https://commons.wikimedia.org/wiki/File:Connect3D_X1800XT_512_MB_(heatsink_removed).png" target="_blank" rel="noreferrer">
+            GPU photo: Trio3D / Wikimedia Commons, CC BY-SA 3.0 (edited)
+          </a>
           <a href="#platform">
             Back to the stars <Icon name="arrow-up" size={13} />
           </a>
