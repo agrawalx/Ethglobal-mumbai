@@ -71,7 +71,10 @@ def wired_addresses(interface=None):
                 candidates.append((dev, ip.stdout.strip()))
     elif platform.system() == "Linux":
         for link in json.loads(run(["ip", "-j", "address", "show", "up"])):
-            dev = link["ifname"]
+            # iproute2 6.x can emit empty {} entries in its JSON output; skip them.
+            dev = link.get("ifname")
+            if not dev:
+                continue
             physical = Path("/sys/class/net") / dev
             if not (physical / "device").exists() or (physical / "wireless").exists():
                 continue
