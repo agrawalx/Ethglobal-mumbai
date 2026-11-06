@@ -38,7 +38,8 @@ export const POD = { x: 610, y: 290, r: 150 };
 
 export const MODEL = { id: "Qwen3-14B-FP8", layers: 40, gbPerLayer: 0.4 };
 
-/** The three pool nodes (spec §1.2): 4060 + coordinator, M4, M5. Layers 11 / 20 / 9 of 40. */
+/** An illustrative pool (the demo hardware, spec §1.2). The story geometry is hand-placed for these
+    nodes; real pools can have any number of nodes and are shown by LayerSim and /network. */
 export const NODES: StoryNode[] = [
   { key: "rex", name: "Rex", gpu: "RTX 4060 · 8 GB", memGb: 8, color: "#83caff", x: POD.x - POD.r, y: POD.y, from: [0, 0], layers: [0, 11] },
   { key: "mika", name: "Mika", gpu: "M4 · 16 GB", memGb: 16, color: "#b4a0ed", x: POD.x, y: POD.y - POD.r, from: [0, -140], layers: [11, 31] },

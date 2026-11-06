@@ -1,7 +1,7 @@
 /* World ID login (spec §6). Lazy-loaded so the landing does not ship IDKit.
    Real flow: rp_context from the gateway → IDKit widget → result sent to
-   /auth/world/verify unchanged → JWT. Without an RP (demo / no gateway yet) the
-   sheet offers the four demo paths from §6.4 as a simulation. */
+   /auth/world/verify unchanged → JWT. There is no mock login: in staging, the human
+   verifies with the World ID Simulator (the sheet says how). */
 import { useEffect, useState } from "react";
 import { IDKitRequestWidget, CredentialRequest, any } from "@worldcoin/idkit";
 import type { IDKitErrorCodes } from "@worldcoin/idkit";
@@ -71,7 +71,7 @@ export default function LoginSheet() {
     <Sheet title="Log in with World ID" onClose={s.closeLogin}>
       <div className="login-body">
         <p className="muted">
-          One human, one account. A new account gets {fmtNum(STARTER_CREDITS)} starter credits (valid for 14 days). Verify with the Orb or Selfie Check.
+          One human, one account. A new account gets {fmtNum(STARTER_CREDITS)} starter credits (valid for 14 days) to spend on any pool. Verify with the Orb or Selfie Check. To earn more, link a laptop and serve layers.
         </p>
 
         {outcome?.kind === "ok" ? (
@@ -99,6 +99,11 @@ export default function LoginSheet() {
             <button className="button button-blue" disabled={busy} onClick={() => setOpen(true)}>
               <Icon name="user-check" size={15} /> {busy ? "Checking…" : "Continue with World ID"}
             </button>
+            {rp!.environment === "staging" && (
+              <p className="login-sim-note" role="note">
+                <Icon name="shield" size={13} /> This is the World ID staging app. In the World ID window choose <b>Testing in staging? Use the simulator</b>, open the World ID Simulator, and verify with its <b>Human</b> credential. Each simulator identity is one human, so it gets one account.
+              </p>
+            )}
             <IDKitRequestWidget
               open={open}
               onOpenChange={setOpen}

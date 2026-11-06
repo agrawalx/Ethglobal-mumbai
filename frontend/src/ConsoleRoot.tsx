@@ -13,7 +13,7 @@ import type { Route } from "./lib/router";
 function page(route: Route) {
   switch (route.name) {
     case "chat":
-      return <Chat />;
+      return <Chat query={route.query} />;
     case "account":
       return <Account query={route.query} />;
     case "network":

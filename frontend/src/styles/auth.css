@@ -125,3 +125,20 @@
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
+.login-sim-note {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed rgba(161, 214, 255, 0.35);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.login-sim-note b {
+  color: var(--text);
+  font-weight: 500;
+}
+.login-sim-note svg {
+  vertical-align: -2px;
+  color: var(--cyan);
+}

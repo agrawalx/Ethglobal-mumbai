@@ -80,19 +80,13 @@
 .route-empty {
   font-size: 14px;
 }
-.route-body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 220px;
-  gap: 20px;
-  align-items: center;
-}
 .laptops {
   display: flex;
-  gap: 28px;
+  flex-wrap: wrap;
+  gap: 18px 28px;
   margin: 0;
   padding: 0 0 4px;
   list-style: none;
-  overflow-x: auto;
 }
 .laptop {
   position: relative;
@@ -165,12 +159,6 @@
 }
 .laptop.is-done .laptop-screen {
   border-color: color-mix(in srgb, var(--node) 80%, transparent);
-}
-.route-crew {
-  height: 210px;
-  overflow: hidden;
-  border-left: 1px solid var(--line);
-  pointer-events: none;
 }
 
 /* meter */
@@ -364,14 +352,6 @@
   line-height: 1.55;
 }
 
-@media (max-width: 1100px) {
-  .route-body {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .route-crew {
-    display: none;
-  }
-}
 @media (max-width: 960px) {
   .chat-layout {
     grid-template-columns: minmax(0, 1fr);
@@ -381,13 +361,12 @@
   }
 }
 @media (max-width: 600px) {
-  /* three laptops fit side by side on a phone */
+  /* any number of hops: they wrap, three or so to a row on a phone */
   .laptops {
-    gap: 10px;
-    overflow: visible;
+    gap: 14px 10px;
   }
   .laptop {
-    flex: 1;
+    flex: 1 1 88px;
     min-width: 0;
   }
   .laptop-screen {
@@ -408,7 +387,14 @@
     top: 27px;
   }
 }
-/* the mini crew is decorative; its speech bubbles would be clipped by the panel */
-.route-crew .crew-utterance {
-  display: none;
+.pool-pin {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin-top: 12px;
+  font-size: 12.5px;
+}
+.pool-pin .text-link {
+  font-size: 12.5px;
 }

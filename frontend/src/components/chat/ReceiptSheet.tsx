@@ -4,7 +4,7 @@ import SourceBadge from "../SourceBadge";
 import CopyButton, { CodeBox } from "../console/CopyButton";
 import { hashscanMessage, hashscanTx } from "../../lib/links";
 import { env } from "../../config/env";
-import { fmtHbar, fmtLayers, fmtNum, fmtTime, gpuShort, shortHash } from "../../lib/format";
+import { fmtHbar, fmtLayers, fmtNum, fmtTime, gpuShort, nodeName, shortHash } from "../../lib/format";
 
 const HASH_KEYS = new Set(["resp_hash", "prompt_hash", "x402_tx", "x402_payer"]);
 const cr = (n: number) => `${fmtNum(n, 1)} cr`;
@@ -12,7 +12,7 @@ const cr = (n: number) => `${fmtNum(n, 1)} cr`;
 /** One request receipt (spec §5.3, §8.3). Hashes are shortened in the JSON view; Copy gives the exact JSON. */
 export default function ReceiptSheet({ receipt, nodes, onClose }: { receipt: Receipt; nodes: NodeListing[]; onClose: () => void }) {
   const find = (id: string) => nodes.find((n) => n.node_id === id);
-  const name = (id: string) => find(id)?.nickname ?? shortHash(id, 6, 4);
+  const name = (id: string) => nodeName(find(id), id);
   const view = JSON.stringify(
     receipt,
     (k, v) => (typeof v === "string" && (HASH_KEYS.has(k) || k === "node_id") ? shortHash(v, 8, 6) : v),

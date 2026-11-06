@@ -8,7 +8,7 @@
 import type { Balance, LedgerEvent, LedgerType, Me, NodeListing, Receipt } from "@shared/types";
 import type { ChatBody, ChatChunk, LoginResult, NetworkSnapshot, NodeLink, PoolApi } from "../api";
 import { PaymentRequired, SessionExpired } from "../api";
-import { InsufficientCredits, MAX_NODES_PER_ACCOUNT, STARTER_CREDITS, STARTER_TTL_MS, available, cost, estimateTokens, holdFor, ratio, spend, split } from "../../lib/credits";
+import { InsufficientCredits, START_NODE_CAP, STARTER_CREDITS, STARTER_TTL_MS, available, cost, estimateTokens, holdFor, ratio, spend, split } from "../../lib/credits";
 import {
   ACC,
   DEMO_ACCOUNT,
@@ -138,6 +138,7 @@ function meOf(a: Account): Me {
     balance: a.balance,
     ratio: ratio(a.balance.earned_total, a.balance.spent_total),
     payout_address: a.payout_address,
+    incentives: { locked_mc: 0, next_unlock_at: null, node_cap: START_NODE_CAP, banned: false, credential: "orb" },
     nodes: NODES.filter((n) => n.owner_account === a.id && isListed(n)),
   });
 }
@@ -295,6 +296,7 @@ async function* mockChat(body: ChatBody, token: string | null, signal: AbortSign
   }
   const rc: Receipt = {
     req_id: `req_${hex(16, rand)}`,
+    account_id: acct.id,
     model: body.model,
     pay_type: "credits",
     in_tokens: inTok,
@@ -359,8 +361,8 @@ export const mockApi: PoolApi = {
     const known = NODES.find((n) => n.node_id.toLowerCase() === link.node_id.toLowerCase());
     if (known && known.owner_account !== a.id) throw new Error("This node is already linked to another account.");
     if (known) return meOf(a);
-    if (NODES.filter((n) => n.owner_account === a.id).length >= MAX_NODES_PER_ACCOUNT) {
-      throw new Error(`An account can have at most ${MAX_NODES_PER_ACCOUNT} nodes.`);
+    if (NODES.filter((n) => n.owner_account === a.id).length >= START_NODE_CAP) {
+      throw new Error(`An account can have at most ${START_NODE_CAP} nodes.`);
     }
     if (link.payout_address && a.payout_address?.toLowerCase() !== link.payout_address.toLowerCase()) {
       a.payout_address = link.payout_address;
@@ -388,7 +390,7 @@ export const mockApi: PoolApi = {
   async models() {
     ensureTicker();
     await latency();
-    return MODELS.map((m) => ({ model: clone(m), served: POOL.status === "ready" && POOL.models.includes(m.model_id) }));
+    return MODELS.map((m) => ({ model: clone(m), served: POOL.status === "ready" && POOL.models.includes(m.model_id), pools: POOL.models.includes(m.model_id) ? 1 : 0 }));
   },
   chat: mockChat,
   async request(id) {

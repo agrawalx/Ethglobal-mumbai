@@ -2,7 +2,7 @@
    settle → split) and leaves a receipt on HCS. Logged out, it shows World login and
    how an agent pays per request with x402 instead. */
 import { useEffect, useRef, useState } from "react";
-import type { Balance, ModelEntry, Receipt, RouteHop } from "@shared/types";
+import type { Me, ModelEntry, Receipt, RouteHop } from "@shared/types";
 import { PageHead } from "../components/ConsoleShell";
 import RouteTrace from "../components/chat/RouteTrace";
 import TokMeter from "../components/chat/TokMeter";
@@ -16,16 +16,18 @@ import type { ChatBody } from "../data";
 import { useModels, useNetwork } from "../hooks/usePool";
 import { useSession } from "../auth/context";
 import { available, estimateTokens, holdFor, liveStarter } from "../lib/credits";
-import { fmtLeft, fmtNum } from "../lib/format";
+import { fmtLeft, fmtMc, fmtNum } from "../lib/format";
+import { navigate } from "../lib/router";
 import { hashscanMessage } from "../lib/links";
 import { env } from "../config/env";
 
 type Msg = { role: "user" | "assistant"; content: string };
-const SUGGESTIONS = ["How does the pool split one model across laptops?", "What does this answer cost in credits?", "How do providers get paid in HBAR?"];
+const SUGGESTIONS = ["How does a pool split one model across laptops?", "What does this answer cost in credits?", "How do laptop owners earn credits?"];
 const cr = (n: number) => fmtNum(n, 1);
 const short = (id: string) => id.split("/")[1] ?? id;
 
-function BalancePanel({ balance }: { balance: Balance }) {
+function BalancePanel({ me }: { me: Me }) {
+  const balance = me.balance;
   const starter = liveStarter(balance);
   return (
     <section className="panel" aria-labelledby="bal-h">
@@ -41,11 +43,15 @@ function BalancePanel({ balance }: { balance: Balance }) {
           {cr(starter)} <span className="faint">· {fmtLeft(balance.starter_expires_at)} left</span>
         </dd>
         <dt>Earned</dt>
-        <dd>{cr(balance.earned)}</dd>
+        <dd>
+          {cr(balance.earned)} {me.incentives.locked_mc > 0 && <span className="faint">· {fmtMc(me.incentives.locked_mc)} vesting</span>}
+        </dd>
         <dt>Held</dt>
         <dd>{cr(balance.held)}</dd>
+        <dt>Ratio</dt>
+        <dd>{me.ratio.toFixed(2)}</dd>
       </dl>
-      <p className="faint">Starter credits are spent first.</p>
+      <p className="faint">Starter credits are spent first, then credits your laptops earned serving other pools. A higher ratio goes first when a pool is busy.</p>
     </section>
   );
 }
@@ -67,11 +73,19 @@ function LoginCard({ onLogin }: { onLogin: () => void }) {
   );
 }
 
-export default function Chat() {
+export default function Chat({ query }: { query: URLSearchParams }) {
   const session = useSession();
   const models = useModels();
   const net = useNetwork();
-  const [model, setModel] = useState("");
+  const [picked, setModel] = useState<string | null>(null);
+  // A new ?model= (e.g. "Query this pool" from /network) wins until the user picks again.
+  const [lastQuery, setLastQuery] = useState(query.get("model"));
+  if (query.get("model") !== lastQuery) {
+    setLastQuery(query.get("model"));
+    setModel(null);
+  }
+  const model = picked ?? query.get("model") ?? "";
+  const pin = query.get("pool") ?? undefined;
   const [maxTokens, setMaxTokens] = useState<512 | 2048>(512);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -121,7 +135,7 @@ export default function Chat() {
     setStreaming(true);
     const ctl = new AbortController();
     abort.current = ctl;
-    const body: ChatBody = { model: chosen, messages: history, max_tokens: maxTokens };
+    const body: ChatBody = { model: chosen, messages: history, max_tokens: maxTokens, pool_id: pin };
     let hops = 0;
     let tokens = 0;
     try {
@@ -183,7 +197,13 @@ export default function Chat() {
     });
   }
 
-  const head = <PageHead label="PLAYGROUND · GATEWAY" title="Talk to the pool." sub="One model, split across three laptops. Every reply shows the route and leaves a receipt on Hedera HCS." />;
+  const head = (
+    <PageHead
+      label="PLAYGROUND · GATEWAY"
+      title="Spend your credits on a pool."
+      sub="Each model runs split across the laptops of one pool. Every reply shows the route it took through them and leaves a receipt on Hedera HCS."
+    />
+  );
 
   if (!session.token && !session.loading) {
     return (
@@ -202,7 +222,7 @@ export default function Chat() {
       {head}
       <div className="chat-layout">
         <aside className="stack chat-side">
-          {me ? <BalancePanel balance={me.balance} /> : <Loading h={150} />}
+          {me ? <BalancePanel me={me} /> : <Loading h={150} />}
 
           <section className="panel" aria-labelledby="model-h">
             <div className="panel-head">
@@ -215,17 +235,36 @@ export default function Chat() {
               <ErrorBox error={models.error} retry={models.reload} />
             ) : !models.data ? (
               <Loading h={120} />
+            ) : offers.length === 0 ? (
+              <p className="faint">No model has a ready pool right now. Requests would get HTTP 503 and cost nothing. Check the network for pools that are loading.</p>
             ) : (
               <div className="model-pick" role="radiogroup" aria-label="Model">
                 {offers.map(({ model: m, served: ok }) => (
                   <label key={m.model_id} className={`model-opt${chosen === m.model_id ? " is-on" : ""}${ok ? "" : " is-off"}`}>
                     <input type="radio" name="model" value={m.model_id} checked={chosen === m.model_id} disabled={!ok || streaming} onChange={() => setModel(m.model_id)} />
                     <span className="mono">{short(m.model_id)}</span>
-                    <span className="faint">{ok ? `×${m.model_factor} · ${m.total_layers} layers` : "no live pool"}</span>
+                    <span className="faint">{ok ? `×${m.model_factor} · ${m.total_layers} layers · ${offers.find((o) => o.model.model_id === m.model_id)?.pools ?? 0} pools` : "no live pool"}</span>
                   </label>
                 ))}
               </div>
             )}
+            <div className="pool-pin">
+              {pin ? (
+                <>
+                  <span className="faint">Pinned to pool</span> <span className="mono">{pin}</span>
+                  <button className="text-link" onClick={() => navigate(`/chat${chosen ? `?model=${encodeURIComponent(chosen)}` : ""}`, { replace: true })} disabled={streaming}>
+                    Let the router pick
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="faint">The router picks the best ready pool.</span>
+                  <button className="text-link" onClick={() => navigate("/network")}>
+                    Pick one
+                  </button>
+                </>
+              )}
+            </div>
             <div className="field max-tok">
               <span className="mono-label">Max tokens</span>
               <div className="tabs" role="radiogroup" aria-label="Max tokens">

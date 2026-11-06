@@ -1,12 +1,15 @@
 /* Credit and price rules from spec v0.1 §7.3 and §8. Pure functions: the gateway
    is the source of truth; the frontend uses these for estimates, the mock and tests. */
 import type { Balance, PriceTier, RouteHop, Split } from "@shared/types";
+import config from "../../../shared/config/gpupool.config.json";
 
 export const STARTER_CREDITS = 10_000;
 export const STARTER_TTL_MS = 14 * 24 * 3600_000;
 export const IN_WEIGHT = 0.2;
 export const SHARE = { nodes: 0.9, burn: 0.05, reserve: 0.05 } as const;
-export const MAX_NODES_PER_ACCOUNT = 3;
+/** Node cap before an account is proven (SPEC §8.8). The live cap is `/me.incentives.node_cap`. */
+export const START_NODE_CAP = config.max_nodes_per_account;
+export const PROVEN_NODE_CAP = config.incentives.node_cap_proven;
 
 /** §8.1 cost = model_factor × (output_tokens + 0.2 × input_tokens) */
 export function cost(factor: number, inTokens: number, outTokens: number) {
@@ -87,4 +90,30 @@ export const PRICES: PriceTier[] = [
 export function x402Price(paramsB: number, maxTokens: number) {
   const tier = PRICES.find((p) => paramsB <= p.max_params_b) ?? PRICES[PRICES.length - 1];
   return Number(maxTokens <= 512 ? tier.tier512 : tier.tier2048);
+}
+
+/* ── integer millicredits: the exact gateway rule (gateway/src/ledger.ts, shared/README "Units") ── */
+const BPS = 10_000;
+
+/** cost_mc = floor(factor_milli × (out × 10000 + in × weight_bps) / 10000). */
+export function costMc(factor: number, inTokens: number, outTokens: number) {
+  const factorMilli = Math.round(factor * 1000);
+  const weightBps = Math.round(config.cost.input_token_weight * BPS);
+  return Math.floor((factorMilli * (outTokens * BPS + inTokens * weightBps)) / BPS);
+}
+
+export type SplitMc = { nodes: { node_id: string; layers: number; mc: number; self: boolean }[]; burn_mc: number; reserve_mc: number };
+
+/** §8.3 in millicredits: nodes_share = floor(cost × 90%), each node floor(nodes_share × layers / total),
+    burn = floor(cost × 5%), reserve = the rest (rounding remainders, own-node shares, unknown route). */
+export function splitMc(costMcTotal: number, route: RouteHop[] | null, totalLayers: number, isSelf: (nodeId: string) => boolean = () => false): SplitMc {
+  const nodesShare = Math.floor((costMcTotal * config.credit_split_bps.nodes) / BPS);
+  const burn = Math.floor((costMcTotal * config.credit_split_bps.burn) / BPS);
+  const nodes = (route ?? []).map((h) => {
+    const layers = h.layers[1] - h.layers[0];
+    const self = isSelf(h.node_id);
+    return { node_id: h.node_id, layers, self, mc: self || totalLayers <= 0 ? 0 : Math.floor((nodesShare * layers) / totalLayers) };
+  });
+  const paid = nodes.reduce((a, n) => a + n.mc, 0);
+  return { nodes, burn_mc: burn, reserve_mc: costMcTotal - paid - burn };
 }

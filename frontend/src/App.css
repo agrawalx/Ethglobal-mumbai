@@ -6,6 +6,7 @@
 @import "./styles/auth.css";
 @import "./styles/chat.css";
 @import "./styles/data.css";
+@import "./styles/sim.css";
 
 .button {
   display: inline-flex;

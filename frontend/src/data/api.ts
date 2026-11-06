@@ -26,6 +26,8 @@ export type ChatBody = {
   model: string;
   messages: { role: "system" | "user" | "assistant"; content: string }[];
   max_tokens: number;
+  /** Pin one pool (header x-gpupool-pool, SPEC §8.8 routing preferences). Unset = the router picks. */
+  pool_id?: string;
 };
 
 /** World ID 4 RP context, signed by the gateway (/auth/world/rp-signature). The signing key never reaches the client. */
@@ -34,7 +36,8 @@ export type WorldRpContext = { rp_id: string; nonce: string; created_at: number;
 /** /auth/world/verify. `created: false` = this human already has an account (no new starter credits). */
 export type LoginResult = { token: string; me: Me; created: boolean };
 
-export type ModelOffer = { model: ModelEntry; served: boolean };
+/** `pools` = ready pools serving the model now (from /v1/models). */
+export type ModelOffer = { model: ModelEntry; served: boolean; pools: number };
 
 export type NetworkSnapshot = { pools: PoolListing[]; nodes: NodeListing[]; stats: AccountStats[]; updated_at: number };
 
@@ -52,7 +55,7 @@ export interface PoolApi {
     verify(result: unknown): Promise<LoginResult>;
   };
   me(token: string): Promise<Me>;
-  /** POST /nodes/register: link a node key to the account (max 3 per account). */
+  /** POST /nodes/register: link a node key to the account (up to `/me.incentives.node_cap`). */
   registerNode(token: string, link: NodeLink): Promise<Me>;
 
   /** GET /v1/models + Arkiv gpupool.model: every known model and whether a live pool serves it now. */

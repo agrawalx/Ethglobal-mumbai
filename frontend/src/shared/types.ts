@@ -45,6 +45,10 @@ export type PoolListing = {
   reliability: number;
   /** 0.0 to 1.0. Router score = reliability × (1 − load). */
   load: number;
+  /** P5.5: a clean restart is running (the router skips the pool). */
+  restarting: boolean;
+  /** P5.9: node-reported sessions disagree with the scheduler's routes (flag only). */
+  route_dispute: boolean;
   expires_at: number;
 };
 
@@ -83,7 +87,8 @@ export type Balance = {
 export type Me = {
   account_id: string;
   balance: Balance;
-  incentives?: {locked_mc:number;next_unlock_at:number|null;node_cap:number;banned:boolean;credential:string|null};
+  /** SPEC §8.8: vesting, node cap, credential. Credits here stay in millicredits, as on the wire. */
+  incentives: { locked_mc: number; next_unlock_at: number | null; node_cap: number; banned: boolean; credential: "orb" | "passport" | "selfie" | null };
   /** earned_total / max(spent_total, 1) */
   ratio: number;
   payout_address: HexAddress | null;
@@ -102,6 +107,8 @@ export type Split = {
 /** GET /requests/:id */
 export type Receipt = {
   req_id: string;
+  /** Requesting account (null for x402). */
+  account_id: string | null;
   model: string;
   pay_type: PayType;
   in_tokens: number;
@@ -123,15 +130,8 @@ export type Receipt = {
 
 /* ── ledger (HCS §8.6, §10.2) ─────────────────────────────────────────── */
 
-export type LedgerType =
-  | "account_created"
-  | "starter_grant"
-  | "request_settled"
-  | "x402_payment"
-  | "credits_expired"
-  | "payout_address_set"
-  | "epoch_closed"
-  | "payout_claimed";
+/** Every HCS event type the gateway writes (shared/src/hcs.ts). */
+export type LedgerType = import("@gpupool/shared").LedgerEventType;
 
 export type LedgerEvent = {
   id: string;
@@ -164,6 +164,8 @@ export type Payout = {
   claimable?: boolean;
   swept?: boolean;
   claimable_at?: number;
+  merkle_root?: string;
+  post_tx?: string;
   claimed: boolean;
   claim_tx: string | null;
 };

@@ -152,76 +152,13 @@
 
 /* pod cards */
 .pod-card header,
-.node-card header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-}
 .pod-card h3,
-.node-card h3 {
-  margin-bottom: 4px;
-  font: 17px var(--display);
-  color: var(--text);
-}
 .pod-card header .faint,
-.node-card header .faint {
-  font-size: 12.5px;
-}
 .pod-card footer,
-.node-card footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: auto;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-  font-size: 13px;
-}
 
-/* node cards */
-.node-card {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 18px;
-  border: 1px solid var(--line);
-  border-top: 2px solid var(--node, var(--line));
-  border-radius: var(--radius);
-  background: var(--panel);
-}
 .node-kv {
   font-size: 13px;
   gap: 8px 14px;
-}
-.node-card footer .faint {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-}
-.expiry-ring {
-  flex-shrink: 0;
-  width: 40px;
-  height: 40px;
-  transform: rotate(-90deg);
-}
-.expiry-ring circle {
-  fill: none;
-  stroke: var(--line);
-  stroke-width: 3;
-}
-.expiry-ring .expiry-ring-fill {
-  stroke: var(--node, var(--blue));
-  stroke-linecap: round;
-  transition: stroke-dasharray 0.9s linear;
-}
-.expiry-ring text {
-  transform: rotate(90deg);
-  transform-origin: 18px 18px;
-  fill: var(--muted);
-  font: 9px var(--display);
 }
 .rep-bar {
   display: inline-block;
@@ -274,7 +211,7 @@
   border: 1px solid color-mix(in srgb, var(--seg) 55%, transparent);
   border-radius: 8px;
   background:
-    repeating-linear-gradient(90deg, transparent 0 calc(100% / 40 - 1px), #ffffff08 calc(100% / 40 - 1px) calc(100% / 40)),
+    repeating-linear-gradient(90deg, transparent 0 calc(100% / var(--k, 1) - 1px), #ffffff0a calc(100% / var(--k, 1) - 1px) calc(100% / var(--k, 1))),
     color-mix(in srgb, var(--seg) 16%, #05070d);
 }
 .pipeline-seg-name {
@@ -363,19 +300,56 @@
   justify-content: center;
 }
 
-/* /network pool header */
-.pool-head {
+/* /network pool cards: one per Arkiv pool listing */
+.pool-list {
+  display: grid;
+  gap: 18px;
+}
+.pool-card {
+  display: grid;
+  gap: 18px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+.pool-card-head {
   display: flex;
-  align-items: center;
-  gap: 20px;
   flex-wrap: wrap;
-  margin-bottom: 18px;
+  align-items: center;
+  gap: 12px 24px;
+}
+.pool-card-head > .button {
+  margin-left: auto;
 }
 .pool-id {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
-  justify-items: start;
-  min-width: 110px;
+}
+.pool-models {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  font-size: 14px;
+}
+.pool-models .faint {
+  font-size: 12px;
+}
+.pipeline-empty {
+  margin: 0;
+  font-size: 13px;
+}
+.node-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--node);
+  vertical-align: middle;
 }
 .pool-id h3 {
   font-size: 20px;
@@ -396,12 +370,10 @@
   }
 }
 @media (max-width: 600px) {
-  .pool-head {
-    justify-content: space-between;
+  .pool-card-head > .button {
+    margin-left: 0;
   }
   .pool-stats {
-    order: 3;
-    flex-basis: 100%;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .pool-stats .stat:nth-child(2n) {
@@ -445,4 +417,94 @@
   .acc-grid {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/* /account: ratio, join guide */
+.acc-avail {
+  color: var(--text);
+  font: 15px var(--display);
+}
+.acc-ratio {
+  margin: 4px 0 14px;
+  font-size: 44px;
+}
+.ratio-bars {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 14px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ratio-bars i {
+  display: block;
+  height: 6px;
+  min-width: 2px;
+  border-radius: 3px;
+}
+.ratio-earned {
+  background: var(--ok);
+}
+.ratio-spent {
+  background: var(--blue);
+}
+.join-guide summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+.join-guide summary::-webkit-details-marker {
+  display: none;
+}
+.join-guide summary .section-title::before {
+  content: "▸ ";
+  color: var(--faint);
+}
+.join-guide[open] summary .section-title::before {
+  content: "▾ ";
+}
+.join-guide summary:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 4px;
+}
+.join-steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 18px;
+  margin: 20px 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: join;
+}
+.join-steps li {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  counter-increment: join;
+}
+.join-steps h3 {
+  margin: 0;
+  font: 15px var(--display);
+}
+.join-steps h3::before {
+  content: counter(join) ". ";
+  color: var(--faint);
+}
+.join-steps p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.join-steps li,
+.join-steps .code-box {
+  min-width: 0;
+}
+.join-steps .code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

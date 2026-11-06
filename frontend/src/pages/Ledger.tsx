@@ -18,38 +18,70 @@ import { fmtAgo, fmtHbar, fmtNum, fmtTime, shortHash } from "../lib/format";
 import { navigate } from "../lib/router";
 
 const PAGE = 25;
-const TYPES: LedgerType[] = ["account_created", "starter_grant", "request_settled", "x402_payment", "credits_expired", "payout_address_set", "epoch_closed", "payout_claimed"];
-const PILL: Partial<Record<LedgerType, string>> = { request_settled: "pill-ok", payout_claimed: "pill-ok", x402_payment: "pill-warn", credits_expired: "pill-bad" };
+/** Filterable types. Verification, hardware challenges and fraud penalties (SPEC §16.2, §8.8) are disabled,
+    so they are not offered as a filter; summary() still renders them if one ever appears. */
+const TYPES: LedgerType[] = [
+  "account_created",
+  "starter_grant",
+  "request_settled",
+  "availability_reward",
+  "x402_payment",
+  "credits_expired",
+  "payout_address_set",
+  "epoch_closed",
+  "epoch_resolved",
+  "payout_claimed",
+  "agent_key_created",
+];
+const PILL: Partial<Record<LedgerType, string>> = { request_settled: "pill-ok", payout_claimed: "pill-ok", availability_reward: "pill-ok", x402_payment: "pill-warn", credits_expired: "pill-bad", credits_clawed_back: "pill-bad", account_banned: "pill-bad" };
 const topic = env.hcsTopic;
 
 const str = (v: unknown) => (v == null ? "" : String(v));
 const num = (v: unknown) => Number(v ?? 0);
+const cr = (mc: unknown, d = 1) => fmtNum(num(mc) / 1000, d);
+const model = (v: unknown) => str(v).split("/")[1] ?? str(v);
 
-/** One line per event type, from its payload (§8.6). */
-function summary(e: LedgerEvent) {
+/** One line per event type, from its payload (shared/src/hcs.ts). */
+function summary(e: LedgerEvent): string {
   const p = e.payload;
   switch (e.type) {
     case "account_created":
-      return `new account · World ID ${str(p.credential) || "verified"}`;
+      return "new account · one per World ID";
     case "starter_grant":
-      return `+${fmtNum(num(p.amount_mc)/1000)} starter credits · 14 days`;
+      return `+${cr(p.amount_mc, 0)} starter credits · 14 days`;
     case "request_settled": {
-      const nodes = Object.keys((p.split as {nodes?: Record<string,number>})?.nodes ?? {}).length;
-      return `${fmtNum(num(p.cost_mc)/1000, 1)} cr · ${nodes} nodes · ${str(p.model).split("/")[1] ?? str(p.model)}`;
+      const split = (p.split ?? {}) as { nodes?: Record<string, number>; burn_mc?: number; reserve_mc?: number };
+      const nodes = Object.values(split.nodes ?? {});
+      const paid = nodes.reduce((a, b) => a + b, 0);
+      return `${cr(p.cost_mc)} cr · ${model(p.model)} · ${nodes.length} ${nodes.length === 1 ? "node" : "nodes"} earned ${cr(paid)} · burn ${cr(split.burn_mc)} · reserve ${cr(split.reserve_mc)}`;
     }
+    case "availability_reward":
+      return `+${cr(p.amount_mc)} cr standby reward · node ${shortHash(str(p.node_id), 6, 4)}`;
     case "x402_payment":
-      return `${fmtHbar(str(p.amount_tinybar) || "0")} · ${str(p.model).split("/")[1] ?? str(p.model)}`;
+      return `${fmtHbar(str(p.amount_tinybar) || "0")} · ${model(p.model)} · ${Array.isArray(p.route) ? `${p.route.length} stages` : "route unknown"}`;
     case "credits_expired":
-      return `−${fmtNum(num(p.amount_mc)/1000, 1)} starter credits expired`;
+      return `−${cr(p.amount_mc)} ${str(p.kind) || "starter"} credits expired`;
     case "payout_address_set":
       return `payout → ${shortHash(str(p.payout_address), 6, 4)}`;
     case "epoch_closed":
-      return `epoch ${str(p.epoch)} · ${fmtHbar(str(p.total_tinybar) || "0")} · ${str(p.payouts)} payouts`;
+      return `epoch ${str(p.epoch)} · ${fmtHbar(str(p.total_tinybar) || "0")} · ${Array.isArray(p.payouts) ? `${p.payouts.length} payouts` : "payout list kept by the gateway"}`;
+    case "epoch_resolved":
+      return `epoch ${str(p.epoch)} re-posted · ${fmtHbar(str(p.refunded_tinybar) || "0")} to treasury`;
     case "payout_claimed":
       return `epoch ${str(p.epoch)} · ${fmtHbar(str(p.amount_tinybar) || "0")} claimed`;
+    case "agent_key_created":
+      return `agent key ${str(p.agent_id)} · budget ${cr(p.budget_mc, 0)} cr`;
+    case "hardware_challenge":
+      return `hardware check ${str(p.result)} · node ${shortHash(str(p.node_id), 6, 4)}`;
+    case "credits_clawed_back":
+      return `−${cr(p.amount_mc)} vesting credits to the reserve`;
+    case "account_banned":
+      return "account banned from running nodes";
+    default:
+      return `${e.type.replace(/_/g, " ")} (verification is disabled)`;
   }
 }
-const who = (e: LedgerEvent) => str(e.payload.account) || str(e.payload.payer) || str(e.payload.payout_address);
+const who = (e: LedgerEvent) => str(e.payload.account_id) || str(e.payload.payer) || str(e.payload.payout_address);
 
 function MirrorCheck({ seq }: { seq: number | null }) {
   const check = useAsync(() => (seq != null && topic ? api.mirror(topic, seq) : Promise.resolve(null)), [seq]);
@@ -86,7 +118,7 @@ export default function Ledger({ query }: { query: URLSearchParams }) {
       <PageHead
         label="LEDGER · HEDERA HCS"
         title="Every credit, on the record."
-        sub="The gateway signs each balance change and sends it to one public HCS topic. Open an event to check it on the Hedera mirror node."
+        sub="Every credit earned, spent, burned or expired, signed by the gateway and sent to one public HCS topic. Anyone can rebuild the balances from it. Open an event to check it on the Hedera mirror node."
         aside={
           <span className="ledger-topic">
             <span className="faint">topic</span> <span className="mono">{topic || "not set"}</span> <SourceBadge kind="hashscan" href={hashscanTopic(topic)} />

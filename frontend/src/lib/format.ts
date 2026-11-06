@@ -50,7 +50,7 @@ export function fmtLayers(l: [number, number] | null | undefined) {
   return l ? `[${l[0]}–${l[1]})` : "—";
 }
 
-/** "4060 [0–8) → M4 [8–24)" using a node-id → short GPU label lookup. */
+/** "M4 [0–20) → 4060 [20–40)" for any number of hops, using a node-id → short label lookup. */
 export function routeLabel(route: RouteHop[], label: (nodeId: string) => string) {
   return route.map((h) => `${label(h.node_id)} ${fmtLayers(h.layers)}`).join(" → ");
 }
@@ -66,3 +66,13 @@ export function gpuShort(gpu: string) {
   const a = gpu.match(/M\d( (Pro|Max|Ultra))?/);
   return a ? a[0] : gpu;
 }
+
+/** Short display name for a node without a nickname: "M4 · 0xa4a4…a4a4". */
+export function nodeName(node: { node_id: string; gpu?: string; nickname?: string } | undefined, id?: string) {
+  if (node?.nickname) return node.nickname;
+  const key = shortHash(node?.node_id ?? id ?? "", 6, 4);
+  return node?.gpu ? `${gpuShort(node.gpu)} · ${key}` : key;
+}
+
+/** Credits from millicredits, for display. */
+export const fmtMc = (mc: number, digits = 1) => fmtNum(mc / 1000, digits);

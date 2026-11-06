@@ -156,5 +156,32 @@ ok(/^0\.0\.\d+@\d+\.\d+$/.test(tx) && fx.LEDGER.at(-1)!.type === "payout_claimed
 await assert.rejects(mockApi.claim(claimable), /Already claimed/); pass++; console.log("  ✓ claim twice is refused");
 await assert.rejects(mockApi.claim({ ...claimable, epoch: 12 }), /not posted/); pass++; console.log("  ✓ open epoch cannot be claimed");
 
+console.log("integer millicredits (gateway rule, shared/README Units)");
+ok(credits.costMc(1.75, 412, 256) === 592200, "costMc: 14B, in 412, out 256 → 592,200 mc");
+ok(credits.costMc(1.0, 3, 1) === 1600, "costMc: 8B, in 3, out 1 → 1,600 mc");
+const r83 = [
+  { node_id: "m4", layers: [0, 20] as [number, number] },
+  { node_id: "m5", layers: [20, 29] as [number, number] },
+  { node_id: "4060", layers: [29, 40] as [number, number] },
+];
+const s83 = credits.splitMc(490_000, r83, 40);
+ok(s83.nodes.map((n) => n.mc).join() === "220500,99225,121275" && s83.burn_mc === 24500 && s83.reserve_mc === 24500, "§8.3 example: 220,500 / 99,225 / 121,275, burn 24,500, reserve 24,500");
+const s83self = credits.splitMc(490_000, r83, 40, (id) => id === "m5");
+ok(s83self.nodes[1].mc === 0 && s83self.nodes[1].self && s83self.reserve_mc === 123725, "§8.3 self-request: M5 gets 0, reserve 123,725");
+const odd = credits.splitMc(1001, [{ node_id: "a", layers: [0, 13] }, { node_id: "b", layers: [13, 27] }, { node_id: "c", layers: [27, 40] }], 40);
+ok(odd.nodes.reduce((a, n) => a + n.mc, 0) + odd.burn_mc + odd.reserve_mc === 1001 && odd.nodes.map((n) => n.mc).join() === "292,315,292" && odd.burn_mc === 50 && odd.reserve_mc === 52, "rounding remainder goes to the reserve; parts sum to the cost");
+const unknown = credits.splitMc(1000, null, 40);
+ok(unknown.nodes.length === 0 && unknown.burn_mc === 50 && unknown.reserve_mc === 950, "route unknown: every node share goes to the reserve");
+
+console.log("layer placement (simulator)");
+const layers = await import("../src/lib/layers.ts");
+const a3 = layers.allocateLayers([8, 16, 16], 40, 16.3)!;
+ok(a3.reduce((x, y) => x + y, 0) === 40 && a3[0] < a3[1], "3 laptops: 40 layers, smaller memory gets fewer");
+const a7 = layers.allocateLayers([8, 8, 16, 24, 16, 12, 32], 40, 16.3)!;
+const r7 = layers.toRoute(["a", "b", "c", "d", "e", "f", "g"], a7);
+ok(layers.coversExactly(r7, 40) && r7.length === 7, "7 laptops: route covers [0,40) exactly once");
+ok(layers.allocateLayers([4, 4], 40, 16.3) === null, "too little memory: the pool cannot hold the model");
+ok(!layers.coversExactly([{ node_id: "a", layers: [0, 20] }, { node_id: "b", layers: [19, 40] }], 40), "overlapping ranges are not a valid layer map");
+
 console.log(`\n${pass} checks passed`);
 process.exit(0);

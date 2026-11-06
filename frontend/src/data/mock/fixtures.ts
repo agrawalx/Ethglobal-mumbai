@@ -108,6 +108,8 @@ export const POOL: PoolListing = {
   layer_map: LAYER_MAP,
   reliability: Math.min(...NODES.map((n) => n.reliability)),
   load: 0.32,
+  restarting: false,
+  route_dispute: false,
   expires_at: T0 + LISTING_TTL,
 };
 
@@ -142,13 +144,17 @@ export const RECEIPTS: Receipt[] = Array.from({ length: 25 }, (_, i) => {
     prompt_hash: `0x${hex(64)}`,
     resp_hash: failed ? "" : `0x${hex(64)}`,
     status: failed ? "failed" : "ok",
+    account_id: null,
     ts,
   };
 });
 /** Who sent each credits receipt (for the ledger payload and the self-request rule). */
 export const REQUESTER = new Map<string, string>();
 RECEIPTS.forEach((rc, i) => {
-  if (rc.pay_type === "credits") REQUESTER.set(rc.req_id, requesters[i % requesters.length]);
+  if (rc.pay_type === "credits") {
+    REQUESTER.set(rc.req_id, requesters[i % requesters.length]);
+    rc.account_id = requesters[i % requesters.length];
+  }
 });
 
 /* ── epochs and payouts ────────────────────────────────────────────────── */

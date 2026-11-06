@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { Suspense, lazy, useCallback, useState } from "react";
 import { Brand } from "../components/Shared";
 import { Icon } from "../components/Icon";
 import CrewScene from "../components/CrewScene";
@@ -8,28 +8,29 @@ import { BRAND } from "../config/brand";
 import { navigate } from "../lib/router";
 import { useSession } from "../auth/context";
 
+const LiveLayerSim = lazy(() => import("../components/sim/LiveLayerSim"));
+
+/* The earn → spend loop, in order (SPEC §8). */
 const steps = [
   {
     number: "01",
-    title: "Log in with World ID.",
-    description: "One human, one account. You start with 10,000 credits.",
+    title: "Prove you are human.",
+    description: "Log in with World ID. One account per person, with 10,000 starter credits for 14 days to try any pool.",
   },
   {
     number: "02",
-    title: "Ask the pool.",
-    description: "One model, split across three laptops, answers you.",
+    title: "Lend your laptop to a pool.",
+    description: "Your laptop joins a pool and serves the layers that fit in its memory. No single laptop has to hold the whole model.",
   },
   {
     number: "03",
-    title: "Pay your way.",
-    description:
-      "Spend credits, or let an AI agent pay per request with x402.",
+    title: "Earn by the layer.",
+    description: "90% of every request goes to the laptops that served it, by layers served. Your own requests pay your laptop nothing. Earnings unlock after an hour.",
   },
   {
     number: "04",
-    title: "Share your laptop.",
-    description:
-      "Add your GPU to the pool. Earn credits, and HBAR every epoch.",
+    title: "Spend on another pool.",
+    description: "Use what you earned to query a different pool and model. Earn more than you spend and your requests go first when pools are busy.",
   },
 ];
 
@@ -63,7 +64,10 @@ export default function Landing() {
             How it works
           </a>
           <a href="#the-pool" onClick={() => setMenu(false)}>
-            The pool
+            Earn and spend
+          </a>
+          <a href="#simulator" onClick={() => setMenu(false)}>
+            Simulator
           </a>
           <a href="/network" onClick={() => setMenu(false)}>
             Network
@@ -102,12 +106,13 @@ export default function Landing() {
           </div>
           <div className="hero-aside">
             <p>
-              A spare GPU goes a long way.
+              Your laptop serves a slice
               <br />
-              Pool a gaming laptop and two 16 GB Macs.
-              <br className="desktop-break" /> Together they run Qwen3-14B,
-              <br className="desktop-break" /> a model none of them can hold
-              alone.
+              of a model too big for it.
+              <br />
+              Each request earns credits.
+              <br />
+              Spend them on any pool.
             </p>
             <button className="text-link" onClick={login}>
               {session.me ? "Open the playground" : "Log in with World ID"}{" "}
@@ -137,25 +142,25 @@ export default function Landing() {
         <section className="warm-section content-section" id="the-pool">
           <div className="section-topline">
             <span className="section-label">
-              <span className="tiny-cross">+</span> FROM IDLE TO EARNING
+              <span className="tiny-cross">+</span> SERVE, EARN, SPEND
             </span>
-            <span className="section-index">01 / A LITTLE POOLING</span>
+            <span className="section-index">01 / THE LOOP</span>
           </div>
           <div className="section-intro">
             <h2>
-              A pool is just a few laptops
+              Serve one pool.
               <br />
-              agreeing to share.
+              Spend in another.
             </h2>
             <p>
-              You bring the spare GPU. The pool brings the rest.
-              <br />
-              One model is split across three laptops, and the gateway
-              <br className="desktop-break" /> pays each one for the layers it
-              serves.
+              Like seeding a torrent: you give compute now and use it later.
+              <br className="desktop-break" /> A pool can be two laptops or twenty.
+              Each one serves its
+              <br className="desktop-break" /> share of the layers, and the gateway pays it
+              for exactly that share.
             </p>
           </div>
-          <div id="the-crew" className="landing-crew"><p className="faint">Illustration of a pool. See Network for connected machines and live status.</p>
+          <div id="the-crew" className="landing-crew"><p className="faint">An illustration of one pool. The Network page lists every live pool and node.</p>
             <CrewScene variant="landing" />
           </div>
           <div className="journey-steps">
@@ -168,12 +173,35 @@ export default function Landing() {
             ))}
           </div>
         </section>
+        <section className="content-section sim-section" id="simulator">
+          <div className="section-topline">
+            <span className="section-label">
+              <span className="tiny-cross">+</span> SPLIT A MODEL, FOLLOW A QUERY
+            </span>
+            <span className="section-index">02 / SIMULATOR</span>
+          </div>
+          <div className="section-intro">
+            <h2>
+              Add laptops.
+              <br />
+              Watch the layers move.
+            </h2>
+            <p>
+              Change how many laptops are in the pool and how much memory each has.
+              <br className="desktop-break" /> The layers split by memory, a query runs stage by stage, and the
+              <br className="desktop-break" /> credits settle with the gateway's real formula. Switch to a live pool to use a real layer map.
+            </p>
+          </div>
+          <Suspense fallback={<div className="sim sim-loading" aria-busy="true" />}>
+            <LiveLayerSim />
+          </Suspense>
+        </section>
         <section className="story-section" id="how-it-works">
           <div className="section-topline">
             <span className="section-label">
               <span className="tiny-cross">+</span> FROM INSTALL TO PAYOUT
             </span>
-            <span className="section-index">02 / HOW IT WORKS</span>
+            <span className="section-index">03 / HOW IT WORKS</span>
           </div>
           <div className="story-intro">
             <h2>
@@ -193,7 +221,7 @@ export default function Landing() {
             <span className="section-label">
               <span className="tiny-cross">+</span> EVERY CREDIT ON THE RECORD
             </span>
-            <span className="section-index">03 / THE LEDGER</span>
+            <span className="section-index">04 / THE LEDGER</span>
           </div>
           <div className="conversation-layout">
             <div>
@@ -219,12 +247,12 @@ export default function Landing() {
             <div className="landing-exchange">
               <div>
                 <span className="exchange-name">
-                  Rex · RTX 4060 <i />
+                  Stage 1 · RTX 4060 <i />
                 </span>
                 <p>
-                  Layers 0–11 done.
+                  My layers are done.
                   <br />
-                  Handing off to Mika.
+                  Handing off to the next stage.
                 </p>
               </div>
               <div>
@@ -232,9 +260,9 @@ export default function Landing() {
                   Hedy · Gateway <i />
                 </span>
                 <p>
-                  592 credits settled.
+                  592.2 credits settled.
                   <br />
-                  Split by layers.
+                  90% to the route by layers.
                 </p>
               </div>
               <div>
@@ -253,8 +281,8 @@ export default function Landing() {
           <div>
             <span className="section-label">SOME BIG MODELS START SMALL.</span>
             <h2>
-              One laptop.
-              <br />A whole pool.
+              Lend a laptop.
+              <br />Use the whole network.
             </h2>
             <button className="button button-blue" onClick={login}>
               {session.me ? "Open the playground" : "Log in with World ID"}{" "}

@@ -43,6 +43,7 @@ function toOffer(entry: Record<string, unknown>): ModelOffer {
   const known = config.models.find((m) => m.model_id === id);
   return {
     served: entry.served !== false,
+    pools: Number(entry.pools ?? 0),
     model: {
       model_id: id,
       mlx_variant: (entry.mlx_variant as string | null | undefined) ?? known?.mlx_variant ?? null,
@@ -80,13 +81,13 @@ export const liveApi: PoolApi = {
     const t0 = Date.now();
     const res = await fetch(`${base()}/v1/chat/completions`, {
       method: "POST",
-      headers: { "content-type": "application/json", ...auth(token) },
-      body: JSON.stringify({ ...body, stream: true }),
+      headers: { "content-type": "application/json", ...auth(token), ...(body.pool_id ? { "x-gpupool-pool": body.pool_id } : {}) },
+      body: JSON.stringify({ model: body.model, messages: body.messages, max_tokens: body.max_tokens, stream: true }),
       signal,
     });
     if (res.status === 402) throw new PaymentRequired();
     if (res.status === 401) throw new SessionExpired();
-    if (res.status === 503) throw new Error(`No pool is serving ${body.model} right now. You paid nothing.`);
+    if (res.status === 503) throw new Error(body.pool_id ? `Pool ${body.pool_id} cannot serve ${body.model} right now. You paid nothing.` : `No pool is serving ${body.model} right now. You paid nothing.`);
     if (!res.ok || !res.body) throw new Error(await errorText(res, "/v1/chat/completions"));
     const routeHeader = res.headers.get("x-gpupool-route");
     let receiptId: string | undefined = res.headers.get("x-gpupool-request-id") ?? undefined;
@@ -128,7 +129,7 @@ export const liveApi: PoolApi = {
     // No list endpoint in §5.2: find this account's request_settled events, then read each receipt.
     const me = await liveApi.me(token);
     const events = await liveApi.ledger({type:"request_settled",limit:100});
-    const ids = events.filter((e) => e.payload.account === me.account_id).slice(0, 10).map((e) => String(e.payload.req_id));
+    const ids = events.filter((e) => e.payload.account_id === me.account_id).slice(0, 10).map((e) => String(e.payload.req_id));
     return Promise.all(ids.map((id) => liveApi.request(id) as Promise<Receipt>));
   },
 

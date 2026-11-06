@@ -38,7 +38,8 @@ import type { StoryNode } from "./stage";
 /* ════════════════════════════════════════════════════════════════════════
    How it works: a pinned scroll story, adapted from the omniverse docs
    ScrollStory (sticky stage + crossfading captions + phase chip + HUD + rail).
-   Seven chapters follow the MVP flow (spec v0.1), from install to payout.
+   Seven chapters follow the flow from install to payout. The three laptops are illustrative;
+   live pools can have any number of nodes (see LayerSim and /network).
    ════════════════════════════════════════════════════════════════════════ */
 
 type Chapter = {
@@ -58,13 +59,13 @@ const CHAPTERS: Chapter[] = [
   {
     phase: "02 — LOG IN WITH WORLD",
     title: "Log in with World ID.",
-    body: "Open the link and prove you’re a real person. One human gets one account and up to 3 nodes, plus 10,000 starter credits.",
+    body: "Open the link and prove you’re a real person. One human gets one account and 10,000 starter credits. An account starts with up to 3 nodes and can grow to 5 once its nodes prove reliable.",
     foot: "World ID · Orb or Selfie Check · one account per nullifier",
   },
   {
     phase: "03 — THE MODEL ARRIVES",
-    title: "Split one model three ways.",
-    body: "Each laptop downloads the weights before it joins. Parallax gives each one a slice of layers that fits its memory. No single laptop can run this model alone.",
+    title: "Split one model across the pool.",
+    body: "Each laptop downloads the weights before it joins. Parallax gives each one a slice of layers that fits its memory, however many laptops there are. Here, none of them could run the model alone.",
     foot: "Parallax · private network · weights pre-downloaded",
   },
   {
@@ -76,13 +77,13 @@ const CHAPTERS: Chapter[] = [
   {
     phase: "05 — A REQUEST COMES IN",
     title: "Ask from any laptop.",
-    body: "A user outside the pool sends a prompt. The gateway picks the pool from Arkiv and streams the answer back through all three laptops.",
+    body: "A user outside the pool sends a prompt. The gateway picks the pool from Arkiv and streams the answer back through every laptop in the pipeline, stage by stage.",
     foot: "OpenAI-compatible API · route captured per request",
   },
   {
     phase: "06 — CREDITS SETTLE",
     title: "Credits split by work.",
-    body: "The gateway holds the maximum cost, then settles the real cost. 90% goes to the nodes by layers served, 5% is burned and 5% goes to the reserve. The receipt goes to Hedera HCS.",
+    body: "The gateway holds the maximum cost, then settles the real cost. 90% goes to the nodes by layers served, 5% is burned and 5% goes to the reserve. The owners can spend what they earned on any other pool. The receipt goes to Hedera HCS.",
     foot: "HCS · request_settled · HashScan",
   },
   {
@@ -493,7 +494,7 @@ function Stage({ t }: { t: MotionValue<number> }) {
           gpupool.pool · pool-1
         </text>
         <text x={750} y={503} className="story-svg-micro" fill={C.mut}>
-          3 nodes · renews every 30 s
+          {NODES.length} nodes in this example · renews every 30 s
         </text>
       </motion.g>
 

@@ -1,4 +1,5 @@
-/** Internal sprite keys (kept from quil: sprites, colors and CSS are keyed on them). Display names are below. */
+/** Illustrative crew for the landing scene (not live data; the Network page lists real nodes).
+    Internal sprite keys (kept from quil: sprites, colors and CSS are keyed on them). Display names are below. */
 export type AgentId = "quil" | "pip" | "milo" | "iris" | "wren";
 export type MissionPhase =
   | "idle"
@@ -28,7 +29,7 @@ export const crew: {
     light: "#d9f4ff",
     dark: "#3987c7",
     introduction:
-      "I’m Rex, a gaming laptop. I run the scheduler and the first 11 layers.",
+      "I’m Rex, a gaming laptop. I serve the first stage of layers that fit in my 8 GB.",
   },
   {
     id: "milo",
@@ -38,7 +39,7 @@ export const crew: {
     light: "#e9e2ff",
     dark: "#7154b5",
     introduction:
-      "I’m Mika, a 16 GB MacBook. I hold the middle 20 layers in MLX.",
+      "I’m Mika, a 16 GB MacBook. I hold a bigger slice of layers in MLX.",
   },
   {
     id: "quil",
@@ -48,7 +49,7 @@ export const crew: {
     light: "#f0f7ff",
     dark: "#7298ce",
     introduction:
-      "I’m the pool. Three laptops, one model, one route.",
+      "I’m the pool. Any number of laptops, one model, one route through all of them.",
   },
   {
     id: "iris",
@@ -68,6 +69,6 @@ export const crew: {
     light: "#ffe9d5",
     dark: "#ad7359",
     introduction:
-      "I’m Nova. I finish the last 9 layers and send the answer back.",
+      "I’m Nova. I serve the last stage and send the answer back.",
   },
 ];
