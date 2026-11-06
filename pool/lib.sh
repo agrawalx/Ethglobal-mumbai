@@ -37,6 +37,25 @@ net_flags() {
     --announce-maddrs "/ip4/$LAN_IP/tcp/$TCP_PORT" "/ip4/$LAN_IP/udp/$UDP_PORT/quic-v1")
 }
 
+# Post-MVP P5 runtime hooks (pool/hooks, docs/POST_MVP_PLAN.md): every Parallax Python process
+# imports pool/hooks/sitecustomize.py, which patches Parallax after import (never a fork).
+# HOOKS=0 in the env file turns them off.
+use_hooks() {
+  [ "${HOOKS:-1}" = "1" ] || return 0
+  export GPUPOOL_HOOKS=1 GPUPOOL_RUN_DIR="$RUN_DIR"
+  export PYTHONPATH="$POOL_DIR/hooks${PYTHONPATH:+:$PYTHONPATH}"
+}
+
+# Privacy: at debug level Parallax logs whole chat requests (prompts) on the scheduler and the nodes
+# (rpc_connection_handler / p2p server "Chat completion request: …"). Refuse it unless ALLOW_DEBUG_LOGS=1.
+no_prompt_logs() {
+  [ "${ALLOW_DEBUG_LOGS:-0}" = "1" ] && return 0
+  case " ${EXTRA_FLAGS:-} " in
+    *" --verbose "*|*" --log-level debug "*|*" --log-level DEBUG "*|*" --log-level=debug "*|*" --log-level=DEBUG "*)
+      die "debug logging writes prompts to the logs; remove it from EXTRA_FLAGS (or ALLOW_DEBUG_LOGS=1)" ;;
+  esac
+}
+
 # Use the Parallax venv without `source activate` (works the same in any shell).
 use_venv() {
   [ -x "$PARALLAX_DIR/.venv/bin/parallax" ] || die "no Parallax venv at $PARALLAX_DIR/.venv"
@@ -66,6 +85,8 @@ start_group() {
     [ -n "${HF_HUB_OFFLINE:-}" ] && printf ' HF_HUB_OFFLINE=%s' "$HF_HUB_OFFLINE"
     [ -n "${HF_HOME:-}" ] && printf ' HF_HOME=%q' "$HF_HOME"
     [ -n "${CUDA_HOME:-}" ] && printf ' CUDA_HOME=%q' "$CUDA_HOME"
+    [ -n "${GPUPOOL_HOOKS:-}" ] && printf ' GPUPOOL_HOOKS=1 PYTHONPATH=%q' "$PYTHONPATH"
+    [ -n "${GPUPOOL_ALLOWED_PEERS:-}" ] && printf ' GPUPOOL_ALLOWED_PEERS=%q' "$GPUPOOL_ALLOWED_PEERS"
     printf ' setsid'
     printf ' %q' "$@"
     printf ' > %q 2>&1 &\n' "$log"
@@ -75,6 +96,9 @@ start_group() {
   is_running "$name" && die "$name already running (pgid $(cat "$RUN_DIR/$name.pgid")); run pool/stop-all.sh first"
   mkdir -p "$RUN_DIR" "$LOG_DIR"
 
+  # Start marker: the node agent ignores log lines before it (old process; P5.5 no stale layers).
+  echo "=== gpupool start $name $(date -u +%Y-%m-%dT%H:%M:%SZ) ===" >>"$log"
+  rm -f "$RUN_DIR/node.peer-id"
   # p2p.key (scheduler identity) lives in the cwd of `parallax run`.
   cd "$PARALLAX_DIR" || die "cannot cd to $PARALLAX_DIR"
   if command -v setsid >/dev/null 2>&1; then

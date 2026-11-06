@@ -13,7 +13,22 @@ require PARALLAX_DIR ROLE MODEL INIT_NODES DHT_PREFIX LAN_IP TCP_PORT UDP_PORT
 # The scheduler downloads small model config files: never HF_HUB_OFFLINE here (HANDOFF §2.2).
 unset HF_HUB_OFFLINE
 [ "${DRY_RUN:-0}" = "1" ] || use_venv
+use_hooks
+no_prompt_logs
+# P5.4 admission: only peers the gateway lists (registered nodes with a fresh signed heartbeat) may
+# join. The gateway on this machine writes the file (gateway env PARALLAX_ALLOWED_PEERS_FILE).
+if [ -n "${ALLOWED_PEERS_FILE:-}" ]; then export GPUPOOL_ALLOWED_PEERS="$ALLOWED_PEERS_FILE"; fi
+# §16.1 node leave: cool-down before Parallax reloads every node (pool/hooks).
+if [ -n "${REBALANCE_COOLDOWN_S:-}" ]; then export GPUPOOL_REBALANCE_COOLDOWN_S="$REBALANCE_COOLDOWN_S"; fi
 net_flags
+# §16.1 many pools: one scheduler per pool on this host, each with its own private API port (127.0.0.1).
+# §16.1 WAN: your own relay servers / initial peers (multiaddrs). Empty = LAN only (MVP).
+SCHED_FLAGS=()
+[ -n "${API_PORT:-}" ] && SCHED_FLAGS+=(--port "$API_PORT")
+# shellcheck disable=SC2206 # space-separated multiaddr lists
+[ -n "${RELAY_SERVERS:-}" ] && SCHED_FLAGS+=(--relay-servers $RELAY_SERVERS)
+# shellcheck disable=SC2206
+[ -n "${INITIAL_PEERS:-}" ] && SCHED_FLAGS+=(--initial-peers $INITIAL_PEERS)
 
 # shellcheck disable=SC2086 # EXTRA_FLAGS is a list of flags: word-split on purpose.
-start_group scheduler parallax run -m "$MODEL" -n "$INIT_NODES" "${NET_FLAGS[@]}" ${EXTRA_FLAGS:-}
+start_group "${PROCESS_NAME:-scheduler}" parallax run -m "$MODEL" -n "$INIT_NODES" "${NET_FLAGS[@]}" "${SCHED_FLAGS[@]}" ${EXTRA_FLAGS:-}

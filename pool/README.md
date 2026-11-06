@@ -33,3 +33,33 @@ Download the model on each node **before** joining (nodes are offline: `HF_HUB_O
 
 Note: `/cluster/status_json` (Parallax `162354a`) lists `node_id` (libp2p peer ID), `status`, `gpu_name`,
 `gpu_memory` per node, but **no layer ranges**. See HANDOFF §9.
+
+## Post-MVP P5 resilience (docs/POST_MVP_PLAN.md, SPEC §3.4)
+
+| Part | Where | What |
+|---|---|---|
+| Runtime hooks | `hooks/sitecustomize.py`, `hooks/gpupool_hooks.py` | `lib.sh use_hooks` puts `pool/hooks` on `PYTHONPATH` with `GPUPOOL_HOOKS=1`; every Parallax Python process patches some Parallax classes after import. `HOOKS=0` turns this off. Parallax files are never changed. |
+| P5.3 grace hook | `NodeManager.activate` / `register_pipelines` | A node that waited for placement gets a fresh heartbeat clock when it becomes active, so slow joiners are no longer dropped at placement. |
+| P5.4 ghost guard | `RPCConnectionHandler.build_node` | Rejects `node_update` from peers the scheduler does not know (no auto-join of leftover processes) and `node_join` without hardware details. With `ALLOWED_PEERS_FILE` (scheduler env) a join waits ≤ 30 s for its peer ID in the gateway's allow-list. |
+| P5.8 route log | `RequestHandler._prepare_backend_request` | Logs `{gpupool_req_id, routing_table}` to `pool/run/routes.jsonl` and strips the field. Gateway: `PARALLAX_ROUTE_LOG`. |
+| Peer ID file | `GradientServer.get_node_info` (node side) | Writes `pool/run/node.peer-id` before the join; the node agent reports it. |
+| P5.5 / P5.6 restart | `restart.sh [--coordinator] [--join-delay S] [--lan-ip IP]` | Stop the process group, (coordinator: start the scheduler), join again. The node agent runs it on a gateway restart order or a LAN IP change (`AUTO_RESTART=true`). |
+| P5.7 memory | `join-node.sh` | A Mac without `--kv-cache-memory-fraction` and `--max-sequence-length` in `EXTRA_FLAGS` does not start (`ALLOW_MAC_DEFAULT_MEMORY=1` to override). |
+| P5.9 notify | `join-node.sh` | With `NOTIFY_PORT`, Parallax gets `--notify-url http://127.0.0.1:$NOTIFY_PORT/notify`; the node agent counts the sessions it serves. |
+
+Each start writes `=== gpupool start <name> <time> ===` to its log; the node agent ignores older lines.
+Hook tests (no Parallax needed): `python3 -m pytest pool/hooks`. Pin check against Parallax source:
+`PARALLAX_SRC=<parallax checkout at 162354a> python3 -m pytest pool/hooks`.
+Not verified on the live pool yet: run the start procedure once with hooks on and check the log lines
+`gpupool hooks: patched ...` in `pool/logs/scheduler.log` and `node.log`.
+
+## SPEC §16.1 pools (SPEC §3.5)
+
+| Part | Where | What |
+|---|---|---|
+| Node leave cool-down | `hooks/gpupool_hooks.py` (`Scheduler`) | Waits `REBALANCE_COOLDOWN_S` before Parallax reloads every node; cancelled if the pool is whole again. |
+| Many pools | `start-scheduler.sh` `API_PORT`, `PROCESS_NAME` | Several schedulers on the gateway host, each on its own `127.0.0.1` API port. |
+| Automatic formation | `pools-up.sh [gateway-url]` | Gateway host: reads `GET /pools/plan`, starts a scheduler per formed pool (`schedulers/<pool>.env`, API 3101+, P2P 5300+), writes `run/coordinators.json` (gateway `POOL_COORDINATORS_FILE`). Open the new P2P ports for the members (manual). |
+| Join a formed pool | `restart.sh --dht-prefix P` | The node agent runs it when the gateway assigns the node to a pool. |
+| WAN | `SCHEDULER_ADDR`, `RELAY_SERVERS`, `INITIAL_PEERS` | Our own relay / bootstrap multiaddrs; not tested over the internet. |
+| Privacy / batching | `START_LAYER`/`END_LAYER`, `MAX_BATCH_SIZE` | Parallax `--start-layer/--end-layer`, `--max-batch-size`. |
