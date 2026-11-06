@@ -13,13 +13,13 @@ const LoginSheet = lazy(() => import("./auth/LoginSheet"));
 
 const titles: Record<RouteName, string> = {
   landing: `${BRAND.name}: Spare GPUs, one bigger model.`,
-  chat: "Chat",
-  account: "Account",
-  keys: "API keys",
+  chat: "Playground",
+  account: "Credits & earnings",
+  keys: "API access",
   network: "Network",
-  ledger: "Ledger",
+  ledger: "Network activity",
   payouts: "Payouts",
-  provider: "Getting Started",
+  provider: "Contribute",
   notfound: "Not found",
 };
 

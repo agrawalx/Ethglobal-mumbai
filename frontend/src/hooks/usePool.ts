@@ -7,7 +7,8 @@ import { useAsync } from "./useAsync";
 /** Live pools, nodes and account stats (Arkiv, through the gateway) via the poll / mock ticker. */
 export function useNetwork() {
   const result = useAsync(() => api.network(), [], { refreshMs: 5000 });
-  return result.data ? {...result.data, error:result.error} : result.error ? {pools:[],nodes:[],stats:[],updated_at:0,error:result.error} : undefined;
+  const extra = { error: result.error, reload: result.reload, loading: result.loading };
+  return result.data ? { ...result.data, ...extra } : result.error ? { pools: [], nodes: [], stats: [], updated_at: 0, ...extra } : undefined;
 }
 
 export const useModels = () => useAsync(() => api.models(), [], { refreshMs: 15_000 });
@@ -30,4 +31,19 @@ export function useNow(ms = 1000) {
     return () => clearInterval(id);
   }, [ms]);
   return now;
+}
+
+/** The gateway applies the same marketplace and routing checks used by model discovery. */
+export function usePoolAvailability(poolId: string | undefined, model: string | undefined) {
+  const key = `${poolId ?? ""}\n${model ?? ""}`;
+  const result = useAsync(async () => {
+    if (!poolId || !model) return { key, value: null };
+    const { env } = await import("../config/env");
+    const { PoolAvailability } = await import("@gpupool/shared");
+    const url = `${env.gatewayUrl.replace(/\/$/, "")}/pools/${encodeURIComponent(poolId)}/availability?model=${encodeURIComponent(model)}`;
+    const response = await fetch(url, { headers: { accept: "application/json" } });
+    if (!response.ok) throw new Error("Could not check request availability. Try again.");
+    return { key, value: PoolAvailability.parse(await response.json()) };
+  }, [poolId, model], { refreshMs: 5000 });
+  return { ...result, data: result.data?.key === key && !result.error ? result.data.value : null };
 }

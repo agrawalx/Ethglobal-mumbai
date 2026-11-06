@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { Icon } from "../Icon";
-import { ErrorBox } from "../console/Status";
+import { ErrorBox, Busy } from "../console/Status";
 import { useWallet } from "../../wallet/useWallet";
 import { useSession } from "../../auth/context";
 import { providerApi } from "../../data/provider";
@@ -23,17 +23,17 @@ export default function ProviderForm({ mode, models, done }: { mode: "create" | 
     } catch (e) { setError(e as Error); }
     finally { setBusy(false); }
   }
-  return <form className="provider-form panel" onSubmit={submit}>
+  return <form id="provider-form" className="provider-form panel" onSubmit={submit}>
     <div className="provider-section-label"><span className="mono-label">01 / YOUR {mode === "create" ? "POOL" : "INVITATION"}</span><span className="pill pill-ok"><Icon name="user-check" size={12} /> World verified</span></div>
     <h2>{mode === "create" ? "Make room for a bigger model." : "Bring your laptop to the pool."}</h2>
     {mode === "create" ? <div className="provider-fields">
-      <label>Pool name<input name="name" required maxLength={60} placeholder="Friday GPU crew" autoComplete="off" /></label>
+      <label>Pool name<input name="name" autoFocus required maxLength={60} placeholder="Friday GPU crew" autoComplete="off" /></label>
       <label>Model<select name="model" required defaultValue={models.find(m => m.model_id.includes("14B"))?.model_id ?? models[0]?.model_id}>{models.map(m => <option key={m.model_id} value={m.model_id}>{m.model_id} · {m.size_gb} GB</option>)}</select></label>
       <label>Laptops in this pool<input name="count" type="number" required min={2} max={16} defaultValue={4} /><span className="faint">Include this coordinator. Start when everyone is prepared.</span></label>
-    </div> : <label>Pool ID<input name="pool" required placeholder="pool_…" autoComplete="off" spellCheck={false} /><span className="faint">Ask the coordinator for their Pool ID. They approve new members.</span></label>}
-    <div className="provider-payout"><label>Your HBAR payout address<input value={payout} onChange={e => setAddress(e.target.value)} required pattern="0x[0-9a-fA-F]{40}" placeholder="0x…" spellCheck={false} autoComplete="off" /><span className="faint">A Hedera testnet EVM address. Each owner receives their own share.</span></label>
-      {wallet.hasInjected && <button className="button button-ghost button-sm" type="button" disabled={wallet.connecting} onClick={() => wallet.connectInjected().catch(e => setError(e))}><Icon name="wallet" size={14} />{wallet.connecting ? "Connecting…" : "Use wallet"}</button>}</div>
-    {error && <ErrorBox error={error} />}
-    <button className="button button-blue" type="submit" disabled={busy || (mode === "create" && !models.length)}>{busy ? "Saving…" : mode === "create" ? "Create pool" : "Request to join"}<Icon name="arrow" size={15} /></button>
+    </div> : <label>Pool ID<input name="pool" autoFocus required placeholder="pool_…" autoComplete="off" spellCheck={false} /><span className="faint">Ask the coordinator for their Pool ID. They approve new members.</span></label>}
+    <div className="provider-payout"><label>Your HBAR payout address<input value={payout} onChange={e => setAddress(e.target.value)} required pattern="0x[0-9a-fA-F]{40}" placeholder="0x…" spellCheck={false} autoComplete="off" /><span className="faint">Needed because serving earns HBAR: requests paid with x402 are paid out to laptop owners each epoch on Hedera testnet. Each owner receives their own share at this EVM address (0x…).</span></label>
+      {wallet.hasInjected && <button className="button button-ghost button-sm" type="button" disabled={wallet.connecting} onClick={() => wallet.connectInjected().catch(e => setError(e))}><Icon name="wallet" size={14} />{wallet.connecting ? <Busy size={12}>Connecting…</Busy> : "Use wallet for payout address"}</button>}</div>
+    {error && <ErrorBox title={mode === "create" ? "Couldn't create the pool" : "Couldn't send your request"} error={error} hint="Nothing was saved. Fix the field above or try again." />}
+    <button className="button button-blue" type="submit" disabled={busy || (mode === "create" && !models.length)}>{busy ? <Busy>Saving…</Busy> : mode === "create" ? "Create pool" : "Request to join"}<Icon name="arrow" size={15} /></button>
   </form>;
 }

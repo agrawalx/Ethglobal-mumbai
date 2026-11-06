@@ -1,3 +1,4 @@
+import { Busy, Loading } from "../components/console/Status";
 /* World ID login (spec §6). Lazy-loaded so the landing does not ship IDKit.
    Real flow: rp_context from the gateway → IDKit widget → result sent to
    /auth/world/verify unchanged → JWT. There is no mock login: in staging, the human
@@ -93,11 +94,11 @@ export default function LoginSheet() {
             </div>
           </div>
         ) : rp === undefined ? (
-          <div className="skeleton" style={{ minHeight: 80 }} aria-busy="true" aria-label="Loading" />
+          <Loading h={80} />
         ) : real ? (
           <div className="world-actions">
             <button className="button button-blue" disabled={busy} onClick={() => setOpen(true)}>
-              <Icon name="user-check" size={15} /> {busy ? "Checking…" : "Continue with World ID"}
+              <Icon name="user-check" size={15} /> {busy ? <Busy>Checking…</Busy> : "Continue with World ID"}
             </button>
             {rp!.environment === "staging" && (
               <p className="login-sim-note" role="note">

@@ -57,6 +57,24 @@ test("discovery requires both an Arkiv catalog entry and a fresh ready pool; nev
   } finally { db.close(); }
 });
 
+test("pool availability follows model discovery and reports routing failures", async () => {
+  const { cfg, db, fake } = setup();
+  try {
+    const router = createRouter(cfg, db, fake);
+    assert.equal((await router.availability("pool-router-test", MODEL)).available, true);
+    assert.equal((await router.models()).data.some(entry => entry.id === MODEL), true);
+    db.prepare("UPDATE nodes SET hb_online = 0 WHERE node_id = ?").run(TEST_NODE);
+    const offline = await router.availability("pool-router-test", MODEL);
+    assert.equal(offline.available, false);
+    assert.match(offline.reason, /offline/i);
+    assert.equal((await router.models()).data.some(entry => entry.id === MODEL), false);
+    const missing = await createRouter(cfg, db, { ...fake, models: async () => [] }).availability("pool-router-test", MODEL);
+    assert.equal(missing.available, false);
+    assert.match(missing.reason, /model.*directory/i);
+    await assert.rejects(() => createRouter(cfg, db, { ...fake, models: async () => { throw new Error("directory unavailable"); } }).availability("pool-router-test", MODEL));
+  } finally { db.close(); }
+});
+
 test("router rejects offline, wrong-model, unknown URL, unregistered, wrong-pool, and stale-member listings", async () => {
   const { cfg, db, fake, model } = setup();
   try {

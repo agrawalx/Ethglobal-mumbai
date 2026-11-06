@@ -437,3 +437,61 @@
     opacity: 0.15;
   }
 }
+
+/* ── Landing: World / Arkiv / Hedera badges hanging above the crew (dark, no glow) ── */
+.crew-scene-landing { overflow: visible; margin-top: 80px; }
+/* the badges hang in the band above the scene, clear of the agents and their speech */
+.crew-hangers { position: absolute; inset: -78px 0 auto; height: 0; pointer-events: none; }
+.crew-hanger {
+  position: absolute;
+  left: var(--hx);
+  top: 0;
+  width: 0;
+  transform-origin: 50% 0;
+  animation: crew-sway 4.2s ease-in-out infinite;
+  animation-delay: var(--hdelay);
+}
+.crew-hanger-string {
+  display: block;
+  width: 1px;
+  height: var(--hlen);
+  margin: 0;
+  transform: translateX(-0.5px);
+  background: linear-gradient(180deg, transparent, rgba(242, 243, 247, 0.25));
+}
+.crew-hanger-badge {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  height: 40px;
+  padding: 0 12px 0 8px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  border: 1px solid rgba(242, 243, 247, 0.18);
+  background: rgba(10, 11, 14, 0.9);
+  color: #c9ccd3;
+  white-space: nowrap;
+  animation: crew-bob 3.4s ease-in-out infinite;
+  animation-delay: var(--hdelay);
+  transition: border-color 0.4s, background 0.4s;
+}
+.crew-hanger-badge b { font-size: 13px; font-weight: 600; color: #f2f3f7; letter-spacing: 0.02em; }
+/* the real logo, drawn in the badge's ink */
+.crew-hanger-logo {
+  display: block;
+  width: 22px;
+  height: 22px;
+  background: currentColor;
+  -webkit-mask: var(--logo) center / contain no-repeat;
+  mask: var(--logo) center / contain no-repeat;
+}
+.crew-hanger.is-active .crew-hanger-badge {
+  border-color: #278cff;
+  color: #ffffff;
+}
+@keyframes crew-sway { 0%, 100% { transform: rotate(-4deg); } 50% { transform: rotate(4deg); } }
+@keyframes crew-bob { 0%, 100% { translate: 0 0; } 50% { translate: 0 -4px; } }
+@media (max-width: 600px) { .crew-hanger-badge b { display: none; } .crew-hanger-badge { padding: 0 6px; } }
+@media (prefers-reduced-motion: reduce) { .crew-hanger, .crew-hanger-badge { animation: none; } }

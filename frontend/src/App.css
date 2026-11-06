@@ -136,7 +136,7 @@
 }
 .site-header {
   height: 92px;
-  position: absolute;
+  position: fixed;
   z-index: 10;
   top: 0;
   left: 0;
@@ -146,36 +146,10 @@
   justify-content: space-between;
   padding: 0 4.15%;
 }
-.nav-pill {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 5px;
-  border-radius: 40px;
+.nav-pill.gooey-nav {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  background: linear-gradient(135deg, #33323a80, #23222980);
-  border: 1px solid #ffffff21;
-  box-shadow:
-    inset 0 1px 0 #ffffff07,
-    0 3px 15px #0005;
-  backdrop-filter: blur(20px);
-}
-.nav-pill a {
-  font-size: 15px;
-  white-space: nowrap;
-  padding: 9px 16px;
-  border-radius: 30px;
-  transition:
-    background 0.2s,
-    color 0.2s;
-  color: #c0c0c7;
-}
-.nav-pill a:hover,
-.nav-pill .nav-current {
-  color: white;
-  background: #ffffff06;
 }
 .header-actions {
   display: flex;
@@ -206,23 +180,60 @@
     radial-gradient(ellipse at 82% 34%, #160b2120, transparent 45%);
   z-index: -2;
 }
-/* The hero figure (Fig 1, the card on the turntable) sits between the title and the scroll cue. */
-.hero-figure {
+/* hero GPU board (components/GpuBoard.tsx): tilted like a product shot, floats, follows the pointer */
+.gpu-stage {
   position: absolute;
-  left: 50%;
-  top: 37%;
-  width: min(580px, 42vw, 66svh);
-  transform: translateX(-50%);
-  z-index: 0;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
 }
-.figure-slot {
+.gpu-board {
+  --rx: 0deg;
+  --ry: 0deg;
+  position: absolute;
+  right: 2%;
+  top: 59%;
+  width: min(58vw, 940px);
+  transform: translateY(-50%) perspective(1600px) rotateX(calc(34deg + var(--rx))) rotateZ(calc(-14deg + var(--ry)));
+  transition: transform 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+  filter: drop-shadow(0 40px 60px rgba(0, 0, 0, 0.6));
+}
+.gpu-float {
+  position: relative;
+  animation: gpu-float 6s ease-in-out infinite;
+}
+.gpu-float img {
+  display: block;
   width: 100%;
+  height: auto;
+  user-select: none;
+  filter: drop-shadow(0 0 1px rgba(255, 214, 140, 0.3));
 }
-/* Let the card sit on the page's own night colour. */
-.hero-figure .gh.iso {
-  --anatomy-page: #030407;
-  --anatomy-card: #05070b;
-  --anatomy-paper: #05070b;
+/* the core: a warm gold glow over the die that breathes */
+.gpu-core-glow {
+  position: absolute;
+  left: 47.6%;
+  top: 55.1%;
+  width: 34%;
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 214, 140, 0.5) 0%, rgba(217, 164, 65, 0.25) 28%, rgba(217, 164, 65, 0) 65%);
+  mix-blend-mode: screen;
+  animation: gpu-breathe 4s ease-in-out infinite;
+}
+@keyframes gpu-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-12px); }
+}
+@keyframes gpu-breathe {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gpu-float, .gpu-core-glow { animation: none; }
+  .gpu-board { transition: none; }
 }
 .hero-copy {
   position: absolute;
@@ -581,6 +592,13 @@
   color: #8da6c9;
   margin-left: auto;
 }
+.footer-bottom > .footer-credit {
+  font-size: 11px;
+  color: #5d7391;
+}
+.footer-bottom > .footer-credit:hover {
+  color: #8da6c9;
+}
 .footer-bottom > .footer-year {
   font: 8px var(--display);
   color: #5d7391;
@@ -640,48 +658,6 @@
     display: none;
   }
 }
-.scene-loading {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: -1;
-}
-.scene-loading > span {
-  width: 150px;
-  height: 150px;
-  border: 1px solid #347cf337;
-  border-top-color: #83c8ff;
-  border-radius: 50%;
-  animation: orbit 3s linear infinite;
-}
-.scene-fallback {
-  position: absolute;
-  left: 50%;
-  top: 43%;
-  transform: translate(-50%, -50%);
-  color: #c6e8ff;
-  font: 45px var(--display);
-  text-shadow: 0 0 20px #459cff;
-}
-.scene-recovery { position: absolute; inset: 0; z-index: -1; }
-.scene-recovery > .text-link {
-  position: absolute;
-  left: 50%;
-  top: 70%;
-  transform: translateX(-50%);
-  font-size: 13px;
-}
-.fallback-cube {
-  position: absolute;
-  inset: -90px;
-  border: 2px solid #7cb6ff;
-  box-shadow:
-    inset 0 0 70px #2c79ff40,
-    0 0 90px #245bfa30;
-  transform: rotate(-14deg) skewY(6deg);
-}
 .sheet-backdrop {
   position: fixed;
   inset: 0;
@@ -722,11 +698,6 @@
 }
 .side-sheet > .text-link {
   margin-top: 25px;
-}
-@keyframes orbit {
-  to {
-    transform: rotate(360deg);
-  }
 }
 @keyframes breathing {
   0%,
@@ -792,6 +763,27 @@
     font-size: 11px;
   }
 }
+@media (max-width: 1200px) {
+  .nav-pill {
+    display: none;
+  }
+  .mobile-menu-button {
+    display: flex;
+    color: #9fb3d2;
+  }
+  .nav-pill.gooey-nav.mobile-nav-open {
+    display: flex;
+    top: 72px;
+    left: 20px;
+    right: 20px;
+    transform: none;
+    justify-content: center;
+    background: #151b28f2;
+    backdrop-filter: blur(25px);
+    padding: 8px;
+  }
+  .nav-pill .gooey-nav-list { justify-content: center; }
+}
 @media (max-width: 1100px) {
   .hero-copy h1 {
     font-size: 48px;
@@ -839,9 +831,10 @@
     height: 82px;
     padding-inline: 25px;
   }
-  .nav-pill a {
-    font-size: 12px;
-    padding: 8px 11px;
+  .nav-pill {
+    --gn-font: 12px !important;
+    --gn-x: 11px !important;
+    --gn-y: 8px !important;
   }
   .header-cta {
     padding-inline: 15px;
@@ -959,26 +952,9 @@
     padding-inline: 21px;
   }
   .nav-pill {
-    display: none;
-  }
-  .mobile-menu-button {
-    display: flex;
-    color: #9fb3d2;
-  }
-  .nav-pill.mobile-nav-open {
-    display: flex;
-    top: 72px;
-    left: 20px;
-    right: 20px;
-    transform: none;
-    justify-content: center;
-    background: #151b28f2;
-    backdrop-filter: blur(25px);
-    padding: 8px;
-  }
-  .nav-pill a {
-    font-size: 13px;
-    padding: 10px 12px;
+    --gn-font: 13px !important;
+    --gn-x: 12px !important;
+    --gn-y: 10px !important;
   }
   .header-cta {
     min-height: 34px;
@@ -1033,13 +1009,11 @@
     font-size: 12px;
     margin-top: 13px;
   }
-  .hero-figure {
-    position: relative;
-    left: auto;
-    top: auto;
-    width: auto;
-    transform: none;
-    margin: 28px 12px 0;
+  .gpu-board {
+    right: 50%;
+    top: 64%;
+    width: 96vw;
+    transform: translate(50%, -50%) perspective(1200px) rotateX(calc(30deg + var(--rx))) rotateZ(calc(-10deg + var(--ry)));
   }
   .scene-caption {
     bottom: 29px;
@@ -1197,9 +1171,6 @@
   }
   .side-sheet h2 {
     font-size: 20px;
-  }
-  .scene-fallback {
-    top: 50%;
   }
 }
 

@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
-import { EvmAddress, LedgerEventsResponse, ModelsResponse, NetworkResponse, PayoutsResponse, PoolId, Receipt, REQUEST_ID_HEADER, RequestId, PRICE_HEADER } from "@gpupool/shared";
+import { EvmAddress, LedgerEventsResponse, ModelsResponse, NetworkResponse, PoolAvailability, PayoutsResponse, PoolId, Receipt, REQUEST_ID_HEADER, RequestId, PRICE_HEADER } from "@gpupool/shared";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { chatHandler, logCompletion, type OnComplete } from "./chat.ts";
@@ -168,6 +168,14 @@ export function createApp({ cfg, db, signer, x402 = null, worldFetch, directory,
     const id = PoolId.safeParse(c.req.param("pool_id"));
     if (!id.success) return errorResponse(c, 400, "bad_request", "bad pool_id");
     return c.json(poolState(db, cfg, id.data));
+  });
+
+  app.get("/pools/:pool_id/availability", async (c) => {
+    const id = PoolId.safeParse(c.req.param("pool_id"));
+    const model = c.req.query("model");
+    if (!id.success || !model) return errorResponse(c, 400, "bad_request", "pool_id and model are required");
+    try { return c.json(PoolAvailability.parse(await router.availability(id.data, model))); }
+    catch { c.header("Retry-After", String(cfg.net.router.retry_after_s)); return errorResponse(c, 503, "no_pool_available", "Marketplace directory unavailable; check again."); }
   });
 
   app.get("/network", async (c) => {

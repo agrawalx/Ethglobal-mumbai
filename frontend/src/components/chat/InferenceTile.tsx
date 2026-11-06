@@ -49,10 +49,9 @@ export default function InferenceTile() {
   return (
     <section className="panel tile" aria-labelledby="tile-use">
       <span className="mono-label">
-        <Icon name="bolt" size={12} /> Use the API
+        <Icon name="bolt" size={12} /> API
       </span>
-      <h2 id="tile-use">Call a model no single laptop could run.</h2>
-      <p className="muted">OpenAI-compatible. Spend credits with a session token, or let an AI agent pay per request with x402 on Hedera testnet.</p>
+      <h2 id="tile-use">Use the API</h2>
 
       <div className="field">
         <span className="mono-label">API base</span>

@@ -470,3 +470,8 @@ The coordinator runs both roles: `pool/scheduler.env` (`ROLE=scheduler`, ports 5
 ## Live frontend integration
 
 Main frontend copied into backendXoutofscope. It is Vite/React with public VITE variables, live-only data and shared-schema adapters. See LIVE-DEMO-RUNBOOK.md for service configuration, tests and acceptance gates. Previous Next.js/NEXT_PUBLIC instructions are obsolete for this frontend. No hardware or payment acceptance is implied by a code build.
+
+
+### Pool request availability
+
+`GET /pools/:pool_id/availability?model=<model-id>` reports `available`, `reason`, `action`, and `checked_at`. It uses the marketplace model catalog and the same pool eligibility checks as `/v1/models`. The provider and network views poll this endpoint; connected helpers and directory listing status do not by themselves mean requests can be routed. A directory read failure returns 503, so the UI shows availability as unknown and allows a retry. The check is a snapshot: a later request can still fail if pool state changes.

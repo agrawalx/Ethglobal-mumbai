@@ -50,10 +50,8 @@ export function providerRoutes(db: Db, cfg: Config, signer: Signer, relay: Provi
   const accessible = (poolId: string, account: string) => providerMembers(db, poolId).some(m => m.account_id === account);
   const poolView = (poolId: string) => {
     const pool = providerPool(db, poolId)!;
-    const live = poolState(db, cfg, poolId);
     const now = Date.now();
     return ProviderPool.parse({ ...pool, coordinator_connected: providerConnected(db, poolId),
-      discoverable: pool.state === "ready" && providerConnected(db, poolId) && live.status === "ready",
       members: providerMembers(db, poolId).map(m => {
         const node = m.node_id ? db.prepare("SELECT hb_ts,hb_online FROM nodes WHERE node_id=?").get(m.node_id) as { hb_ts: number; hb_online: number } | undefined : undefined;
         return { ...m, approved: !!m.approved, funding_status: m.funded_at ? "funded" : funding ? "pending" : "operator_required",

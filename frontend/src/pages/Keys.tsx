@@ -9,7 +9,7 @@ import { PageHead } from "../components/ConsoleShell";
 import ReceiptSheet from "../components/chat/ReceiptSheet";
 import CopyButton, { CodeBox } from "../components/console/CopyButton";
 import { Icon } from "../components/Icon";
-import { Empty, ErrorBox, Loading } from "../components/console/Status";
+import { Empty, ErrorBox, Loading, Busy } from "../components/console/Status";
 import { api } from "../data";
 import type { ApiKey, NewApiKey } from "../data";
 import { useSession } from "../auth/context";
@@ -91,7 +91,7 @@ function KeyRow({ k, token, onRevoked, onReceipt, now }: { k: ApiKey; token: str
               <span className="faint">revoked</span>
             ) : (
               <button className="button button-sm button-ghost" disabled={busy} onClick={() => void revoke()}>
-                {busy ? "Revoking…" : "Revoke"}
+                {busy ? <Busy size={12}>Revoking…</Busy> : "Revoke"}
               </button>
             )}
           </span>
@@ -295,7 +295,7 @@ export default function Keys() {
             </label>
             <div className="tile-actions">
               <button className="button button-blue" type="submit" disabled={busy}>
-                {busy ? "Creating…" : "Create key"} <Icon name="arrow" size={15} />
+                {busy ? <Busy>Creating…</Busy> : "Create key"} <Icon name="arrow" size={15} />
               </button>
             </div>
           </form>

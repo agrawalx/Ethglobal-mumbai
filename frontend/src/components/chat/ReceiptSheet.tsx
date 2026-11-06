@@ -1,5 +1,6 @@
 import type { NodeListing, Receipt } from "@shared/types";
 import { Sheet } from "../Shared";
+import { useSession } from "../../auth/context";
 import SourceBadge from "../SourceBadge";
 import CopyButton, { CodeBox } from "../console/CopyButton";
 import { hashscanMessage, hashscanTx } from "../../lib/links";
@@ -22,13 +23,15 @@ export default function ReceiptSheet({ receipt, nodes, onClose }: { receipt: Rec
     .replace(/\[\s+(\d+),\s+(\d+)\s+\]/g, "[$1, $2]");
   const paid = receipt.pay_type === "x402" ? `${fmtHbar(receipt.x402_amount ?? "0")} (x402)` : cr(receipt.cost);
   const s = receipt.split;
+  const session = useSession();
+  const myNodes = new Set((session.me?.nodes ?? []).map((n) => n.node_id.toLowerCase()));
+  const toNodes = s ? s.nodes.reduce((sum, n) => sum + n.credits, 0) : 0;
+  const mineEarned = s ? s.nodes.filter((n) => !n.self && myNodes.has(n.node_id.toLowerCase())).reduce((sum, n) => sum + n.credits, 0) : 0;
 
   return (
     <Sheet title="Receipt" onClose={onClose}>
       <div className="receipt-sheet">
         <dl className="kv">
-          <dt>Request</dt>
-          <dd className="mono">{shortHash(receipt.req_id, 10, 4)}</dd>
           <dt>Model</dt>
           <dd className="mono">{receipt.model.split("/")[1] ?? receipt.model}</dd>
           <dt>Status</dt>
@@ -45,7 +48,7 @@ export default function ReceiptSheet({ receipt, nodes, onClose }: { receipt: Rec
           <dt>Time</dt>
           <dd>{fmtTime(receipt.ts)}</dd>
           <dt>Ledger</dt>
-          <dd>{receipt.hcs_seq != null ? <SourceBadge kind="hcs" seq={receipt.hcs_seq} href={hashscanMessage(env.hcsTopic, receipt.hcs_seq)} /> : <span className="faint">not on HCS yet</span>}</dd>
+          <dd>{receipt.hcs_seq != null ? <SourceBadge kind="hcs" seq={receipt.hcs_seq} href={hashscanMessage(env.hcsTopic, receipt.hcs_seq)} /> : <span className="faint">not on HCS yet</span>}{" "}<a className="text-link" href="/ledger">View in network activity</a></dd>
           {receipt.x402_tx && (
             <>
               <dt>Payment</dt>
@@ -54,10 +57,6 @@ export default function ReceiptSheet({ receipt, nodes, onClose }: { receipt: Rec
               </dd>
             </>
           )}
-          <dt>Prompt hash</dt>
-          <dd className="mono">{shortHash(receipt.prompt_hash, 10, 6)}</dd>
-          <dt>Reply hash</dt>
-          <dd className="mono">{shortHash(receipt.resp_hash, 10, 6)}</dd>
         </dl>
 
         <div>
@@ -76,6 +75,21 @@ export default function ReceiptSheet({ receipt, nodes, onClose }: { receipt: Rec
             })}
           </ol>
         </div>
+
+        {s && (
+          <div className="receipt-earned" role="status">
+            <span className="mono-label">Contributor earnings</span>
+            <p>
+              <b>{cr(toNodes)}</b> went to the {s.nodes.length} {s.nodes.length === 1 ? "laptop" : "laptops"} that served this request, by layers served.
+              {mineEarned > 0 && (
+                <>
+                  {" "}Your laptop earned <b>{cr(mineEarned)}</b>.{" "}
+                  <a className="text-link" href="/account">See your earnings</a>
+                </>
+              )}
+            </p>
+          </div>
+        )}
 
         {s && (
           <div>
@@ -113,13 +127,22 @@ export default function ReceiptSheet({ receipt, nodes, onClose }: { receipt: Rec
           </div>
         )}
 
-        <div>
+        <details className="receipt-tech">
+          <summary className="text-link">Technical details</summary>
+          <dl className="kv">
+            <dt>Request</dt>
+            <dd className="mono">{shortHash(receipt.req_id, 10, 4)}</dd>
+            <dt>Prompt hash</dt>
+            <dd className="mono">{shortHash(receipt.prompt_hash, 10, 6)}</dd>
+            <dt>Reply hash</dt>
+            <dd className="mono">{shortHash(receipt.resp_hash, 10, 6)}</dd>
+          </dl>
           <span className="mono-label">JSON</span>
           <CodeBox code={view} copy={false} />
           <div className="receipt-copy">
             <CopyButton text={JSON.stringify(receipt, null, 2)} label="Copy full JSON" />
           </div>
-        </div>
+        </details>
         <p className="faint">HCS holds hashes of your prompt and the reply, never the text. The gateway keeps the text for 7 days, then deletes it.</p>
       </div>
     </Sheet>

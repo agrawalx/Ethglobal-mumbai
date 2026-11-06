@@ -63,6 +63,15 @@ const poses: Partial<Record<MissionPhase, Partial<Record<AgentId, Pose>>>> = {
     wren: { x: 77, y: 70 },
   },
 };
+/* Hanging badges with the World, Arkiv and Hedera logos (public/brand, drawn in one ink via CSS mask) for World, Arkiv and Hedera above the crew (landing only); one lights up in the phase that talks about it. */
+const HANGERS = [
+  { id: "world", name: "World", x: 20, len: 24 },
+  { id: "arkiv", name: "Arkiv", x: 50, len: 24 },
+  { id: "hedera", name: "Hedera", x: 80, len: 24 },
+];
+/* which hanging badge the gateway is talking to in each phase */
+const activeHanger: Partial<Record<MissionPhase, string>> = { planning: "world", discovering: "arkiv", writing: "hedera", complete: "hedera" };
+
 const autoPhases: MissionPhase[] = [
   "idle",
   "introducing",
@@ -102,7 +111,7 @@ export default function CrewScene({
       className={`crew-scene crew-scene-${variant} phase-${current}`}
       data-phase={current}
       role="group"
-      aria-label="The pool: Rex, Mika and Nova, with Hedy the gateway, coordinated by Pod"
+      aria-label={variant === "landing" ? "Hedy the gateway coordinates World, Arkiv, Hedera and a pool: Pod the scheduler with Rex, Mika and Nova" : "The pool: Rex, Mika and Nova, with Hedy the gateway, coordinated by Pod"}
     >
       <div className="crew-ground" aria-hidden="true">
         <span />
@@ -191,6 +200,19 @@ export default function CrewScene({
           </div>
         );
       })}
+      {variant === "landing" && (
+        <div className="crew-hangers" aria-hidden="true">
+          {HANGERS.map((h, i) => (
+            <div key={h.name} className={`crew-hanger crew-hanger-${h.id}${activeHanger[current] === h.id ? " is-active" : ""}`} style={{ ["--hx" as string]: `${h.x}%`, ["--hlen" as string]: `${h.len}px`, ["--hdelay" as string]: `${i * -1.3}s` } as CSSProperties}>
+              <i className="crew-hanger-string" />
+              <span className="crew-hanger-badge">
+                <i className="crew-hanger-logo" style={{ ["--logo" as string]: `url(/brand/${h.id}.svg)` } as CSSProperties} />
+                <b>{h.name}</b>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       {variant === "landing" && (
         <div className="crew-scene-caption">
           <span>A LITTLE POOLING, IN MOTION.</span>

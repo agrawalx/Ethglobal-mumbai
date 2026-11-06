@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Brand } from "./Shared";
+import GooeyNav from "./GooeyNav";
 import { Icon } from "./Icon";
+import { Spinner } from "./console/Status";
 import type { IconName } from "./Icon";
 import { navigate } from "../lib/router";
 import type { RouteName } from "../lib/router";
@@ -11,14 +13,17 @@ import { useSession } from "../auth/context";
 import { available, liveStarter } from "../lib/credits";
 import { fmtNum } from "../lib/format";
 
-const nav: { name: RouteName; to: string; label: string; icon: IconName }[] = [
-  { name: "provider", to: "/getting-started", label: "Provide", icon: "laptop" },
-  { name: "chat", to: "/chat", label: "Chat", icon: "chat" },
-  { name: "account", to: "/account", label: "Account", icon: "user-check" },
-  { name: "keys", to: "/keys", label: "Keys", icon: "key" },
-  { name: "network", to: "/network", label: "Network", icon: "pod" },
-  { name: "ledger", to: "/ledger", label: "Ledger", icon: "list" },
-  { name: "payouts", to: "/payouts", label: "Payouts", icon: "coins" },
+/** Primary jobs. Account pages (credits, earnings, payouts, API access) live in the account menu. */
+const nav: { names: RouteName[]; to: string; label: string; icon: IconName }[] = [
+  { names: ["chat"], to: "/chat", label: "Playground", icon: "chat" },
+  { names: ["provider"], to: "/getting-started", label: "Contribute", icon: "laptop" },
+  { names: ["network", "ledger"], to: "/network", label: "Network", icon: "pod" },
+];
+
+const accountLinks: { to: string; label: string; icon: IconName }[] = [
+  { to: "/account", label: "Credits & earnings", icon: "user-check" },
+  { to: "/payouts", label: "Payouts", icon: "coins" },
+  { to: "/keys", label: "API access", icon: "key" },
 ];
 
 /** Header: credit balance + account menu when logged in, otherwise "Log in with World ID". */
@@ -39,7 +44,7 @@ function SessionButton() {
     };
   }, [open]);
 
-  if (s.loading) return <span className="session-chip" aria-busy="true">…</span>;
+  if (s.loading) return <span className="session-chip" aria-busy="true"><Spinner size={12} /></span>;
   if (!s.me)
     return (
       <button className="button button-blue console-cta" onClick={() => s.openLogin()}>
@@ -60,16 +65,19 @@ function SessionButton() {
           <span className="muted">
             {fmtNum(liveStarter(b), 1)} starter · {fmtNum(b.earned, 1)} earned
           </span>
-          <button
-            className="text-link"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false);
-              navigate("/account");
-            }}
-          >
-            Open account
-          </button>
+          {accountLinks.map((l) => (
+            <button
+              key={l.to}
+              className="text-link session-link"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                navigate(l.to);
+              }}
+            >
+              <Icon name={l.icon} size={14} /> {l.label}
+            </button>
+          ))}
           <button
             className="text-link"
             role="menuitem"
@@ -96,23 +104,22 @@ export default function ConsoleShell({
   wallet?: ReactNode;
 }) {
   const fallbacks = useFallbacks();
+  const active = nav.findIndex((item) => item.names.includes(current));
   return (
     <div className="console">
       <header className="console-header">
         <Brand />
-        <nav className="console-nav" aria-label="Console navigation">
-          {nav.map((item) => (
-            <a
-              key={item.name}
-              href={item.to}
-              className={item.name === current ? "is-current" : undefined}
-              aria-current={item.name === current ? "page" : undefined}
-            >
-              <Icon name={item.icon} size={15} />
-              {item.label}
-            </a>
-          ))}
-        </nav>
+        <GooeyNav
+          className={`console-nav${active < 0 ? " no-active" : ""}`}
+          ariaLabel="Console navigation"
+          items={nav.map((item) => ({
+            label: item.label,
+            href: item.to,
+            icon: <Icon name={item.icon} size={15} />,
+          }))}
+          activeIndex={active}
+          size="sm"
+        />
         <div className="console-actions">
           {env.dataMode === "live" && fallbacks.length > 0 && (
             <span className="badge badge-mock" role="status" title={`The live backend did not answer, so these use demo data: ${fallbacks.join(", ")}`}>
@@ -131,14 +138,6 @@ export default function ConsoleShell({
       <main className="console-main" id="console-main" tabIndex={-1}>
         {children}
       </main>
-      <footer className="console-footer">
-        <span>
-          <span className="tiny-cross">+</span> Data sources:
-        </span>
-        <span className="badge badge-arkiv">Arkiv</span> pools, nodes, models ·
-        <span className="badge badge-hcs">HCS</span> ledger events ·
-        <span className="badge badge-hashscan">HashScan</span> x402 payments &amp; payouts
-      </footer>
     </div>
   );
 }

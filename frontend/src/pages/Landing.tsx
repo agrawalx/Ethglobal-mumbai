@@ -1,39 +1,22 @@
-import { Suspense, lazy, useState } from "react";
+import { useState } from "react";
+import GooeyNav from "../components/GooeyNav";
 import { Brand } from "../components/Shared";
 import { Icon } from "../components/Icon";
+import type { IconName } from "../components/Icon";
 import CrewScene from "../components/CrewScene";
-import FigureBoundary from "../components/anatomy/FigureBoundary";
+import GpuBoard from "../components/GpuBoard";
 import PoolStory from "../components/story/PoolStory";
 import { BRAND } from "../config/brand";
 import { navigate } from "../lib/router";
 import { useSession } from "../auth/context";
 
-const LiveLayerSim = lazy(() => import("../components/sim/LiveLayerSim"));
-const GpuHero = lazy(() => import("../components/anatomy/GpuHero"));
-const LayerLine = lazy(() => import("../components/anatomy/LayerLine"));
 
-/* The earn → spend loop, in order (SPEC §8). */
-const steps = [
-  {
-    number: "01",
-    title: "Prove you are human.",
-    description: "Log in with World ID. One account per person, with 10,000 starter credits for 14 days to try any pool.",
-  },
-  {
-    number: "02",
-    title: "Lend your laptop to a pool.",
-    description: "Your laptop joins a pool and serves the layers that fit in its memory. No single laptop has to hold the whole model.",
-  },
-  {
-    number: "03",
-    title: "Earn by the layer.",
-    description: "90% of every request goes to the laptops that served it, by layers served. Your own requests pay your laptop nothing. Earnings unlock after an hour.",
-  },
-  {
-    number: "04",
-    title: "Spend on another pool.",
-    description: "Use what you earned to query a different pool and model. Earn more than you spend and your requests go first when pools are busy.",
-  },
+/* One request, executing across a pool. */
+const EXEC: { title: string; tag: string; icon: IconName }[] = [
+  { title: "Prompt", tag: "you → gateway", icon: "chat" },
+  { title: "Split across laptops", tag: "layers in a pipeline", icon: "laptop" },
+  { title: "Answer streams", tag: "token by token", icon: "bolt" },
+  { title: "Receipt on Hedera", tag: "cost + route on HCS", icon: "file" },
 ];
 
 export default function Landing() {
@@ -46,33 +29,30 @@ export default function Landing() {
     <div className="landing">
       <header className="site-header">
         <Brand />
-        <nav
+        <GooeyNav
+          id="main-navigation"
           className={`nav-pill${menu ? " mobile-nav-open" : ""}`}
-          aria-label="Main navigation"
-        >
-          <a
-            className="nav-current"
-            href="#platform"
-            onClick={() => setMenu(false)}
-          >
-            Platform
-          </a>
-          <a href="#how-it-works" onClick={() => setMenu(false)}>
-            How it works
-          </a>
-          <a href="#the-pool" onClick={() => setMenu(false)}>
-            Earn and spend
-          </a>
-          <a href="#simulator" onClick={() => setMenu(false)}>
-            Simulator
-          </a>
-          <a href="/network" onClick={() => setMenu(false)}>
-            Network
-          </a>
-          <a href="/getting-started" onClick={() => setMenu(false)}>
-            Become a provider
-          </a>
-        </nav>
+          items={[
+            { label: "Platform", href: "#platform" },
+            { label: "How it works", href: "#how-it-works" },
+            { label: "Earn and spend", href: "#the-pool" },
+            { label: "Network", href: "/network" },
+            { label: "Become a provider", href: "/getting-started" },
+          ]}
+          theme="dark"
+          size="md"
+          frame
+          particleCount={15}
+          spread={56}
+          animationTime={600}
+          timeVariance={300}
+          gooeyness={0.5}
+          wobble={0.5}
+          hoverEffect
+          onChange={() => {
+            if (menu) window.setTimeout(() => setMenu(false), 700);
+          }}
+        />
         <div className="header-actions">
           <button
             className="button button-blue header-cta"
@@ -84,6 +64,7 @@ export default function Landing() {
             className="icon-button mobile-menu-button"
             aria-label="Toggle navigation"
             aria-expanded={menu}
+            aria-controls="main-navigation"
             onClick={() => setMenu(!menu)}
           >
             <Icon name={menu ? "close" : "menu"} />
@@ -93,39 +74,19 @@ export default function Landing() {
       <main>
         <section className="hero-section" id="platform">
           <div className="hero-atmosphere" aria-hidden="true" />
+          <GpuBoard />
           <div className="hero-copy">
-            <span className="eyebrow">
-              <i className="status-dot" /> SPARE GPUS. ONE BIGGER MODEL.
-            </span>
             <h1>
               Your laptop, idle tonight.
               <br />
               Part of something bigger.
             </h1>
           </div>
-          <div className="hero-aside">
-            <p>
-              Your laptop serves a slice
-              <br />
-              of a model too big for it.
-              <br />
-              Each request earns credits.
-              <br />
-              Spend them on any pool.
-            </p>
-            <button className="text-link" onClick={login}>
-              {session.me ? "Open the playground" : "Log in with World ID"}{" "}
-              <Icon name="arrow" size={16} />
-            </button>
-          </div>
-          <div className="hero-figure">
-            <FigureBoundary ratio="640 / 520">
-              <GpuHero caption={false} />
-            </FigureBoundary>
-          </div>
           <div className="scene-caption">
             <span className="tiny-cross">+</span>
-            <span>MANY SMALL GPUS. ONE MODEL.</span>
+            <span>
+              MANY SMALL GPUS. ONE MODEL.
+            </span>
           </div>
           <a
             className="hero-scroll"
@@ -136,88 +97,48 @@ export default function Landing() {
             <Icon name="arrow" size={15} />
           </a>
           <div className="pointer-hint">
-            <span /> HOVER THE CARD
+            <span /> MOVE TO EXPLORE
           </div>
         </section>
         <section className="warm-section content-section" id="the-pool">
-          <div className="section-topline">
-            <span className="section-label">
-              <span className="tiny-cross">+</span> SERVE, EARN, SPEND
-            </span>
-            <span className="section-index">01 / THE LOOP</span>
-          </div>
-          <div className="section-intro">
+          <div className="section-intro loop-intro">
             <h2>
               Serve one pool.
               <br />
               Spend in another.
             </h2>
-            <p>
-              Like seeding a torrent: you give compute now and use it later.
-              <br className="desktop-break" /> A pool can be two laptops or twenty.
-              Each one serves its
-              <br className="desktop-break" /> share of the layers, and the gateway pays it
-              for exactly that share.
-            </p>
           </div>
-          <div id="the-crew" className="landing-crew"><p className="faint">An illustration of one pool. The Network page lists every live pool and node.</p>
+          <div id="the-crew" className="landing-crew">
             <CrewScene variant="landing" />
           </div>
-          <div className="journey-steps">
-            {steps.map((step) => (
-              <div className="journey-step" key={step.number}>
-                <span>{step.number}</span>
-                <h3>{step.title}</h3>
-                <p>{step.description}</p>
-              </div>
+          <ol className="exec-boxes" aria-label="How one request executes">
+            {EXEC.map((box, i) => (
+              <li key={box.title} className="exec-box" style={{ ["--i" as string]: i }}>
+                <span className="exec-icon" aria-hidden="true">
+                  <Icon name={box.icon} size={22} />
+                </span>
+                <b>{box.title}</b>
+              </li>
             ))}
-          </div>
-        </section>
-        <section className="content-section sim-section" id="simulator">
-          <div className="section-topline">
-            <span className="section-label">
-              <span className="tiny-cross">+</span> SPLIT A MODEL, FOLLOW A QUERY
-            </span>
-            <span className="section-index">02 / SIMULATOR</span>
-          </div>
-          <div className="section-intro">
-            <h2>
-              Add laptops.
-              <br />
-              Watch the layers move.
-            </h2>
-            <p>
-              Change how many laptops are in the pool and how much memory each has.
-              <br className="desktop-break" /> The layers split by memory, a query runs stage by stage, and the
-              <br className="desktop-break" /> credits settle with the gateway's real formula. Switch to a live pool to use a real layer map.
-            </p>
-          </div>
-          <Suspense fallback={<div className="sim sim-loading" aria-busy="true" />}>
-            <LiveLayerSim />
-          </Suspense>
+          </ol>
         </section>
         <section className="story-section" id="how-it-works">
           <div className="section-topline">
             <span className="section-label">
-              <span className="tiny-cross">+</span> FROM INSTALL TO PAYOUT
+              <span className="tiny-cross">+</span> FROM QUERY TO PAYOUT
             </span>
-            <span className="section-index">03 / HOW IT WORKS</span>
+            <span className="section-index">02 / HOW IT WORKS</span>
           </div>
           <div className="story-intro">
             <h2>
-              Seven steps.
+              Three laptops.
               <br />
-              One shared model.
+              One coordinator.
             </h2>
             <p>
-              Scroll through what happens between installing the node agent
-              and the first HBAR claim.
+              Scroll to watch a query come in, run across the pool, and get
+              split among the laptops by the work each one did.
             </p>
-          </div>
-          <div className="story-figure">
-            <FigureBoundary ratio="760 / 460">
-              <LayerLine />
-            </FigureBoundary>
           </div>
           <PoolStory />
         </section>
@@ -226,7 +147,7 @@ export default function Landing() {
             <span className="section-label">
               <span className="tiny-cross">+</span> EVERY CREDIT ON THE RECORD
             </span>
-            <span className="section-index">04 / THE LEDGER</span>
+            <span className="section-index">03 / THE LEDGER</span>
           </div>
           <div className="conversation-layout">
             <div>
@@ -322,6 +243,9 @@ export default function Landing() {
         <div className="footer-bottom">
           <Brand />
           <span>Built at ETHGlobal Mumbai.</span>
+          <a className="footer-credit" href="https://commons.wikimedia.org/wiki/File:Connect3D_X1800XT_512_MB_(heatsink_removed).png" target="_blank" rel="noreferrer">
+            GPU photo: Trio3D / Wikimedia Commons, CC BY-SA 3.0 (edited)
+          </a>
           <a href="#platform">
             Back to the stars <Icon name="arrow-up" size={13} />
           </a>

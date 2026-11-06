@@ -9,7 +9,7 @@ import { PageHead } from "../components/ConsoleShell";
 import SourceBadge from "../components/SourceBadge";
 import CopyButton from "../components/console/CopyButton";
 import { Icon } from "../components/Icon";
-import { Empty, ErrorBox, Loading } from "../components/console/Status";
+import { Empty, ErrorBox, Loading, Busy } from "../components/console/Status";
 
 import { useLedger, usePayouts, useNow } from "../hooks/usePool";
 import { useWallet } from "../wallet/useWallet";
@@ -36,13 +36,13 @@ function WalletGate() {
       <div className="tile-actions">
         {w.wrongChain ? (
           <button className="button button-blue" onClick={() => w.switchToHedera().catch((e: Error) => setErr(e.message))} disabled={w.switching}>
-            {w.switching ? "Switching…" : "Switch network"}
+            {w.switching ? <Busy>Switching…</Busy> : "Switch network"}
           </button>
         ) : (
           <>
             {w.hasInjected && (
               <button className="button button-blue" onClick={() => w.connectInjected().catch((e: Error) => setErr(e.message))} disabled={w.connecting}>
-                <Icon name="wallet" size={15} /> {w.connecting ? "Connecting…" : "Connect wallet"}
+                <Icon name="wallet" size={15} /> {w.connecting ? <Busy>Connecting…</Busy> : "Connect wallet"}
               </button>
             )}
             {w.canUseDemo && (
@@ -190,7 +190,7 @@ export default function Payouts() {
                                 </span>
                               ) : posted ? (
                                 <button className="button button-blue button-sm" onClick={() => claim(p)} disabled={busy != null}>
-                                  {busy === p.epoch ? "Claiming…" : `Claim ${fmtHbar(p.amount_tinybar)}`}
+                                  {busy === p.epoch ? <Busy>Claiming…</Busy> : `Claim ${fmtHbar(p.amount_tinybar)}`}
                                 </button>
                               ) : p.swept ? (
                                 <span className="faint">swept back to the treasury</span>
@@ -215,13 +215,13 @@ export default function Payouts() {
         </>
       )}
 
-      <section className="panel section-gap" aria-labelledby="epochs-h">
-        <div className="panel-head">
+      <details className="panel section-gap payout-tech">
+        <summary className="panel-head">
           <h2 id="epochs-h" className="section-title">
-            Epochs
+            Technical details: epochs and Merkle roots
           </h2>
           <span className="faint">from epoch_closed events on HCS</span>
-        </div>
+        </summary>
         {closed.error && !closed.data ? (
           <ErrorBox error={closed.error} retry={closed.reload} />
         ) : !closed.data ? (
@@ -273,7 +273,7 @@ export default function Payouts() {
             See epoch_closed events <Icon name="arrow" size={12} />
           </button>
         </p>
-      </section>
+      </details>
     </>
   );
 }

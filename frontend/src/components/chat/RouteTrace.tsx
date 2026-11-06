@@ -26,7 +26,7 @@ export default function RouteTrace({
     <section className={`panel route-trace${streaming ? " is-streaming" : ""}`} aria-labelledby="route-h">
       <div className="panel-head">
         <h2 id="route-h" className="section-title">
-          Route
+          Served by
         </h2>
         {route && (
           <span className="faint mono">
@@ -38,6 +38,10 @@ export default function RouteTrace({
         <>
           <p className="route-line mono" aria-live="polite">
             {routeLabel(route, label)}
+          </p>
+          <p className="faint route-note">
+            Confirmed route: the laptops the gateway reported for this request, in layer order.
+            {streaming && " The moving line is illustrative; it does not show which laptop is processing a token right now."}
           </p>
           <ol className="laptops" aria-label="Laptops serving this request, in order" style={{ ["--n" as string]: route.length }}>
             {route.map((h, i) => {

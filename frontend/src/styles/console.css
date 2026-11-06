@@ -44,40 +44,9 @@
 .console-header .brand > span {
   font-size: 22px;
 }
-.console-nav {
-  display: flex;
-  align-items: center;
-  gap: 2px;
+.console-nav.gooey-nav {
   margin-inline: auto;
-  padding: 4px;
-  border: 1px solid #ffffff14;
-  border-radius: 40px;
-  background: linear-gradient(135deg, #33323a55, #23222955);
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.console-nav a {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 13px;
-  border-radius: 30px;
-  font-size: 13.5px;
-  color: #b9bcc6;
-  white-space: nowrap;
-  transition:
-    background 0.2s,
-    color 0.2s;
-}
-.console-nav a:hover {
-  color: white;
-}
-.console-nav a.is-current {
-  color: white;
-  background: #ffffff10;
-}
-.console-nav a svg {
-  opacity: 0.7;
+  flex-shrink: 0;
 }
 .console-actions {
   display: flex;
@@ -466,27 +435,24 @@ a.badge:hover {
     padding: 0 18px;
     gap: 14px;
   }
-  .console-nav a span,
-  .console-nav a {
-    font-size: 12.5px;
-    padding: 7px 10px;
-  }
   .grid-3 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
-@media (max-width: 760px) {
+@media (max-width: 1100px) {
   .console-header {
     height: auto;
     flex-wrap: wrap;
     padding: 12px 16px;
   }
-  .console-nav {
+  .console-nav.gooey-nav {
     order: 3;
     width: 100%;
-    min-width: 0; /* scroll the links inside the pill, never widen the page */
+    min-width: 0;
     margin: 0;
   }
+}
+@media (max-width: 760px) {
   .console-actions .badge-mock {
     display: none;
   }
@@ -520,3 +486,63 @@ a.badge:hover {
 .console .button-blue:hover {
   background: #1c72dc;
 }
+
+/* loaders */
+.spinner {
+  display: inline-block;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  opacity: 0.75;
+  vertical-align: -2px;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.busy { display: inline-flex; align-items: center; gap: 8px; }
+.skeleton-loader { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; font-size: 13px; }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 2s; }
+}
+
+/* contribute: setup progression + serving dashboard */
+.provider-steps { display: flex; flex-wrap: wrap; gap: 6px 18px; list-style: none; padding: 0; margin: 4px 0 0; font-size: 13px; color: var(--faint); }
+.provider-steps li { display: inline-flex; align-items: center; gap: 6px; }
+.provider-steps li > span { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--line); font-size: 11px; }
+.provider-steps li.is-done { color: var(--muted); }
+.provider-steps li.is-current { color: var(--text); font-weight: 600; }
+.provider-steps li.is-current > span { border-color: var(--cyan); color: var(--cyan); }
+.provider-next { display: grid; gap: 4px; padding: 14px 16px; border: 1px solid var(--line); border-left: 3px solid var(--cyan); border-radius: 10px; }
+.provider-next p { margin: 0; }
+.provider-reqs { margin: 4px 0; padding-left: 18px; display: grid; gap: 4px; font-size: 13.5px; }
+.provider-serving-stats { margin: 6px 0; }
+.provider-more { border-top: 1px solid var(--line); padding-top: 12px; }
+.provider-more > summary { cursor: pointer; color: var(--muted); font-size: 13.5px; }
+.provider-more[open] > summary { margin-bottom: 12px; }
+
+/* errors: title · message · what to do · command · retry */
+.error-box { display: grid; gap: 6px; justify-items: start; }
+.error-box .error-title { color: #ffd0d0; font-size: 14.5px; }
+.error-box .error-msg { margin: 0; }
+.error-box .error-hint { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.error-box .error-cmd { display: block; max-width: 100%; overflow-x: auto; white-space: pre; padding: 8px 10px; border-radius: 8px; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 255, 255, 0.08); color: #e6e8ee; font-size: 12px; }
+.error-box .error-retry { margin-top: 4px; }
+
+/* wider console navbar: more space between and inside items (overrides GooeyNav's inline sm sizing) */
+.console-nav.gooey-nav {
+  --gn-gap: 14px !important;
+  --gn-x: 22px !important;
+  --gn-y: 8px !important;
+  --gn-pad: 6px !important;
+  --gn-font: 13.5px !important;
+}
+@media (max-width: 760px) {
+  .console-nav.gooey-nav { --gn-gap: 6px !important; --gn-x: 14px !important; }
+}
+
+/* success state + live pill */
+.success-box { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 16px; border: 1px solid #8ecab355; border-radius: 10px; background: #8ecab312; color: #cdeee0; font-size: 14px; }
+.success-dot { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: #8ecab3; color: #06110c; font-size: 12px; font-weight: 700; }
+.success-close { margin-left: auto; }
+.live-status { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; margin-right: 6px; }
+.live-status .status-dot { width: 7px; height: 7px; }

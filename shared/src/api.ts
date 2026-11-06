@@ -561,6 +561,15 @@ export const Receipt = z.object({
 });
 export type Receipt = z.infer<typeof Receipt>;
 
+// Gateway routing eligibility for one advertised pool and model.
+export const PoolAvailability = z.object({
+  available: z.boolean(),
+  reason: z.string(),
+  action: z.string(),
+  checked_at: TimestampMs,
+});
+export type PoolAvailability = z.infer<typeof PoolAvailability>;
+
 // ---------- GET /network ----------
 
 export const NetworkResponse = z.object({
