@@ -209,6 +209,18 @@ class BootstrapTests(unittest.TestCase):
         for bad in ({"max_batch_size": 0}, {"micro_batch_ratio": "2"}, {"scheduler_wait_ms": -1}):
             with self.subTest(bad=bad), self.assertRaises(ValueError): node_env(bad)
 
+    def test_configure_sets_equal_layer_split_for_the_scheduler_only_when_asked(self):
+        def scheduler_env(equal):
+            payload = {"pool_id": "pool_test", "member": {"ssh": "local", "port": 5101}, "facts": {"backend": "mlx", "ip": "10.1.0.1"},
+                       "dht_prefix": "gp-test", "gateway_url": "http://127.0.0.1:8080", "frontend_url": "http://127.0.0.1:8080",
+                       "api_port": 3001, "scheduler_port": 5100, "model": "Qwen/Qwen3-30B-A3B-Instruct-2507-FP8", "member_count": 4,
+                       "equal_layers": equal}
+            with patch.object(host, "app_paths", return_value=(self.root, self.root, self.root)):
+                host.configure(payload)
+            return (self.root / "pool/scheduler.env").read_text()
+        self.assertIn("EQUAL_LAYERS_NODES=4\n", scheduler_env(True))
+        self.assertIn("EQUAL_LAYERS_NODES=''\n", scheduler_env(False))
+
 if __name__ == "__main__":
     unittest.main()
 

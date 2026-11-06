@@ -26,6 +26,13 @@ const quote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
 const objectBody = async (c: Context) => { const body = await c.req.json().catch(() => null); return body && typeof body === "object" && !Array.isArray(body) ? body : {}; };
 const fail = (c: Context, status: 400 | 401 | 403 | 404 | 409 | 503, text: string) => errorResponse(c, status, status === 401 ? "unauthorized" : "bad_request", text);
 
+/** True when every approved member reported the same memory size (±0.5 GB). */
+export function equalLayers(members: { mem_gb: number | null }[]): boolean {
+  const mems = members.map(m => m.mem_gb);
+  if (mems.length < 2 || mems.some(m => m === null || !(m > 0))) return false;
+  return Math.max(...(mems as number[])) - Math.min(...(mems as number[])) <= 0.5;
+}
+
 export function providerRoutes(db: Db, cfg: Config, signer: Signer, relay: ProviderRelay, directory: Directory) {
   const app = new Hono<AppEnv>();
   const funding = providerFunding(db, cfg);
@@ -228,6 +235,9 @@ export function providerRoutes(db: Db, cfg: Config, signer: Signer, relay: Provi
       node_port: member.role === "coordinator" ? 5101 : 5102 + members.filter(m => m.role !== "coordinator").findIndex(m => m.id === member.id),
       coordinator_ip: coordinator.ip, member_ips: members.map(m => m.ip).filter(Boolean), model_config: cfg.model(pool.model),
       node_batching: cfg.net.node_batching,
+      // Same-memory members (e.g. all 16 GB Macs): the scheduler hook gives every member an equal layer share
+      // instead of Parallax's fewest-stages split. Mixed pools keep Parallax's split (a small GPU could not hold an equal share).
+      equal_layers: equalLayers(members),
       arkiv: Object.fromEntries(["ARKIV_RPC_URL", "ARKIV_CHAIN_ID", "ARKIV_ACCESS_KEY"].map(key => [key, cfg.env[key as keyof typeof cfg.env]]).filter(([, value]) => !!value)) });
   });
   helper.post("/fund", async c => {

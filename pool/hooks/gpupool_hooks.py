@@ -30,6 +30,10 @@ node side      parallax.p2p.server.GradientServer.get_node_info: writes this nod
                GPUPOOL_REBALANCE_COOLDOWN_S (default 60) first. If the node comes back, or the pool
                has a full pipeline again (a spare copy), nothing is reloaded. Only after the
                cool-down does the same global rebalance run (in the scheduler's event-loop thread).
+equal split    scheduling.node.Node.get_decoder_layer_capacity: with GPUPOOL_EQUAL_LAYERS_NODES=N, a node's
+               capacity is capped at ceil(num_layers / N). Parallax then needs all N nodes for one pipeline and
+               its water-filling gives each about the same number of layers (Parallax alone uses the fewest
+               stages, so same-memory pools leave members idle and overload the others). Never raises capacity.
 """
 from __future__ import annotations
 
@@ -263,6 +267,27 @@ def patch_scheduler(cls) -> None:
     setattr(cls, PATCHED, True)
 
 
+def patch_node(cls) -> None:
+    orig = cls.get_decoder_layer_capacity
+    if getattr(orig, PATCHED, False):
+        return
+
+    @functools.wraps(orig)
+    def get_decoder_layer_capacity(self, *args, **kwargs):
+        capacity = orig(self, *args, **kwargs)
+        try:
+            nodes = int(os.environ.get("GPUPOOL_EQUAL_LAYERS_NODES") or 0)
+        except ValueError:
+            return capacity
+        if nodes < 1:
+            return capacity
+        share = -(-int(self.model_info.num_layers) // nodes)  # ceil
+        return min(capacity, share)
+
+    setattr(get_decoder_layer_capacity, PATCHED, True)
+    cls.get_decoder_layer_capacity = get_decoder_layer_capacity
+
+
 # ---------- post-import patching ----------
 
 def _patch_module(name: str, mod) -> None:
@@ -277,6 +302,8 @@ def _patch_module(name: str, mod) -> None:
             patch_gradient_server(mod.GradientServer)
         elif name == "scheduling.scheduler":
             patch_scheduler(mod.Scheduler)
+        elif name == "scheduling.node":
+            patch_node(mod.Node)
         else:
             return
         log(f"patched {name}")
@@ -284,7 +311,7 @@ def _patch_module(name: str, mod) -> None:
         log(f"cannot patch {name}: {e}")
 
 
-TARGETS = {"scheduling.scheduler", "scheduling.node_management", "backend.server.rpc_connection_handler", "backend.server.request_handler", "parallax.p2p.server"}
+TARGETS = {"scheduling.scheduler", "scheduling.node", "scheduling.node_management", "backend.server.rpc_connection_handler", "backend.server.request_handler", "parallax.p2p.server"}
 
 
 class _Finder(importlib.abc.MetaPathFinder):

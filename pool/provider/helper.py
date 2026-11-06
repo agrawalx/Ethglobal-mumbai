@@ -495,7 +495,7 @@ def main():
         facts.update(installed)
         payload.update(facts=facts, coordinator=facts, member_count=current["expected_members"], model=current["model"],
                        scheduler_port=5100, api_port=3001, gateway_url=base, frontend_url=base, dht_prefix=current["dht_prefix"], arkiv=current["arkiv"],
-                       batching=current.get("node_batching"))
+                       batching=current.get("node_batching"), equal_layers=bool(current.get("equal_layers")))
         payload["member"].update(ssh="local" if info["role"] == "coordinator" else "provider", port=current["node_port"])
         if facts["backend"] == "mlx" and current["model"] == "Qwen/Qwen3-14B-FP8" and current["expected_members"] == 3:
             payload["member"]["param_mem_ratio"] = 0.37
@@ -539,6 +539,7 @@ def main():
             if config["state"] == "starting" and info["role"] == "coordinator" and scheduler_generation != config["generation"]:
                 report("starting", "Starting the private Parallax scheduler")
                 payload["member_count"] = config["expected_members"]
+                payload["equal_layers"] = bool(config.get("equal_layers"))
                 host.configure(payload)
                 host.service({**payload, "service": "scheduler"})
                 log = app / "pool/logs/scheduler.log"

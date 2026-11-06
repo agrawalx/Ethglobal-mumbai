@@ -304,6 +304,7 @@ PINS = {
         "RequestHandler": {"_prepare_backend_request": ["self", "request_data", "request_id", "routing_table"]},
     },
     "src/parallax/p2p/server.py": {"GradientServer": {"get_node_info": ["self", "is_update"]}},
+    "src/scheduling/node.py": {"Node": {"get_decoder_layer_capacity": ["self", "include_input_embed", "include_lm_head"]}},
     "src/scheduling/scheduler.py": {"Scheduler": {"checking_node_heartbeat": ["self"], "bootstrap": ["self", "reboot"],
                                                   "emit_alloc_log_snapshot": ["self"], "_process_leaves": ["self"]}},
     "src/scheduling/layer_allocation.py": {"BaseLayerAllocator": {"should_global_rebalance": ["self"]}},
@@ -330,3 +331,35 @@ def test_patched_functions_match_the_parallax_source():
     sched = (root / "src/scheduling/scheduler.py").read_text()
     assert "self.layer_allocator = allocator_class(" in sched and "if not self.layer_allocator.should_global_rebalance():" in sched
     assert "self.node_manager.standby([n.node_id for n in self.node_manager.active_nodes])" in sched
+
+
+def _capacity_node(capacity, layers=48):
+    class Info:
+        num_layers = layers
+
+    class Node:
+        model_info = Info()
+
+        def get_decoder_layer_capacity(self, include_input_embed=False, include_lm_head=False):
+            return capacity - (1 if include_input_embed or include_lm_head else 0)
+
+    H.patch_node(Node)
+    return Node()
+
+
+def test_equal_split_caps_capacity_at_an_equal_share(monkeypatch):
+    monkeypatch.setenv("GPUPOOL_EQUAL_LAYERS_NODES", "4")
+    node = _capacity_node(17)
+    assert node.get_decoder_layer_capacity() == 12  # ceil(48 / 4): 3 nodes can no longer hold the model
+    assert node.get_decoder_layer_capacity(include_input_embed=True) == 12
+    monkeypatch.setenv("GPUPOOL_EQUAL_LAYERS_NODES", "3")
+    assert _capacity_node(17, layers=40).get_decoder_layer_capacity() == 14  # ceil(40 / 3)
+
+
+def test_equal_split_never_raises_capacity_and_is_off_by_default(monkeypatch):
+    monkeypatch.setenv("GPUPOOL_EQUAL_LAYERS_NODES", "2")
+    assert _capacity_node(10).get_decoder_layer_capacity() == 10  # share 24 > real capacity 10
+    monkeypatch.delenv("GPUPOOL_EQUAL_LAYERS_NODES")
+    assert _capacity_node(17).get_decoder_layer_capacity() == 17
+    monkeypatch.setenv("GPUPOOL_EQUAL_LAYERS_NODES", "bad")
+    assert _capacity_node(17).get_decoder_layer_capacity() == 17

@@ -20,6 +20,8 @@ no_prompt_logs
 if [ -n "${ALLOWED_PEERS_FILE:-}" ]; then export GPUPOOL_ALLOWED_PEERS="$ALLOWED_PEERS_FILE"; fi
 # §16.1 node leave: cool-down before Parallax reloads every node (pool/hooks).
 if [ -n "${REBALANCE_COOLDOWN_S:-}" ]; then export GPUPOOL_REBALANCE_COOLDOWN_S="$REBALANCE_COOLDOWN_S"; fi
+# Equal layer split across N members (pool/hooks): set by the website onboarding for same-memory pools.
+if [ -n "${EQUAL_LAYERS_NODES:-}" ]; then export GPUPOOL_EQUAL_LAYERS_NODES="$EQUAL_LAYERS_NODES"; fi
 net_flags
 # §16.1 many pools: one scheduler per pool on this host, each with its own private API port (127.0.0.1).
 # §16.1 WAN: your own relay servers / initial peers (multiaddrs). Empty = LAN only (MVP).

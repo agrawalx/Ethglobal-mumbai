@@ -276,7 +276,9 @@ def configure(payload):
         env_file(app / "pool/scheduler.env", {**base, "ROLE": "scheduler", "MODEL": payload["model"],
                  "INIT_NODES": payload["member_count"], "TCP_PORT": payload["scheduler_port"],
                  "UDP_PORT": payload["scheduler_port"], "API_PORT": payload["api_port"],
-                 "EXTRA_FLAGS": "--host 127.0.0.1", "NOTIFY_PORT": ""})
+                 "EXTRA_FLAGS": "--host 127.0.0.1", "NOTIFY_PORT": "",
+                 # Scheduler hook: cap every node at ceil(layers / members) so all members get an equal share.
+                 "EQUAL_LAYERS_NODES": payload["member_count"] if payload.get("equal_layers") else ""})
     agent = {"GATEWAY_URL": payload["gateway_url"], "FRONTEND_URL": payload["frontend_url"], "POOL_ID": payload["pool_id"],
              "NODE_KEY_PATH": str(root / "keys/node.key"), "POOL_KEY_PATH": str(root / "keys/pool.key"),
              "IS_COORDINATOR": "true" if member["ssh"] == "local" else "false",
