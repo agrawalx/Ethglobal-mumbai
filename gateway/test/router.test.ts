@@ -183,3 +183,20 @@ test("billing credits only the selected Arkiv pool, ignoring another pool and th
     assert.equal(balance(db, account.accountId).held_mc, 0);
   } finally { globalThis.fetch = originalFetch; db.close(); }
 });
+
+test("P5.7: a pool with a swapping member loses the score race to a healthy pool, but stays routable alone", async () => {
+  const { cfg, db, fake, model } = setup();
+  try {
+    const a = (await fake.readyPools(MODEL))[0]!;
+    const bNode = "0x" + "c".repeat(40);
+    db.prepare(`INSERT INTO nodes (node_id, account_id, pool_id, gpu, mem_gb, registered_at, hb_ts, hb_online, hb_model, hb_layers)
+      VALUES (?, 'acc_router', 'pool-b', 'fixture', 8, ?, ?, 1, ?, '[0,40]')`).run(bNode, Date.now(), Date.now(), MODEL);
+    const b = { ...a, pool_id: "pool-b", members: [bNode] };
+    // Pool A's member swaps; A would otherwise win the alphabetical tie-break.
+    db.prepare("UPDATE nodes SET hb_mem_pressure = 'swap_growing' WHERE pool_id = ?").run(a.pool_id);
+    const both = createRouter(cfg, db, { ...fake, readyPools: async () => [a, b] });
+    assert.equal((await both.select(model))?.poolId, "pool-b");
+    const alone = createRouter(cfg, db, { ...fake, readyPools: async () => [a] });
+    assert.equal((await alone.select(model))?.poolId, a.pool_id, "still served when it is the only pool");
+  } finally { db.close(); }
+});

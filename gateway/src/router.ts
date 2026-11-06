@@ -6,6 +6,9 @@ import { configModelFor, poolLayerMap, poolContextLength } from "./route.ts";
 import { createPricing } from "./pricing.ts";
 import type { PoolQueue } from "./queue.ts";
 import { isRestarting, routeDispute, swappingMembers } from "./pools.ts";
+
+/** P5.7: score multiplier for a pool with a member whose swap keeps growing (degrade, not exclude). */
+const SWAP_SCORE_FACTOR = 0.5;
 import { poolReliability } from "./reliability.ts";
 import { coordinatorFor, coordinatorMap, urlHash as hashUrl } from "./formation.ts";
 import type { PrivacyMode } from "./privacy.ts";
@@ -84,12 +87,16 @@ export function createRouter(cfg: Config, db: Db, directory: Directory, queue?: 
         if (!opts.accountId || ![...priv, ...owners].includes(opts.accountId)) continue;
       }
       if ((db.prepare("SELECT count(*) AS n FROM nodes WHERE pool_id = ? AND banned = 1").get(p.pool_id) as { n: number }).n > 0) continue;
-      // Post-MVP P5.5 / P5.7: never route into a pool that is restarting or has a swapping member.
-      const swapping = swappingMembers(db, cfg, p.pool_id, now);
-      if (isRestarting(db, cfg, p.pool_id, now) || swapping.length > 0) {
-        console.warn(JSON.stringify({ msg: "pool_skipped", pool_id: p.pool_id, restarting: swapping.length === 0, swapping }));
+      // Post-MVP P5.5: never route into a pool that is restarting (it cannot serve).
+      if (isRestarting(db, cfg, p.pool_id, now)) {
+        console.warn(JSON.stringify({ msg: "pool_skipped", pool_id: p.pool_id, restarting: true }));
         continue;
       }
+      // P5.7: a member whose swap keeps growing makes the pool slower, not unusable. Lower its score
+      // (other pools win) instead of removing it: with one pool, requests are still served.
+      const swapping = swappingMembers(db, cfg, p.pool_id, now);
+      if (swapping.length > 0) console.warn(JSON.stringify({ msg: "pool_degraded", pool_id: p.pool_id, swapping }));
+      const swapFactor = swapping.length > 0 ? SWAP_SCORE_FACTOR : 1;
       // Every advertised member must be registered in THIS pool, online, and fresh.
       const members = p.members.map((id) => db.prepare(
         `SELECT n.hb_ts, n.hb_online, n.hb_model, n.hb_hw_verified, r.score FROM nodes n
@@ -108,7 +115,7 @@ export function createRouter(cfg: Config, db: Db, directory: Directory, queue?: 
         const hops = !route ? [] : opts.privacy.mode === "trusted-all" ? route : [route[0]!, route.at(-1)!];
         if (!route || !hops.every((h) => opts.privacy!.accounts.has(ownerOf(h.node_id) ?? ""))) continue;
       }
-      out.set(p.pool_id, { poolId: p.pool_id, coordinatorUrl, route, score: reliability * (1 - load), context_length: poolContextLength(db, cfg.net, p.pool_id, model, now) });
+      out.set(p.pool_id, { poolId: p.pool_id, coordinatorUrl, route, score: reliability * (1 - load) * swapFactor, context_length: poolContextLength(db, cfg.net, p.pool_id, model, now) });
     }
     return [...out.values()].sort((a, b) => b.score - a.score || a.poolId.localeCompare(b.poolId));
   }

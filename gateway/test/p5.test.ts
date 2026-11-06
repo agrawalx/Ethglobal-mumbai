@@ -122,12 +122,12 @@ test("P5.5: an unacknowledged restart stops blocking after restart_timeout_s", a
   s.db.close();
 });
 
-test("P5.7: a member that swaps while serving takes its pool out of routing", async () => {
+test("P5.7: a member that swaps while serving degrades its pool's score but keeps it routable", async () => {
   const s = await setup();
   await s.ready();
   await s.hb(2, [29, 40], { mem_pressure: "swap_growing", usable_mem_gb: 11.5 });
-  const r = await s.chat();
-  assert.equal(r.status, 503);
+  // The only pool stays usable (slower is better than no answer); with other pools it would lose the score race.
+  assert.equal((await s.chat()).status, 200);
   await s.hb(2, [29, 40], { mem_pressure: "ok" });
   assert.equal((await s.chat()).status, 200);
   s.db.close();
