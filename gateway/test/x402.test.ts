@@ -1,0 +1,126 @@
+import { test, before, after } from "node:test";
+import assert from "node:assert/strict";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { LedgerEvent, Receipt, REQUEST_ID_HEADER } from "@gpupool/shared";
+import { loadConfig } from "../src/config.ts";
+import { openDb } from "../src/db.ts";
+import { createApp } from "../src/app.ts";
+import { createX402, priceTinybar } from "../src/x402.ts";
+import { signer, TEST_JWT_SECRET } from "./helpers.ts";
+
+const MODEL = "Qwen/Qwen3-14B-FP8";
+const FEE_PAYER = "0.0.9185802";
+const PAYER = "0.0.11332604";
+const TX = "0.0.9185802@1793929496.997341480";
+
+let facilitator: Server;
+let pool: Server;
+let poolFail = false;
+const facCalls: string[] = [];
+let facUrl = "";
+
+before(async () => {
+  facilitator = createServer((req, res) => {
+    let s = "";
+    req.on("data", (d) => (s += d));
+    req.on("end", () => {
+      res.setHeader("content-type", "application/json");
+      facCalls.push(req.url ?? "");
+      if (req.url?.endsWith("/supported")) return res.end(JSON.stringify({ kinds: [{ x402Version: 2, scheme: "exact", network: "hedera:testnet", extra: { feePayer: FEE_PAYER } }], extensions: [], signers: {} }));
+      if (req.url?.endsWith("/verify")) return res.end(JSON.stringify({ isValid: true, payer: PAYER }));
+      if (req.url?.endsWith("/settle")) return res.end(JSON.stringify({ success: true, payer: PAYER, transaction: TX, network: "hedera:testnet" }));
+      res.statusCode = 404;
+      res.end("{}");
+    });
+  });
+  pool = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      if (poolFail) { res.statusCode = 500; return res.end("down"); }
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ id: "x", object: "chat.completion", created: 1, model: "x", choices: [{ index: 0, message: { role: "assistant", content: "paid answer" }, finish_reason: "stop" }], usage: { prompt_tokens: 9, completion_tokens: 2, total_tokens: 11 } }));
+    });
+  });
+  await new Promise<void>((r) => facilitator.listen(0, "127.0.0.1", r));
+  await new Promise<void>((r) => pool.listen(0, "127.0.0.1", r));
+  facUrl = `http://127.0.0.1:${(facilitator.address() as AddressInfo).port}`;
+});
+after(() => { facilitator.close(); pool.close(); });
+
+function setup() {
+  const cfg = loadConfig({ POOL_COORDINATOR_URL: `http://127.0.0.1:${(pool.address() as AddressInfo).port}`, DATABASE_PATH: ":memory:", JWT_SECRET: TEST_JWT_SECRET });
+  const db = openDb(":memory:");
+  const x402 = createX402({ cfg: cfg.net, facilitatorUrl: facUrl, network: "hedera:testnet", payTo: "0.0.11331600" });
+  const app = createApp({ cfg, db, signer, x402, onComplete: () => {} });
+  return { cfg, db, app };
+}
+
+const send = (app: ReturnType<typeof setup>["app"], body: object, headers: Record<string, string> = {}) =>
+  app.request("/v1/chat/completions", { method: "POST", headers: { "content-type": "application/json", accept: "application/json", ...headers }, body: JSON.stringify(body) });
+
+const requirementsOf = (r: Response) => JSON.parse(Buffer.from(r.headers.get("PAYMENT-REQUIRED")!, "base64").toString("utf8"));
+
+test("pricing tiers (SPEC §7.3): model and max_tokens", () => {
+  const cfg = loadConfig({ POOL_COORDINATOR_URL: "http://x", DATABASE_PATH: ":memory:" });
+  assert.equal(priceTinybar(cfg.net, MODEL, 1), "2000000");
+  assert.equal(priceTinybar(cfg.net, MODEL, 512), "2000000");
+  assert.equal(priceTinybar(cfg.net, MODEL, 513), "6000000");
+  assert.equal(priceTinybar(cfg.net, MODEL, 2048), "6000000");
+  assert.equal(priceTinybar(cfg.net, "Qwen/Qwen3-8B-FP8", 512), "1000000");
+  assert.equal(priceTinybar(cfg.net, "Qwen/Qwen3-8B-FP8", 2048), "3000000");
+  assert.throws(() => priceTinybar(cfg.net, MODEL, 2049), /last tier/);
+});
+
+test("unpaid request (no session) → 402 with HBAR requirements priced by the body; nothing recorded", async () => {
+  const { app, db } = setup();
+  const small = await send(app, { model: MODEL, messages: [{ role: "user", content: "hi" }], max_tokens: 100 });
+  assert.equal(small.status, 402);
+  assert.ok(small.headers.get(REQUEST_ID_HEADER));
+  const req = requirementsOf(small);
+  assert.equal(req.x402Version, 2);
+  const a = req.accepts[0];
+  assert.deepEqual({ scheme: a.scheme, network: a.network, asset: a.asset, amount: a.amount, payTo: a.payTo, feePayer: a.extra?.feePayer }, { scheme: "exact", network: "hedera:testnet", asset: "0.0.0", amount: "2000000", payTo: "0.0.11331600", feePayer: FEE_PAYER });
+  const big = await send(app, { model: MODEL, messages: [{ role: "user", content: "hi" }], max_tokens: 1000 });
+  assert.equal(requirementsOf(big).accepts[0].amount, "6000000");
+  const s8 = await send(app, { model: "Qwen/Qwen3-8B-FP8", messages: [{ role: "user", content: "hi" }] });
+  assert.equal(requirementsOf(s8).accepts[0].amount, "1000000");
+  assert.equal((db.prepare("SELECT count(*) AS n FROM requests").get() as { n: number }).n, 0);
+  // Validation still comes first: bad body → 400, not 402.
+  assert.equal((await send(app, { model: MODEL, messages: [] })).status, 400);
+  db.close();
+});
+
+test("paid request: verify + settle BEFORE the pool runs; row with payer/tx/amount; x402_payment event; PAYMENT-RESPONSE", async () => {
+  const { app, db } = setup();
+  const unpaid = await send(app, { model: MODEL, messages: [{ role: "user", content: "hi" }], max_tokens: 64 });
+  const reqs = requirementsOf(unpaid);
+  const payload = { x402Version: 2, resource: reqs.resource, accepted: reqs.accepts[0], payload: { transaction: "AAAA" } };
+  facCalls.length = 0;
+  const r = await send(app, { model: MODEL, messages: [{ role: "user", content: "hi" }], max_tokens: 64 }, { "PAYMENT-SIGNATURE": Buffer.from(JSON.stringify(payload)).toString("base64") });
+  assert.equal(r.status, 200, await r.clone().text());
+  assert.deepEqual(facCalls.filter((u) => !u.endsWith("/supported")).map((u) => u.split("/").pop()), ["verify", "settle"]);
+  assert.ok(r.headers.get("PAYMENT-RESPONSE"));
+  const receipt = Receipt.parse(await (await app.request(`/requests/${r.headers.get(REQUEST_ID_HEADER)}`)).json());
+  assert.equal(receipt.pay_type, "x402");
+  assert.equal(receipt.status, "ok");
+  assert.equal(receipt.x402_payer, PAYER);
+  assert.equal(receipt.x402_tx, TX);
+  assert.equal(receipt.x402_amount_tinybar, "2000000");
+  assert.equal(receipt.account_id, null);
+  assert.equal(receipt.cost_mc, null);
+  const ev = LedgerEvent.parse(JSON.parse((db.prepare("SELECT payload FROM ledger_events WHERE type = 'x402_payment'").get() as { payload: string }).payload));
+  assert.equal(ev.type === "x402_payment" && ev.tx_id, TX);
+  assert.equal(ev.type === "x402_payment" && ev.out_tokens, 2);
+
+  // Paid, then the pool fails: recorded as failed, no refund, no event.
+  poolFail = true;
+  const f = await send(app, { model: MODEL, messages: [{ role: "user", content: "hi" }], max_tokens: 64 }, { "PAYMENT-SIGNATURE": Buffer.from(JSON.stringify(payload)).toString("base64") });
+  poolFail = false;
+  assert.equal(f.status, 502);
+  const fr = Receipt.parse(await (await app.request(`/requests/${f.headers.get(REQUEST_ID_HEADER)}`)).json());
+  assert.equal(fr.status, "failed");
+  assert.equal(fr.x402_tx, TX);
+  assert.equal((db.prepare("SELECT count(*) AS n FROM ledger_events WHERE type = 'x402_payment'").get() as { n: number }).n, 1);
+  db.close();
+});
