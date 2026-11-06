@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { EvmAddress, LedgerEventsResponse, ModelsResponse, NetworkResponse, PayoutsResponse, PoolId, Receipt, REQUEST_ID_HEADER, RequestId, PRICE_HEADER } from "@gpupool/shared";
 import type { Config } from "./config.ts";
@@ -137,11 +137,20 @@ export function createApp({ cfg, db, signer, x402 = null, worldFetch, directory,
   app.delete("/agents/:id", session(secret, true), (c) =>
     revokeAgentKey(db, c.get("accountId")!, c.req.param("id")) ? c.json({ ok: true as const }) : errorResponse(c, 404, "not_found", "no such active agent key"));
 
-  // SPEC §16.3 collusion flags (operator, loopback only). Flags only.
-  app.get("/incentives/flags", (c) => {
+  /**
+   * Operator-only routes. A reverse proxy or tunnel on this host (Cloudflare Tunnel, nginx) also
+   * connects from loopback, so a request that carries proxy headers came from outside: refuse it.
+   */
+  const localOperator = (c: Context): boolean => {
     let addr = "";
     try { addr = getConnInfo(c).remote.address ?? ""; } catch { addr = ""; }
-    if (!["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(addr)) return errorResponse(c, 403, "unauthorized", "loopback only");
+    const proxied = ["cf-connecting-ip", "cf-ray", "x-forwarded-for", "x-real-ip", "forwarded"].some((h) => c.req.header(h) !== undefined);
+    return !proxied && ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(addr);
+  };
+
+  // SPEC §16.3 collusion flags (operator, loopback only). Flags only.
+  app.get("/incentives/flags", (c) => {
+    if (!localOperator(c)) return errorResponse(c, 403, "unauthorized", "loopback only");
     return c.json(CollusionFlagsResponse.parse(collusionFlags(db, cfg.net)));
   });
 
@@ -151,9 +160,7 @@ export function createApp({ cfg, db, signer, x402 = null, worldFetch, directory,
   // SPEC §16.1 formation: pools formed from "auto" nodes, with their private DHT names. Only for
   // pool/pools-up.sh on this host (loopback), because the names keep strangers out of the pools.
   app.get("/pools/plan", (c) => {
-    let addr = "";
-    try { addr = getConnInfo(c).remote.address ?? ""; } catch { addr = ""; }
-    if (!["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(addr)) return errorResponse(c, 403, "unauthorized", "loopback only");
+    if (!localOperator(c)) return errorResponse(c, 403, "unauthorized", "loopback only");
     return c.json(PoolPlanResponse.parse(poolPlan(db, cfg)));
   });
 
