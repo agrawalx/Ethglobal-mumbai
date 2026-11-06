@@ -365,7 +365,9 @@ Each component has a `.env.example`. Copy it to `.env` and fill it. Summary:
 | `REBALANCE_COOLDOWN_S` | Scheduler only (§16.1): wait before Parallax reloads all nodes after a leave (default 60) |
 | `SCHEDULER_ADDR` / `RELAY_SERVERS` / `INITIAL_PEERS` | §16.1 WAN: scheduler multiaddr and our own relay / bootstrap multiaddrs; empty = LAN (MVP) |
 | `START_LAYER` / `END_LAYER` | §16.1 privacy: pin this node to `[start, end)` (pin all nodes of the pool: Parallax does not rebalance mixed pools) |
-| `MAX_BATCH_SIZE` | §16.1 batching: Parallax `--max-batch-size` (Parallax default 8) |
+| `MAX_BATCH_SIZE` | §16.1 batching: Parallax `--max-batch-size` (Parallax default 8; managed pools: `node_batching.max_batch_size`, 4) |
+| `MICRO_BATCH_RATIO` | §16.1 batching: Parallax `--micro-batch-ratio`, micro batch = `MAX_BATCH_SIZE / ratio` (Parallax default 1; managed pools 2) |
+| `SCHEDULER_WAIT_MS` | §16.1 batching: Parallax `--scheduler-wait-ms`, time to gather a batch (Parallax default 500; managed pools 50) |
 | `ALLOW_DEBUG_LOGS` | Privacy: `1` allows `--verbose` / `--log-level debug` (Parallax then logs prompts); default refused |
 | `ALLOW_MAC_DEFAULT_MEMORY` | Post-MVP P5.7: `1` lets a Mac start without the memory flags (not recommended) |
 

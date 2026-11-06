@@ -133,7 +133,7 @@ All on the MVP model: Parallax schedulers stay on the gateway host behind `127.0
 - **Election:** the heartbeat response says `pool_writer`; the gateway keeps the current writer while it is fresh, else picks the most reliable fresh online member. Only the writer upserts `gpupool.pool` (with the gateway's `coordinator_url_hash`).
 - **Formation:** register a node with `pool_id: "auto"`. Its heartbeats report `usable_mem_gb`, `lan_ip`, `p2p_port`; the gateway sends `probe` lists; agents measure TCP-connect delay and report `rtt_ms`. The gateway groups nodes whose every pair is ≤ `pool_formation.max_rtt_ms` and whose memory holds a model (size × 1.2), at least `min_nodes`; pool ID `auto-<hash>`, private DHT prefix from a gateway secret. The response `assigned_pool` makes the agent restart with that prefix; `pool/pools-up.sh` (gateway host) starts the scheduler from `GET /pools/plan` (loopback only). Formed pools are not re-planned.
 - **WAN:** `SCHEDULER_ADDR`, `RELAY_SERVERS`, `INITIAL_PEERS` pass our own multiaddrs to Parallax (public relays are never used by default).
-- **Batching:** `router.max_concurrent_per_pool` requests per pool at once (MVP 1); node `MAX_BATCH_SIZE`.
+- **Batching:** `router.max_concurrent_per_pool` requests per pool at once (now 2; router load = running / slots); node `MAX_BATCH_SIZE`, `MICRO_BATCH_RATIO`, `SCHEDULER_WAIT_MS` (managed pools take them from `node_batching` in the gateway config: 4 / 2 / 50 ms). The coordinator helper forwards relay jobs in parallel.
 - **Privacy:** header `x-gpupool-privacy: trusted-ends` (other values → 400).
 
 ---
@@ -791,7 +791,7 @@ The MVP (§1–§15) is complete. The team built most items below on purpose aft
 | Coordinator cross-check | **Implemented (post-MVP P5.9, Section 5.5):** flag only; holding credits needs vesting (P7.1). |
 | WAN / Global Host | **Scripts ready, not tested (Section 3.5):** `SCHEDULER_ADDR`, `RELAY_SERVERS`, `INITIAL_PEERS` for our own relay/bootstrap nodes. Running a relay server and internet latency are not tested. |
 | Memory-aware scheduling | **Implemented (post-MVP P5.7):** Mac memory flags enforced, swap watch, router skips swapping pools. |
-| Speculative decoding, batching tuning | **Batching implemented** (`router.max_concurrent_per_pool`, node `MAX_BATCH_SIZE`). **Speculative decoding stays out:** Parallax `162354a` has no switch for it; adding it means changing Parallax (CLAUDE.md §3). |
+| Speculative decoding, batching tuning | **Batching implemented** (`router.max_concurrent_per_pool` = 2, node `--max-batch-size 4 --micro-batch-ratio 2 --scheduler-wait-ms 50` from `node_batching`; results in `docs/BATCHING-HANDOFF.md` §7). **Speculative decoding stays out:** Parallax `162354a` has no switch for it; adding it means changing Parallax (CLAUDE.md §3). |
 | Privacy | **Implemented (Section 5.6), no Parallax change:** `trusted-ends` and `trusted-all` routing, no transcript for privacy requests, encrypted transcripts at rest, salted public hashes, HTTPS on the gateway, no prompt logging on nodes; operators pin layers with `START_LAYER`/`END_LAYER`. Not done: hiding hidden states from untrusted middle nodes (would need a Parallax change) — use `trusted-all`. |
 
 ### 16.2 Verification (DISABLED — planned, will be redesigned)

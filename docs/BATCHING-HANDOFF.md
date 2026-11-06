@@ -93,3 +93,34 @@ arrival order on ties). Billing, routes, receipts and HCS events are per request
   and Mac swap stable during the run.
 - Gateway, shared, frontend, node-agent and bootstrap tests pass; changes committed with short
   one-line messages (no co-author lines) and pushed.
+
+## 7. Results and status (7 Nov 2026)
+
+Implemented:
+
+- `shared/config/gpupool.config.json`: `router.max_concurrent_per_pool` 1 → **2** (start at 2 because the 16 GB
+  Macs already swap at batch 1; raise to 4 only if `vm.swapusage` stays flat during a concurrency-2 run; this needs
+  only a gateway restart). New `node_batching` `{max_batch_size 4, micro_batch_ratio 2, scheduler_wait_ms 50}`.
+- Gateway: `/provider/helper/config` sends `node_batching`; router load = running / slots (capped at 1).
+- `pool/bootstrap/host.py`: `configure()` writes `MAX_BATCH_SIZE`, `MICRO_BATCH_RATIO`, `SCHEDULER_WAIT_MS` from
+  the gateway's `node_batching` (defaults 4 / 2 / 50); Mac memory flags unchanged. `pool/join-node.sh` passes
+  `--micro-batch-ratio` and `--scheduler-wait-ms`. Because the helper reads `node_batching` at every coordinated
+  start, later tuning needs only a gateway restart + **Retry setup**, not new helper runs.
+- `pool/provider/helper.py`: one poller, each relay job in its own thread (8 workers = the relay's per-pool cap).
+  The gateway queue already limits chat jobs to `max_concurrent_per_pool`, so delivered jobs never wait in the helper.
+- Parallax's `max_running_request` (`/cluster/status_json`) is the minimum node `--max-batch-size`, so the node flag
+  alone raises it; no scheduler flag is needed.
+- Stall detection: not changed. Single-stream p95 × 10 is far below the 5 s floor, and gaps recorded under batching
+  raise the pool's p95 by themselves. Risk: a long prompt's prefill admitted into a running batch can pause the other
+  streams. If the benchmark's `worst_gap` comes near 5000 ms, raise `resilience.stall_min_ms` (config only).
+- `scripts/bench-concurrency.mjs`: the benchmark. Results table: `docs/LIVE-DEMO-RUNBOOK.md` "Batching benchmark".
+
+Steps to finish (the user; helpers run in each owner's Terminal):
+
+1. Restart the gateway (§5) so it serves the new bundle and config.
+2. Re-run the helper command from the website on the coordinator (with `--gateway http://127.0.0.1:8080`), then
+   on both Macs. The coordinator needs the new `helper.py` for the parallel relay.
+3. Click **Retry setup** on the coordinator's Getting Started page. Check `pool/logs/node.log` shows the new flags
+   and `curl -s 127.0.0.1:3001/cluster/status_json` shows `"max_running_request": 4`.
+4. Run the benchmark (runbook) at `LEVELS=1,2,4` with the Mac swap check, then cancel one stream in the middle of a
+   batch (§4) and check that no stage logs "must already be admitted".

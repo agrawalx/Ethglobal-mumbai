@@ -76,3 +76,30 @@ Open findings:
 - Node agents do not report tok/s.
 - Hashio JSON-RPC returned intermittent 502s and timeouts; settlement retried until it posted.
 - Use the hooks-on launch (`GPUPOOL_HOOKS=1`, `PYTHONPATH=pool/hooks`, cool-down 60 s, route log) for the demo.
+
+## Batching benchmark (2026-11-07)
+
+Command (gateway host; one dev account; 256 output tokens per request):
+
+```bash
+TOKEN=$(cd gateway && node --env-file=.env scripts/dev-session.ts bench | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+TOKEN=$TOKEN LEVELS=1,2,4 node scripts/bench-concurrency.mjs
+```
+
+Watch the Macs during the run: `ssh … 'sysctl -n vm.swapusage; memory_pressure | tail -1'`, and the gateway log for
+`pool_degraded`, `pool_skipped` and `stalled`.
+
+**Before** (`max_concurrent_per_pool` 1, node `--max-batch-size 1`, helper forwards one job at a time). Not re-measured:
+the live pool was wedged at 01:14 (last stage `load 1/1`, every request stalled at 0 tokens). Numbers from the
+scheduler log of the same pool (Nov 06 23:07–23:49, 256-token requests): 7.49 and 8.05 tok/s, TTFT 0.6–0.7 s.
+Concurrency 2 and 4 are serialized by construction, so aggregate ≈ the concurrency-1 rate and wall time ≈ N × one request.
+
+| Concurrent | Aggregate tok/s | Median TTFT (s) | Median decode tok/s per request | Source |
+|---|---|---|---|---|
+| 1 | ≈ 8 | 0.6–0.7 | 7.5–8.1 | scheduler log |
+| 2 | ≈ 8 (serialized) | second waits ≈ 33 s | ≈ 8 | by construction |
+| 4 | ≈ 8 (serialized) | last waits ≈ 100 s | ≈ 8 | by construction |
+
+**After** (`max_concurrent_per_pool` 2, node `--max-batch-size 4 --micro-batch-ratio 2 --scheduler-wait-ms 50`,
+concurrent helper relay): not measured yet. It needs the helpers re-run and **Retry setup**
+(`docs/BATCHING-HANDOFF.md` §7). Paste the script's table here.
