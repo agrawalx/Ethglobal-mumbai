@@ -40,7 +40,7 @@ test("/network directory outage returns 503 + Retry-After; empty live directory 
   try {
     const base = { models: async () => [], readyPools: async () => [], nodes: async () => [], pools: async () => [] };
     const empty = createApp({ cfg, db, signer, directory: base });
-    assert.deepEqual(await (await empty.request('/network')).json(), { source: 'arkiv', pools: [], nodes: [] });
+    assert.deepEqual(await (await empty.request('/network')).json(), { source: 'arkiv', pools: [], nodes: [], stats: [] });
     const down = createApp({ cfg, db, signer, directory: { ...base, pools: async () => { throw new Error('RPC outage'); } } });
     const res = await down.request('/network');
     assert.equal(res.status, 503);
