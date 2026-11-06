@@ -212,7 +212,7 @@ The gateway is one TypeScript service (Node 24, Hono or Fastify). It is the only
 | GET | `/me` | Session | Balance, ratio, nodes, reliability. |
 | POST | `/nodes/register` | Session | Links a node key to the account. |
 | POST | `/nodes/heartbeat` | Node key signature | Node status and layer range. Response: owner account and reliability (for the Arkiv listing). |
-| GET | `/pools/:pool_id` | None | The gateway's view of a pool: members with a fresh heartbeat, layer map, status. The coordinator writes `gpupool.pool` from it. |
+| GET | `/pools/:pool_id` | None | The gateway's view of a pool: members with a fresh heartbeat, layer map, status, pool reliability. The pool writer writes `gpupool.pool` from it. |
 | GET | `/requests/:id` | None | Receipt: route, cost, HCS sequence number. |
 | GET | `/network` | None | Pools and nodes (for the frontend). |
 | GET | `/ledger/events` | None | Recent ledger events with HCS sequence numbers (for the `/ledger` page). |
@@ -522,8 +522,8 @@ uptime_rate  = heartbeats_received / heartbeats_expected  (last 7 days)
 
 | Use | Rule |
 |---|---|
-| Pool score | Pool reliability = the lowest node reliability in the pool. The router uses it (Section 5.4). |
-| Display | The account page and Arkiv show the score. |
+| Pool score | **The pool is the reputation identity.** Pool reliability = 0.7 × pool success rate (requests routed to the pool that it served, 7-day window, client aborts excluded, unknown routes included) + 0.3 × pool uptime (share of heartbeat-interval slots, since the pool was first seen, in which every member was fresh and the layers covered the model exactly once). A new pool starts at 0.8. The gateway computes it (tables `pool_request_outcomes`, `pool_up_slots`, `pool_reliability`); the router uses the gateway's own value (Section 5.4), never the published one. Node reliability still exists for stage blame, node caps and display. |
+| Display | The account page shows node scores. Arkiv `gpupool.pool` carries `reliability` (the pool score); `gpupool.node` carries the node score. |
 | Limit | No penalties in credits in the MVP. Post-MVP (§8.8): a final fraud verdict claws back locked credits and bans the nullifier; reliability itself still costs no credits. |
 
 ---
@@ -671,7 +671,7 @@ Arkiv is the **public directory** of the network. It shows what exists **now**. 
 | Entity | Writer | Fields (indexed fields in bold) | Expiry | Reader |
 |---|---|---|---|---|
 | `gpupool.node` | Node agent (node key) | **owner_account**, **node_id**, **pool_id**, **gpu**, mem_gb, **status**, layers, tok_s, reliability | 120 s, extended every 30 s | Frontend network page, gateway |
-| `gpupool.pool` | Coordinator (pool key) | **pool_id**, **models**, members, **status**, coordinator_url_hash, layer_map | 120 s, extended every 30 s | **Router**, model list, frontend |
+| `gpupool.pool` | Elected pool writer (pool key, else its node key) | **pool_id**, **models**, members, **status**, coordinator_url_hash, layer_map, reliability (pool score, §9.2) | 120 s, extended every 30 s | **Router**, model list, frontend |
 | `gpupool.model` | Admin | **model_id**, mlx_variant, size_gb, model_factor, license | 30 days | Gateway, frontend |
 | `gpupool.account_stats` | Gateway | **account_id** (pseudonymous), earned, spent, ratio, reliability | 1 day, updated every 10 min | Frontend leaderboard |
 
