@@ -68,4 +68,39 @@ class ProviderHelperTests(unittest.TestCase):
             self.assertEqual((source / "model.safetensors").read_bytes(), data)
 
 
+    def test_relay_forwards_jobs_concurrently_with_one_poller(self):
+        import threading, time
+        stop, lock = threading.Event(), threading.Lock()
+        queue, windows, polls = [{"id": "a"}, {"id": "b"}, {"id": "c"}], {}, []
+        def poll():
+            with lock:
+                polls.append(time.monotonic())
+                job = queue.pop(0) if queue else None
+            if job is None: time.sleep(0.05)
+            return job
+        def forward(job):
+            start = time.monotonic(); time.sleep(0.3)
+            with lock:
+                windows[job["id"]] = (start, time.monotonic())
+                if len(windows) == 3: stop.set()
+        thread = threading.Thread(target=helper.relay_loop, args=(stop, poll, forward, lambda _: None, 2), daemon=True)
+        thread.start(); thread.join(3)
+        self.assertEqual(set(windows), {"a", "b", "c"})
+        (a0, a1), (b0, b1), (c0, _) = windows["a"], windows["b"], windows["c"]
+        self.assertLess(max(a0, b0), min(a1, b1))   # a and b ran at the same time
+        self.assertGreaterEqual(c0, min(a1, b1))    # c waited for a free worker (2 workers)
+
+    def test_relay_keeps_polling_after_a_failed_job(self):
+        import threading
+        stop, seen = threading.Event(), []
+        jobs = [{"id": "bad"}, {"id": "good"}]
+        def forward(job):
+            seen.append(job["id"])
+            if job["id"] == "bad": raise RuntimeError("upstream failed")
+            stop.set()
+        logs = []
+        helper.relay_loop(stop, lambda: jobs.pop(0) if jobs else None, forward, logs.append, 1)
+        self.assertEqual(seen, ["bad", "good"])
+        self.assertEqual(logs, ["Inference relay: upstream failed"])
+
 if __name__ == "__main__": unittest.main()

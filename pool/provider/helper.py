@@ -338,6 +338,35 @@ def forward_job(base, token, job, private_port=3001):
         connection.close()
 
 
+# Relay jobs forwarded at once. The gateway queue admits max_concurrent_per_pool chat requests per
+# pool and its relay holds at most 8 jobs per pool, so 8 workers never leave a delivered job waiting.
+RELAY_WORKERS = 8
+
+
+def relay_loop(stop, poll, forward, log, workers=RELAY_WORKERS):
+    """One poller (a new poll replaces the previous one on the gateway); each job runs in its own
+    thread, so a batched pool streams several answers at once. A worker slot is taken before polling."""
+    free = threading.Semaphore(workers)
+
+    def run_job(job):
+        try: forward(job)
+        except Exception as error:
+            if not stop.is_set(): log("Inference relay: " + str(error))
+        finally: free.release()
+
+    while not stop.is_set():
+        if not free.acquire(timeout=1): continue
+        try:
+            job = poll()
+        except Exception as error:
+            free.release()
+            if not stop.is_set(): log("Inference relay: " + str(error))
+            stop.wait(2)
+            continue
+        if job: threading.Thread(target=run_job, args=(job,), daemon=True).start()
+        else: free.release()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gateway", required=True)
@@ -432,13 +461,8 @@ def main():
             stop.wait(2)
 
     def jobs():
-        while not stop.is_set():
-            try:
-                job = request(base, "/helper/jobs", token=token)["job"]
-                if job: forward_job(base, token, job)
-            except Exception as error:
-                if not stop.is_set(): print("Inference relay: " + str(error), flush=True)
-                stop.wait(2)
+        relay_loop(stop, lambda: request(base, "/helper/jobs", token=token)["job"],
+                   lambda job: forward_job(base, token, job), lambda text: print(text, flush=True))
 
     try:
         report("installing", "Installing and checking Parallax and node software")
@@ -460,7 +484,8 @@ def main():
         if stop.is_set(): raise RuntimeError("Helper stopped or enrollment revoked")
         facts.update(installed)
         payload.update(facts=facts, coordinator=facts, member_count=current["expected_members"], model=current["model"],
-                       scheduler_port=5100, api_port=3001, gateway_url=base, frontend_url=base, dht_prefix=current["dht_prefix"], arkiv=current["arkiv"])
+                       scheduler_port=5100, api_port=3001, gateway_url=base, frontend_url=base, dht_prefix=current["dht_prefix"], arkiv=current["arkiv"],
+                       batching=current.get("node_batching"))
         payload["member"].update(ssh="local" if info["role"] == "coordinator" else "provider", port=current["node_port"])
         if facts["backend"] == "mlx" and current["model"] == "Qwen/Qwen3-14B-FP8" and current["expected_members"] == 3:
             payload["member"]["param_mem_ratio"] = 0.37
@@ -516,7 +541,8 @@ def main():
                     if stop.wait(1): return
                 else: raise RuntimeError("Scheduler did not start; inspect pool/logs/scheduler.log")
             if config.get("start_at") and config["generation"] != generation:
-                payload.update(scheduler_addr=config["scheduler_addr"], member_count=config["expected_members"])
+                payload.update(scheduler_addr=config["scheduler_addr"], member_count=config["expected_members"],
+                               batching=config.get("node_batching"))
                 payload["member"]["port"] = config["node_port"]
                 host.configure(payload)
                 delay = max(0, (config["start_at"] - config["server_time"]) / 1000)
