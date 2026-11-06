@@ -220,6 +220,11 @@ local demo runs passed. These 148 tests use local service/wallet fixtures; they 
 World login, real three-machine inference, or public-chain payouts. The frontend and real three-node/
 public-testnet demo evidence remain separate pending work, with live verification explicitly deferred.
 
+Post-MVP P5 (serving resilience, `docs/POST_MVP_PLAN.md`) implemented on branch `backendXoutofscope`:
+stall detection + failover, Parallax runtime hooks (`pool/hooks`), clean restarts, IP change, memory
+checks, exact route, cross-check. Local tests only (gateway 94, node agent 17, hooks 8); live pool
+verification pending. Gateway SQLite schema is 6: recreate the development DB.
+
 | Step | Stream | Work | Done when |
 |---|---|---|---|
 | 3.1 | B + F | Router reads `gpupool.pool` from Arkiv; score = reliability × (1 − load); 503 when none | Model list and routing come from Arkiv |
@@ -275,7 +280,7 @@ Each component has a `.env.example`. Copy it to `.env` and fill it. Summary:
 | `DATABASE_PATH` | SQLite file path |
 | `VERIFY_SESSION_TOKEN` | Optional verification CLI session token for an idle requester account; only `--inference` spends credits; server does not use it |
 | `HEARTBEAT_SECONDS` | Expected node heartbeat interval / score refresh period (default `10`); must match node-agent configuration |
-| `POOL_TIMEOUT_MS` | Time to the pool response headers, ms (default `600000`; generation after the headers is not timed) |
+| `POOL_TIMEOUT_MS` | Time to the pool response headers of **non-streaming** requests, ms (default `600000`; generation after the headers is not timed). Streaming requests use the first-token limit from `shared/config` `resilience` (post-MVP P5.1). |
 | `JWT_SECRET` | Signs session tokens |
 | `GATEWAY_SIGNING_KEY` | ed25519 private key; signs receipts and HCS events |
 | `CORS_ORIGINS` | Frontend origin(s) |
@@ -303,6 +308,18 @@ Each component has a `.env.example`. Copy it to `.env` and fill it. Summary:
 | `ARKIV_CHAIN_ID` | `7794095` |
 | `ARKIV_ACCESS_KEY` | From hub.arkiv.network |
 | `ARKIV_PRIVATE_KEY` | Gateway writer; enables background account-stat publishing (startup, then every 600 s); not needed for read-only APIs |
+| `PARALLAX_ALLOWED_PEERS_FILE` | Post-MVP P5.4: absolute path where the gateway writes the admission allow-list (peer IDs of registered nodes with a fresh heartbeat). Same file as the scheduler's `ALLOWED_PEERS_FILE`. Empty = off |
+| `POOL_COORDINATORS` | SPEC §16.1 many pools: JSON `{"pool-id": "http://127.0.0.1:3102"}`; other pools use `POOL_COORDINATOR_URL` |
+| `POOL_COORDINATORS_FILE` | Same map as a file; `pool/pools-up.sh` writes `<repo>/pool/run/coordinators.json` |
+| `TRANSCRIPT_KEY` | Privacy (SPEC §5.6): AES-256-GCM key for transcripts at rest, 64 hex chars (`openssl rand -hex 32`). Empty = plain text (MVP) |
+| `TLS_CERT_FILE` / `TLS_KEY_FILE` | Privacy: PEM certificate + key; the gateway then serves HTTPS. Both empty = HTTP |
+| `PRIVATE_POOLS` | SPEC §16.3 private pools: JSON `{"pool-id": ["acc_…"]}`; the pool's node owners may always use it |
+| `TRUSTED_ACCOUNTS` | SPEC §16.1 privacy: comma-separated `acc_` IDs trusted with the first/last layers |
+| `PARALLAX_ROUTE_LOG` | Post-MVP P5.8/P5.9: absolute path of the hook route log (`<repo>/pool/run/routes.jsonl`). Set **only** when the scheduler runs with `pool/hooks` (`HOOKS=1`): the gateway then tags requests with `gpupool_req_id`. Empty = off |
+| `VERIFIER_URL` / `VERIFIER_OWNER_ACCOUNT` | P6.1: trusted Token-DiFR reference service and its owner account; sampled checks stay disabled unless both are set |
+| `VERIFIER_SECONDARY_URL` / `VERIFIER_SECONDARY_OWNER_ACCOUNT` | P6.3: independent reference service and owner for appeals |
+| `VERIFICATION_MAX_RATE` / `VERIFICATION_MIN_RATE` / `VERIFICATION_COST_MC` | P6.2: sample-rate bounds and estimated cost used for pool checks |
+| `VERIFICATION_APPEAL_HOURS` | P6.3: time for an owner to request a second check; default 24 hours |
 
 ### pool/node.env (one per node; also used by the coordinator)
 | Key | Purpose |
@@ -317,6 +334,16 @@ Each component has a `.env.example`. Copy it to `.env` and fill it. Summary:
 | `HF_HOME` | Model cache directory |
 | `EXTRA_FLAGS` | e.g. Mac `--kv-cache-memory-fraction 0.25 --max-sequence-length 4096` |
 | `CUDA_HOME` | CUDA nodes only |
+| `HOOKS` | Post-MVP P5: `1` (default) loads `pool/hooks` (grace hook, ghost guard, route log, peer ID file); `0` = plain Parallax |
+| `NOTIFY_PORT` | Post-MVP P5.9: node agent listener for Parallax `--notify-url` (e.g. `5190`); empty = off |
+| `ALLOWED_PEERS_FILE` | Post-MVP P5.4, scheduler only: admission allow-list written by the gateway; empty = off. With it on, a node joins only after its agent has sent a heartbeat with its peer ID |
+| `API_PORT` / `PROCESS_NAME` | Scheduler only (§16.1 many pools): private API port (default 3001) and process name (default `scheduler`); `pools-up.sh` sets them |
+| `REBALANCE_COOLDOWN_S` | Scheduler only (§16.1): wait before Parallax reloads all nodes after a leave (default 60) |
+| `SCHEDULER_ADDR` / `RELAY_SERVERS` / `INITIAL_PEERS` | §16.1 WAN: scheduler multiaddr and our own relay / bootstrap multiaddrs; empty = LAN (MVP) |
+| `START_LAYER` / `END_LAYER` | §16.1 privacy: pin this node to `[start, end)` (pin all nodes of the pool: Parallax does not rebalance mixed pools) |
+| `MAX_BATCH_SIZE` | §16.1 batching: Parallax `--max-batch-size` (Parallax default 8) |
+| `ALLOW_DEBUG_LOGS` | Privacy: `1` allows `--verbose` / `--log-level debug` (Parallax then logs prompts); default refused |
+| `ALLOW_MAC_DEFAULT_MEMORY` | Post-MVP P5.7: `1` lets a Mac start without the memory flags (not recommended) |
 
 The coordinator runs both roles: `pool/scheduler.env` (`ROLE=scheduler`, ports 5100) and `pool/node.env` (`ROLE=node`, 5101). `pool/*.env` is git-ignored.
 
@@ -333,6 +360,11 @@ The coordinator runs both roles: `pool/scheduler.env` (`ROLE=scheduler`, ports 5
 | `PARALLAX_NODE_LOG` | Parallax node log the agent reads its layer range from (default `pool/logs/node.log`) |
 | `ARKIV_RPC_URL` / `ARKIV_CHAIN_ID` / `ARKIV_ACCESS_KEY` | Arkiv access |
 | `HEARTBEAT_SECONDS` / `ARKIV_EXTEND_SECONDS` | `10` / `30` |
+| `AUTO_RESTART` | Post-MVP P5.5/P5.6: `true` = run `pool/restart.sh` when the gateway orders a pool restart or the LAN IP changes; default `false` (prints the command) |
+| `RESTART_JOIN_DELAY_S` | Members wait this long before rejoining after a restart, so the scheduler is up (default `15`) |
+| `POOL_DIR` / `POOL_NODE_ENV` / `PEER_ID_FILE` | Defaults `<repo>/pool`, `pool/node.env`, `pool/run/node.peer-id` |
+| `NOTIFY_PORT` | Default: the value in `pool/node.env` |
+| `SWAP_GROWTH_MB` / `SWAP_WINDOW_S` | Post-MVP P5.7: report `swap_growing` when swap use grows more than this within the window while serving (default `256` / `300`) |
 
 ### contracts/.env
 | Key | Purpose |

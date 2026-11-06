@@ -113,6 +113,29 @@ The pool runner starts one Parallax pool with 3 nodes. It uses the settings that
 
 The Parallax HTTP API (port 3001) stays on `127.0.0.1`. Only the gateway can call it.
 
+### 3.4 Runtime hooks and restarts (post-MVP P5.3, P5.4, P5.5, P5.6, P5.7, P5.8)
+
+Parallax stays an installed dependency. `pool/lib.sh` puts `pool/hooks` on `PYTHONPATH` (`HOOKS=1`, default); the hooks patch Parallax classes after import (pinned to `162354a`, checked by `pool/hooks/test_hooks.py`). Details: `pool/README.md`.
+
+- **Grace hook (P5.3):** a node that moves from standby to active gets a fresh heartbeat clock. A node that waited more than 30 s for placement is no longer dropped. (Keep starting joins together until this is verified on the live pool.)
+- **Ghost guard (P5.4):** the scheduler rejects `node_update` from a peer it does not know (no automatic re-join of leftover processes) and `node_join` without hardware details. **Admission:** with `ALLOWED_PEERS_FILE`, a join waits up to 30 s for its peer ID to appear in the gateway's allow-list (peer IDs from fresh signed node heartbeats); else it is rejected.
+- **Route log (P5.8):** the scheduler logs `{gpupool_req_id, routing_table}` per forward to `pool/run/routes.jsonl` and removes the gateway field.
+- **Peer ID file:** each node writes its peer ID to `pool/run/node.peer-id` before the join.
+- **Clean restart (P5.5, P5.6):** `pool/restart.sh` stops the process group and joins again (coordinator: also restarts the scheduler); `--lan-ip` first rewrites `LAN_IP`.
+- **Memory (P5.7):** `join-node.sh` refuses a Mac without the memory flags (CLAUDE.md §6.4).
+- **Notify (P5.9):** with `NOTIFY_PORT`, nodes run with `--notify-url http://127.0.0.1:$NOTIFY_PORT/notify`.
+
+### 3.5 Pools after the MVP (SPEC §16.1)
+
+All on the MVP model: Parallax schedulers stay on the gateway host behind `127.0.0.1`, the gateway decides from signed node heartbeats, Arkiv lists pools.
+- **Node leave:** hook in `pool/hooks` delays Parallax's global rebalance by `REBALANCE_COOLDOWN_S` (default 60). If the node returns or a full pipeline remains, nothing reloads. Join more nodes than one pipeline needs to get spare copies.
+- **Many pools:** each pool has its own scheduler (`API_PORT`, `PROCESS_NAME`, its own DHT prefix and ports). The gateway reads `POOL_COORDINATORS` (JSON) and `POOL_COORDINATORS_FILE`; a listing is reachable only if its `coordinator_url_hash` matches that pool's URL.
+- **Election:** the heartbeat response says `pool_writer`; the gateway keeps the current writer while it is fresh, else picks the most reliable fresh online member. Only the writer upserts `gpupool.pool` (with the gateway's `coordinator_url_hash`).
+- **Formation:** register a node with `pool_id: "auto"`. Its heartbeats report `usable_mem_gb`, `lan_ip`, `p2p_port`; the gateway sends `probe` lists; agents measure TCP-connect delay and report `rtt_ms`. The gateway groups nodes whose every pair is ≤ `pool_formation.max_rtt_ms` and whose memory holds a model (size × 1.2), at least `min_nodes`; pool ID `auto-<hash>`, private DHT prefix from a gateway secret. The response `assigned_pool` makes the agent restart with that prefix; `pool/pools-up.sh` (gateway host) starts the scheduler from `GET /pools/plan` (loopback only). Formed pools are not re-planned.
+- **WAN:** `SCHEDULER_ADDR`, `RELAY_SERVERS`, `INITIAL_PEERS` pass our own multiaddrs to Parallax (public relays are never used by default).
+- **Batching:** `router.max_concurrent_per_pool` requests per pool at once (MVP 1); node `MAX_BATCH_SIZE`.
+- **Privacy:** header `x-gpupool-privacy: trusted-ends` (other values → 400).
+
 ---
 
 ## 4. C2: Node agent
@@ -139,6 +162,15 @@ gpupool-node stop          # stop the process group, set listing to offline
 
 `start --no-join` runs the agent next to a Parallax node that already runs. `stop --keep-parallax` stops only the agent.
 The coordinator (`IS_COORDINATOR=true`) also writes `gpupool.pool` from `GET /pools/:pool_id` (Section 5.5).
+
+### 4.3 Post-MVP P5 additions (`node-agent/README.md`)
+
+The heartbeat also sends `peer_id`, `lan_ip`, `mem_pressure`, `usable_mem_gb`, `served_sessions`, `restart_ack` (null = unknown).
+- **Restart order (P5.5):** the heartbeat response has the pool's `restart_id`. If it is greater than the last one executed, the agent runs `pool/restart.sh` (with `AUTO_RESTART=true`; else it prints the command) and then acknowledges it.
+- **IP change (P5.6):** if the address used to reach the gateway differs from `LAN_IP` in `pool/node.env`, the agent restarts with the new IP (`AUTO_RESTART=true`). The firewall allow-list still needs a person.
+- **Memory (P5.7):** `swap_growing` when swap use grows more than 256 MB within 5 minutes while Parallax runs.
+- **Served sessions (P5.9):** distinct Parallax sessions from `--notify-url`, counted since the previous heartbeat.
+- The agent ignores node log lines before the last start marker, so it never reports a stopped process's layers.
 
 ---
 
@@ -195,6 +227,12 @@ and its HCS sequence (null until confirmed). `limit` defaults to 50 and must be 
 9. The route is the pool's layer map when the request starts (Section 5.5).
 10. The gateway writes a receipt and a ledger event.
 11. If the request fails, the user pays nothing. The nodes on the route get a reliability penalty (Section 9). If the client stops the request before the answer is complete, the user pays nothing and the nodes get no penalty (provisional, step 2.2). If the answer is complete (the `usage` arrived), the gateway settles it normally.
+12. **Stall detection and failover (post-MVP P5.1/P5.2, `docs/POST_MVP_PLAN.md`).** Config `resilience` in `shared/config`.
+    - A streaming attempt has stalled when no response headers or first token arrive within `first_token_base_ms + first_token_ms_per_input_token × input_tokens`, or no next token arrives within `max(stall_min_ms, stall_p95_factor × p95 gap of the pool)`. An error event or an end of the stream without `usage` is also a failed attempt. `POOL_TIMEOUT_MS` bounds the headers of non-streaming requests only.
+    - A failed attempt gets one failover (`max_failovers`). The router picks another ready pool, else the same pool if it is still ready (Section 5.4 checks). Before any token reached the client, the retry starts from the beginning. After tokens reached it, the retry continues the answer: the partial answer is the final assistant message (`continue_final_message: true`, `add_generation_prompt: false`), `max_tokens` = what is left. The client sees one stream, a comment line `: failover`, and one `[DONE]`. `continuation: false` turns off the retry after tokens.
+    - Billing does not change: the user pays the Section 8.1 cost of the attempt that completed (its `usage`: the input includes the partial answer, the output is the new tokens), never more than the hold. Tokens of a failed attempt are free. x402 is not refunded (Section 7).
+    - The route of the answering attempt gets the split and a success. Every failed attempt is a reliability failure for its route (the stage is not found yet). The receipt `attempts` lists each attempt: pool, route, outcome, streamed tokens, and route nodes with a late heartbeat. For x402, the payout snapshot is the answering attempt's route.
+    - Limit: with one pool, the failover goes to the same Parallax scheduler. It helps only if Parallax routes around the failed node (spare pipeline, or after its 30 s heartbeat timeout). A second pool gives a real failover target.
 
 ### 5.4 Router
 
@@ -219,6 +257,8 @@ MVP routing details (step 3.1):
   ready pool listings. Billing factors and price tiers remain the admin configuration. No eligible
   pools gives an empty model list; an Arkiv read failure gives 503.
 
+Post-MVP P5 router rules: skip a pool while a clean restart runs (P5.5: until every member acknowledges the `restart_id`, at most `restart_timeout_s`), and skip a pool with a member that reports `mem_pressure = swap_growing` (P5.7). `/network` shows `restarting` and `route_dispute` (P5.9) for each pool.
+
 The router does not select nodes inside the pool. Parallax does that.
 
 ### 5.5 Route capture (MVP method)
@@ -229,7 +269,22 @@ The router does not select nodes inside the pool. Parallax does that.
 - The gateway builds the pool's layer map from the latest **fresh** heartbeats (30 s or newer) of the pool's registered nodes. The map is valid only if the ranges cover `[0, num_layers)` of the model **exactly once** (no gaps, no overlaps). `num_layers` is in the model config (Qwen3-14B = 40, Qwen3-8B = 36).
 - The route of a request is the valid layer map when the request starts.
 - If the map is not valid, the route is **unknown** (`null`). The gateway logs a warning. The node shares of that request go to the network reserve (credits), or stay in the treasury (x402).
-- Post-MVP: capture the exact route of each request from the Parallax scheduler.
+- **Post-MVP P5.8 (exact route):** with the hooks and `PARALLAX_ROUTE_LOG`, the gateway sends `gpupool_req_id`; at completion it maps the logged `routing_table` (peer IDs) to registered nodes through their heartbeat `peer_id` and layer ranges. If the result is a valid layer map, it is the request's route (`route_source = scheduler`); else the heartbeat map stays (`route_source = heartbeat`). The x402 payout snapshot follows the route.
+- **Post-MVP P5.5 (live re-placement):** a node whose layers change while it stays online was re-placed by Parallax. The gateway orders a clean restart of the pool (`pools.restart_id`, at most once per `restart_cooldown_s`). A restart passes through offline, so it does not order another one.
+- **Post-MVP P5.9 (cross-check):** per member, over `route_check_window_s`: sessions the node reported vs forwards the scheduler routed through its peer IDs. If routed ≥ `route_check_min_requests` and the difference is more than `route_dispute_ratio`, the pool has `route_dispute = true` (shown and logged; no credit change).
+
+### 5.6 Privacy (post-MVP, no Parallax change; `gateway/src/privacy.ts`)
+
+| Protection | Rule |
+|---|---|
+| Routing | Header `x-gpupool-privacy`: `trusted-ends` = the first and last layers run on nodes of the requester or `TRUSTED_ACCOUNTS`; `trusted-all` = **every** layer does, so no untrusted machine sees any data. No such pool → 503 with `Retry-After`. Other values → 400. The receipt shows `privacy`. |
+| Storage | A privacy request stores **no transcript** (only hashes), so it is never sampled for verification. Other transcripts are encrypted at rest with AES-256-GCM (`TRANSCRIPT_KEY`, 64 hex); stored as `enc:v1:<iv>:<tag>:<ciphertext>`. Without the key: plain text (MVP). Code reads transcripts only through `readTranscript`. |
+| Public ledger | `prompt_hash` / `resp_hash` are salted: sha256(`<salt>:` + data), salt = 16 random bytes per request, kept in `requests.hash_salt` (never public). The requester gets it in the response header `x-gpupool-hash-salt` and can check the receipt. A guessed short prompt cannot be found on HCS. |
+| Transport | `TLS_CERT_FILE` + `TLS_KEY_FILE` → the gateway serves HTTPS. Gateway → scheduler stays on `127.0.0.1`. |
+| Logs | The gateway never logs prompt or answer text. `pool/join-node.sh` / `start-scheduler.sh` refuse `--verbose` / `--log-level debug` (Parallax logs whole requests at debug) unless `ALLOW_DEBUG_LOGS=1`. |
+| Limit | In `trusted-ends`, middle nodes still see hidden states. For full privacy use `trusted-all`. |
+
+Demo with real values: `pnpm --filter @gpupool/gateway demo:privacy`. Tests: `gateway/test/privacy.test.ts`.
 
 ---
 
@@ -323,7 +378,7 @@ The admin sets the factors in a configuration file.
 | Item | Rule |
 |---|---|
 | Starter credits | 10,000 credits for each new verified human. They expire after 14 days. |
-| Earned credits | Credits from requests that the account's nodes served. No expiry in the MVP. |
+| Earned credits | Credits from requests that the account's nodes served. Post-MVP (§8.8): vest first, expire after 90 days. |
 | Spending order | The gateway uses starter credits first, then earned credits. |
 | Contribution ratio | `earned_total / max(spent_total, 1)`. Shown on the account page. |
 
@@ -371,7 +426,7 @@ Example: a 14B request costs 490 credits (490,000 mc). Node M4 served 20 of 40 l
 
 - **SQLite** in the gateway keeps the balances. It is the fast source for the gateway.
 - **HCS** keeps an event for each change. Anyone can rebuild the balances from HCS.
-- Event types: `account_created`, `starter_grant`, `request_settled`, `x402_payment`, `credits_expired`, `payout_address_set`, `epoch_closed`, `payout_claimed`.
+- Event types: `account_created`, `starter_grant`, `request_settled`, `x402_payment`, `credits_expired`, `payout_address_set`, `epoch_closed`, `payout_claimed`; post-MVP: `verification_result`, `verification_appeal`, `verification_final`, `hardware_challenge`, `credits_clawed_back`, `account_banned`, `availability_reward`, `agent_key_created`.
 
 ### 8.7 Gateway database (SQLite)
 
@@ -388,7 +443,9 @@ Example: a 14B request costs 490 credits (490,000 mc). Node M4 served 20 of 40 l
 | `node_reliability` | `node_id` PK/FK, `requests_routed`, `requests_ok`, `heartbeats_expected`, `heartbeats_received`, `score`, `updated_at` |
 | `node_heartbeats` | (`node_id`, `slot_ts`) PK; one online observation per registration-aligned slot |
 | `node_request_outcomes` | `id` PK, `node_id` FK, `ok`, `ts`; rolling request success/failure history |
-| `requests` | `req_id` PK, `account_id` FK (null for x402), `x402_payer`, `x402_tx`, `x402_amount_tinybar`, `model`, `pay_type` (`credits` / `x402`), `in_tokens`, `out_tokens`, `cost_mc`, `split` JSON, `route` JSON (node → layers), `payout_snapshot` JSON (provider ownership/wallet/layers), `status`, `prompt_hash`, `resp_hash`, `hcs_seq`, `ts` |
+| `requests` | `req_id` PK, `account_id` FK (null for x402), `x402_payer`, `x402_tx`, `x402_amount_tinybar`, `model`, `pay_type` (`credits` / `x402`), `in_tokens`, `out_tokens`, `cost_mc`, `split` JSON, `route` JSON (node → layers), `payout_snapshot` JSON (provider ownership/wallet/layers), `status`, `prompt_hash`, `resp_hash`, `hcs_seq`, `attempts` JSON (failover attempts, null if none), `route_source` (`scheduler` / `heartbeat`, P5.8), `ts` |
+| `pools` | `pool_id` PK, `restart_id`, `restart_at` (post-MVP P5.5 restart orders) |
+| `node_served` | `id` PK, `node_id` FK, `peer_id`, `sessions`, `ts` (post-MVP P5.9 node reports, kept for the check window) |
 | `ledger_events` | `id` PK, `type`, `payload` JSON, `gateway_sig`, `hcs_seq` (null until written), `ts` |
 | `epochs` | `epoch` PK, `start_ts`, `end_ts`, `total_tinybar`, `merkle_root`, `post_tx`, `status`, `hcs_event_id`, `funding_raw`, `funding_tx`, `post_raw`, `posted_block`, `claims_block`, `claimable_at` |
 | `epoch_payouts` | (`epoch`, `payout_address`) PK, `amount_tinybar`, `proof` JSON, `claimed`, `claim_tx` |
@@ -397,6 +454,26 @@ Example: a 14B request costs 490 credits (490,000 mc). Node M4 served 20 of 40 l
 Sessions use a signed JWT. They do not need a table.
 
 Credit columns are integer millicredits (`*_mc`, 1 credit = 1000 mc). HBAR columns are tinybar decimal strings. Times are Unix ms. See `shared/README.md`.
+
+### 8.8 Incentives after the MVP (SPEC §16.3; `gateway/src/incentives.ts`)
+
+The 90/5/5 split, cost formula and self-request rule do not change. Every credit to an owner is one `earned_lots` row; `balances.locked_mc` = still vesting, `earned_mc` = spendable.
+
+| Rule | Behaviour (config `incentives` in `shared/config`) |
+|---|---|
+| Vesting | A node owner's share is locked for `vesting_s` (3600), then unlocks. It counts in the contribution ratio at once. Spending order: starter → unlocked earned, oldest lot first. |
+| Expiry | Unlocked earned credits expire `earned_expiry_days` (90) after unlock (oldest first, never below running holds); `credits_expired` with `kind: earned`. |
+| Reserve | The reserve share of every settled request is booked in `network_reserve`. |
+| Fraud penalty | Only after a **final** fraud verdict (16.2, after the appeal window). Blamed nodes = route nodes with group-test risk ≥ `penalty_min_risk` (0.8; a one-node route is blamed directly). Their owners lose all **locked** credits (to the reserve, `credits_clawed_back`) and the nullifier is banned (`account_banned`): no new nodes, existing nodes leave routing. Unlocked credits stay. No evidence → no penalty. |
+| Stage blame | A failed attempt gives the reliability failure only to route nodes whose heartbeat was late (the stalled stage), else to the whole route. |
+| Node cap | Start = `max_nodes_per_account` (3). Proven cap (5): account ≥ 7 days old, Orb or Passport, every node reliability ≥ 0.9, ≥ 200 good requests. Banned = 0. Shown in `/me.incentives`. |
+| Passport tier | World NFC document credential accepted at login. The strongest credential per account is kept (same nullifier = same account). Selfie Check cannot reach the proven cap. |
+| Collusion flags | `GET /incentives/flags` (loopback): dominant requester (> 50 % of an owner's earnings), mutual flow, twin accounts. Flags only. |
+| Availability | Per epoch (600 s), in pools where a request waited ≥ 5 s: nodes online get 10 mc/min from the reserve, capped by 50,000 mc and the reserve (scaled evenly). They vest like other earnings. `availability_reward`. |
+| Routing preferences | Headers `x-gpupool-pool` (pin) and `x-gpupool-min-reliability`. Private pools: `PRIVATE_POOLS` (JSON pool → accounts; the pool's node owners may always use it). |
+| Agent Pass (MVP form) | `POST /agents` creates a key `gpa_<id>_<secret>` with a budget. As `Authorization: Bearer` on `/v1/chat/completions` it spends the human's credits and ratio; revoke with `DELETE /agents/:id`. Real World AgentKit proofs are not integrated (beta). |
+
+A once-a-minute worker unlocks, expires, runs penalties and pays availability. Demo: `pnpm --filter @gpupool/gateway demo:incentives`. Tests: `gateway/test/incentives.test.ts`.
 
 ---
 
@@ -433,7 +510,7 @@ uptime_rate  = heartbeats_received / heartbeats_expected  (last 7 days)
 |---|---|
 | Pool score | Pool reliability = the lowest node reliability in the pool. The router uses it (Section 5.4). |
 | Display | The account page and Arkiv show the score. |
-| Limit | No penalties in credits in the MVP. |
+| Limit | No penalties in credits in the MVP. Post-MVP (§8.8): a final fraud verdict claws back locked credits and bans the nullifier; reliability itself still costs no credits. |
 
 ---
 
@@ -661,22 +738,21 @@ The MVP has no output verification. To not design against it, the gateway keeps:
 
 | Item | Notes |
 |---|---|
-| Fault tolerance | Gateway failover when a node stops during a request (resend prompt + partial answer to another pool). |
-| Stall detection
-| Detect a stall of more than 5 s in the stream and find the stage that stalled. |
-| Node join and leave while the pool runs | Rebalance, spare copies, cool-down before global rebalance. |
-| Heartbeat grace hook | Launcher patch so that a node that waits more than 30 s is not dropped. Removes synchronized joins. |
-| Ghost guard and admission hook | Reject heartbeat-only joins and unknown peers inside the Parallax scheduler. |
-| Clean restart after reassignment | Coordinator restarts members after a re-placement. |
-| Network address change | Node agent restarts Parallax when its IP changes. |
-| Automatic pool formation | Nodes with delay less than 5 ms form a pool automatically. |
-| Many pools and coordinator election | Elect the most reliable node; replace a coordinator that stops. |
-| Exact route for each request | Capture `routing_table` from the scheduler for each request. |
-| Coordinator cross-check | Compare the coordinator report with node reports (`--notify-url`). |
-| WAN / Global Host | Pools over the internet, relay servers. |
-| Memory-aware scheduling | Keep about 1 GB free on 16 GB Macs; budget for the OS. |
-| Speculative decoding, batching tuning | Speed improvements. |
-| Privacy | Keep the first layers on trusted nodes; encryption. |
+| Fault tolerance | **Gateway failover implemented (post-MVP P5.2, Section 5.3 step 12).** Still out: stage-level replay inside Parallax. |
+| Stall detection | **Stream stall detection implemented (post-MVP P5.1, Section 5.3 step 12).** Still out: find the exact stage that stalled (only late-heartbeat suspects are recorded). |
+| Node join and leave while the pool runs | **Implemented (Section 3.5):** cool-down before a global rebalance (hook); spare copies = extra nodes form extra pipelines (Parallax), so a leave with a spare left reloads nothing; P5.5 clean restart for live re-placements. |
+| Heartbeat grace hook | **Implemented (post-MVP P5.3, Section 3.4).** Not verified on the live pool. |
+| Ghost guard and admission hook | **Implemented (post-MVP P5.4, Section 3.4).** Not verified on the live pool. |
+| Clean restart after reassignment | **Implemented (post-MVP P5.5, Sections 3.4, 4.3, 5.5).** Gateway orders, agents restart. |
+| Network address change | **Implemented (post-MVP P5.6, Section 4.3).** Firewall changes stay manual. |
+| Automatic pool formation | **Implemented (Section 3.5):** nodes registered in pool `auto` measure delay to each other; the gateway groups nodes < 5 ms apart that can hold a catalog model; `pool/pools-up.sh` starts their scheduler. |
+| Many pools and coordinator election | **Implemented (Section 3.5):** one private scheduler per pool on the gateway host (`POOL_COORDINATORS` / `POOL_COORDINATORS_FILE`); the gateway elects the most reliable fresh member to write the Arkiv pool listing and replaces it when it stops. |
+| Exact route for each request | **Implemented (post-MVP P5.8, Section 5.5).** |
+| Coordinator cross-check | **Implemented (post-MVP P5.9, Section 5.5):** flag only; holding credits needs vesting (P7.1). |
+| WAN / Global Host | **Scripts ready, not tested (Section 3.5):** `SCHEDULER_ADDR`, `RELAY_SERVERS`, `INITIAL_PEERS` for our own relay/bootstrap nodes. Running a relay server and internet latency are not tested. |
+| Memory-aware scheduling | **Implemented (post-MVP P5.7):** Mac memory flags enforced, swap watch, router skips swapping pools. |
+| Speculative decoding, batching tuning | **Batching implemented** (`router.max_concurrent_per_pool`, node `MAX_BATCH_SIZE`). **Speculative decoding stays out:** Parallax `162354a` has no switch for it; adding it means changing Parallax (CLAUDE.md §3). |
+| Privacy | **Implemented (Section 5.6), no Parallax change:** `trusted-ends` and `trusted-all` routing, no transcript for privacy requests, encrypted transcripts at rest, salted public hashes, HTTPS on the gateway, no prompt logging on nodes; operators pin layers with `START_LAYER`/`END_LAYER`. Not done: hiding hidden states from untrusted middle nodes (would need a Parallax change) — use `trusted-all`. |
 
 ### 16.2 Verification
 
@@ -691,16 +767,16 @@ The MVP has no output verification. To not design against it, the gateway keeps:
 
 | Item | Notes |
 |---|---|
-| Vesting of earned credits | Earned credits unlock after N epochs; can be taken back for fraud. |
-| Fraud penalties and bans | Loss of unvested credits; ban on the World nullifier. |
-| Stage-level blame | Only the stalled stage loses credits for a failed part. |
-| Expiry of earned credits | Prevents hoarding. |
-| Collusion detection | Flag repeated flows between the same accounts and pools. |
-| Reputation-based node cap | 1 → 3 → 5 nodes as reliability and history grow. |
-| Passport credential tier | Optional stronger World credential. |
-| World Agent Pass | Human-backed agents (if it fits). |
-| Routing preferences and pool pinning | Own pools and private pools; region, latency, reputation preferences. |
-| Availability rewards | Small credits for standby capacity when the pool needs it. |
+| Vesting of earned credits | **Implemented (Section 8.8).** |
+| Fraud penalties and bans | **Implemented (Section 8.8)**, only after a final 16.2 verdict. |
+| Stage-level blame | **Implemented (Section 8.8)** for the stalled stage (late heartbeats); other failures still blame the whole route. |
+| Expiry of earned credits | **Implemented (Section 8.8).** |
+| Collusion detection | **Implemented as flags (Section 8.8).** No automatic penalty. |
+| Reputation-based node cap | **Implemented (Section 8.8):** 3 → 5 nodes. |
+| Passport credential tier | **Implemented (Section 8.8).** Not tested against the live World API. |
+| World Agent Pass | **MVP form implemented (Section 8.8):** human-backed agent keys with a budget. Real World AgentKit proof: not integrated (beta). |
+| Routing preferences and pool pinning | **Implemented (Section 8.8):** pin, minimum reliability, private pools. Region/latency preferences: not built. |
+| Availability rewards | **Implemented (Section 8.8).** |
 
 ### 16.4 Hedera and Arkiv
 
