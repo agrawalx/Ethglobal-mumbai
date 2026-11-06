@@ -165,7 +165,9 @@ export default function Keys() {
 
   const offer = models.data?.find((m) => m.model.model_id === MODEL.model_id);
   const factor = offer?.model.model_factor ?? MODEL.model_factor;
-  const contextLength = MODEL.context_length;
+  const perKOut = offer?.price?.credits_per_1k_out ?? factor * 1000;
+  const multiplier = offer?.price?.multiplier ?? null;
+  const contextLength = offer?.context_length ?? MODEL.context_length;
 
   const head = <PageHead label="API KEYS · GATEWAY" title="Your API keys." sub="Use the pool from OpenCode or any OpenAI client. A key spends your credits." />;
 
@@ -253,13 +255,13 @@ export default function Keys() {
           </div>
           <div className="stat">
             <span className="mono-label">1k answer tokens</span>
-            <p className="stat-value">{fmtNum(factor * 1000, 0)}</p>
-            <p className="stat-note">credits · prompt tokens cost {fmtNum(IN_WEIGHT * 100, 0)}% of that</p>
+            <p className="stat-value">{fmtNum(perKOut, 0)}</p>
+            <p className="stat-note">credits{multiplier !== null ? ` · now ${fmtNum(multiplier, 2)}× base, locked per request` : ""} · prompt tokens cost {fmtNum(IN_WEIGHT * 100, 0)}% of that</p>
           </div>
           <div className="stat">
             <span className="mono-label">Pool context</span>
             <p className="stat-value">{fmtNum(contextLength, 0)}</p>
-            <p className="stat-note">tokens · longer sessions are trimmed</p>
+            <p className="stat-note">tokens{offer?.context_length ? " · smallest node in the pool" : ""} · longer sessions are trimmed</p>
           </div>
         </div>
         <p className="faint table-note">

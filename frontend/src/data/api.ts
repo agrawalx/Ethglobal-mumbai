@@ -1,4 +1,5 @@
 import type {
+  PriceQuote,
   AccountStats,
   Epoch,
   LedgerEvent,
@@ -37,7 +38,8 @@ export type WorldRpContext = { rp_id: string; nonce: string; created_at: number;
 export type LoginResult = { token: string; me: Me; created: boolean };
 
 /** `pools` = ready pools serving the model now (from /v1/models). */
-export type ModelOffer = { model: ModelEntry; served: boolean; pools: number };
+/** `context_length` = smallest live pool context; `price` = current credit quote (floats 0.5×–2× with load). Both absent until the pools report them. */
+export type ModelOffer = { model: ModelEntry; served: boolean; pools: number; context_length?: number; price?: PriceQuote };
 
 export type NetworkSnapshot = { pools: PoolListing[]; nodes: NodeListing[]; stats: AccountStats[]; updated_at: number };
 

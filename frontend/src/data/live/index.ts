@@ -1,5 +1,5 @@
 /** Live gateway and mirror access. Errors never substitute fixtures. */
-import type { Receipt } from "@shared/types";
+import type { PriceQuote, Receipt } from "@shared/types";
 import { ModelsResponse, WorldVerifyResponse, NodeRegisterRequest, NodeRegisterResponse } from "@gpupool/shared";
 import config from "../../../../shared/config/gpupool.config.json";
 import { meFromWire, receiptFromWire, networkFromWire, ledgerFromWire, rpFromWire, payoutsFromWire, keysFromWire, newKeyFromWire, keyRequestsFromWire } from "./adapters";
@@ -44,6 +44,8 @@ function toOffer(entry: Record<string, unknown>): ModelOffer {
   return {
     served: entry.served !== false,
     pools: Number(entry.pools ?? 0),
+    ...(typeof entry.context_length === "number" ? { context_length: entry.context_length } : {}),
+    ...(entry.price ? { price: entry.price as PriceQuote } : {}),
     model: {
       model_id: id,
       mlx_variant: (entry.mlx_variant as string | null | undefined) ?? known?.mlx_variant ?? null,
