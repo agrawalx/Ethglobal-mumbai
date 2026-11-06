@@ -71,7 +71,7 @@ If these documents conflict, `docs/SPEC.md` wins. If the spec is unclear or wron
 ## 5. Security rules (never break these)
 
 1. **Never commit secrets:** `.env`, keys, `p2p.key`, `node.key`, World RP signing key, Hedera private keys, Arkiv keys.
-2. **Never** put a private key or the World RP signing key in a `NEXT_PUBLIC_*` variable.
+2. **Never** put a private key or the World RP signing key in a `VITE_*` (browser) variable.
 3. The Parallax API (port 3001) **stays on `127.0.0.1`**. Only the gateway calls it. It has no auth and an open `/weight/refit`.
 4. Always run Parallax with `-u`, a private `--dht-prefix`, fixed ports, and `--announce-maddrs`.
 5. Do not open firewall ports to the whole venue network. Allow only pool member IPs.

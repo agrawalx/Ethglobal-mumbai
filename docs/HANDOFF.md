@@ -284,7 +284,7 @@ Each component has a `.env.example`. Copy it to `.env` and fill it. Summary:
 | `POOL_TIMEOUT_MS` | Time to the pool response headers of **non-streaming** requests, ms (default `600000`; generation after the headers is not timed). Streaming requests use the first-token limit from `shared/config` `resilience` (post-MVP P5.1). |
 | `JWT_SECRET` | Signs session tokens |
 | `GATEWAY_SIGNING_KEY` | ed25519 private key; signs receipts and HCS events |
-| `CORS_ORIGINS` | Frontend origin(s) |
+| `CORS_ORIGINS` | Frontend origin(s), comma-separated. Vite dev default `http://localhost:5173`; add the URL the requester laptop uses. Empty = every browser call is blocked. |
 | `WORLD_APP_ID` | World Developer Portal app ID |
 | `WORLD_RP_ID` | RP ID (used in the verify URL) |
 | `WORLD_RP_SIGNING_KEY` | RP signing key (server only) |
@@ -412,19 +412,18 @@ The coordinator runs both roles: `pool/scheduler.env` (`ROLE=scheduler`, ports 5
 | `PAYOUT_CONTRACT_ADDRESS` | Confirmed testnet EpochPayout address |
 | `HEDERA_JSON_RPC_URL` / `HEDERA_CHAIN_ID` / `HEDERA_NETWORK` | Testnet RPC / `296` / `testnet` |
 
-### frontend/.env.local
+### frontend/.env.local (Vite: only `VITE_*` keys reach the browser)
 | Key | Purpose |
 |---|---|
-| `NEXT_PUBLIC_GATEWAY_URL` | Gateway URL |
-| `NEXT_PUBLIC_WORLD_APP_ID` | World app ID (public) |
-| `NEXT_PUBLIC_WORLD_ACTION` | `gpupool-account` |
-| `NEXT_PUBLIC_WORLD_ENVIRONMENT` | `staging` |
-| `NEXT_PUBLIC_ARKIV_RPC_URL` | Arkiv RPC (read-only) |
-| `NEXT_PUBLIC_PAYOUT_CONTRACT` | Contract address |
-| `NEXT_PUBLIC_HEDERA_CHAIN_ID` | `296` |
-| `NEXT_PUBLIC_HASHSCAN_URL` | `https://hashscan.io/testnet` |
+| `VITE_GATEWAY_URL` | Gateway URL (e.g. `http://10.73.185.71:8080`) |
+| `VITE_WORLD_APP_ID` | World app ID (public) |
+| `VITE_WORLD_ACTION` | `gpupool-account` |
+| `VITE_HEDERA_RPC` | `https://testnet.hashio.io/api` (wallet claims) |
+| `VITE_PAYOUT_ADDR` | Deployed EpochPayout address |
+| `VITE_HCS_TOPIC` | HCS ledger topic ID (HashScan links) |
+| `VITE_MIRROR_URL` | `https://testnet.mirrornode.hedera.com` |
 
-**Never** put a private key or the World RP signing key in a `NEXT_PUBLIC_*` variable.
+**Never** put a private key or the World RP signing key in a `VITE_*` variable: Vite ships every `VITE_*` value to the browser.
 
 ---
 

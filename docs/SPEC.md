@@ -699,7 +699,7 @@ The repository must have `/arkiv/schema.md`, `/arkiv/friction.md`, `/arkiv/reach
 
 Rules:
 - Show the data source on each list ("Arkiv", "HCS #seq").
-- Never put a private key or the World signing key in `NEXT_PUBLIC_*`.
+- Never put a private key or the World signing key in a `VITE_*` variable (Vite ships them to the browser).
 
 ---
 
