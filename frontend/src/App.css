@@ -206,16 +206,23 @@
     radial-gradient(ellipse at 82% 34%, #160b2120, transparent 45%);
   z-index: -2;
 }
-.particle-scene {
+/* The hero figure (Fig 1, the card on the turntable) sits between the title and the scroll cue. */
+.hero-figure {
   position: absolute;
-  inset: 0;
-  z-index: -1;
-  overflow: hidden;
+  left: 50%;
+  top: 37%;
+  width: min(580px, 42vw, 66svh);
+  transform: translateX(-50%);
+  z-index: 0;
 }
-.particle-scene canvas {
-  display: block;
+.figure-slot {
   width: 100%;
-  height: 100%;
+}
+/* Let the card sit on the page's own night colour. */
+.hero-figure .gh.iso {
+  --anatomy-page: #030407;
+  --anatomy-card: #05070b;
+  --anatomy-paper: #05070b;
 }
 .hero-copy {
   position: absolute;
@@ -983,9 +990,10 @@
     font-size: 25px;
   }
   .hero-section {
-    height: 850px;
+    height: auto;
     min-height: 0;
     max-height: none;
+    padding-bottom: 96px;
   }
   /* in flow on phones so the aside always sits below the title, however it wraps */
   .hero-copy {
@@ -1025,11 +1033,13 @@
     font-size: 12px;
     margin-top: 13px;
   }
-  .particle-scene {
-    top: 155px;
-    bottom: 30px;
-    left: -26%;
-    right: -26%;
+  .hero-figure {
+    position: relative;
+    left: auto;
+    top: auto;
+    width: auto;
+    transform: none;
+    margin: 28px 12px 0;
   }
   .scene-caption {
     bottom: 29px;
@@ -1192,3 +1202,4 @@
     top: 50%;
   }
 }
+

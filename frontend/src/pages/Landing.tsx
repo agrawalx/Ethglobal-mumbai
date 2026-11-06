@@ -1,14 +1,15 @@
-import { Suspense, lazy, useCallback, useState } from "react";
+import { Suspense, lazy, useState } from "react";
 import { Brand } from "../components/Shared";
 import { Icon } from "../components/Icon";
 import CrewScene from "../components/CrewScene";
-import ParticleStage from "../components/ParticleStage";
+import FigureBoundary from "../components/anatomy/FigureBoundary";
 import PoolStory from "../components/story/PoolStory";
 import { BRAND } from "../config/brand";
 import { navigate } from "../lib/router";
 import { useSession } from "../auth/context";
 
 const LiveLayerSim = lazy(() => import("../components/sim/LiveLayerSim"));
+const GpuHero = lazy(() => import("../components/anatomy/GpuHero"));
 
 /* The earn → spend loop, in order (SPEC §8). */
 const steps = [
@@ -35,12 +36,7 @@ const steps = [
 ];
 
 export default function Landing() {
-  const [phase, setPhase] = useState<"cube" | "tree">("cube"),
-    [menu, setMenu] = useState(false);
-  const phaseChange = useCallback(
-    (next: "cube" | "tree") => setPhase(next),
-    [],
-  );
+  const [menu, setMenu] = useState(false);
   const session = useSession();
   const openChat = () => navigate("/chat");
   // Logged in already → straight to the playground; otherwise World ID first.
@@ -96,7 +92,6 @@ export default function Landing() {
       <main>
         <section className="hero-section" id="platform">
           <div className="hero-atmosphere" aria-hidden="true" />
-          <ParticleStage onPhase={phaseChange} />
           <div className="hero-copy">
             <span className="eyebrow">
               <i className="status-dot" /> SPARE GPUS. ONE BIGGER MODEL.
@@ -122,13 +117,14 @@ export default function Landing() {
               <Icon name="arrow" size={16} />
             </button>
           </div>
+          <div className="hero-figure">
+            <FigureBoundary ratio="640 / 520">
+              <GpuHero caption={false} />
+            </FigureBoundary>
+          </div>
           <div className="scene-caption">
             <span className="tiny-cross">+</span>
-            <span>
-              {phase === "cube"
-                ? "MANY SMALL GPUS. ONE MODEL."
-                : "ONE HUMAN. ONE ACCOUNT."}
-            </span>
+            <span>MANY SMALL GPUS. ONE MODEL.</span>
           </div>
           <a
             className="hero-scroll"
@@ -139,7 +135,7 @@ export default function Landing() {
             <Icon name="arrow" size={15} />
           </a>
           <div className="pointer-hint">
-            <span /> MOVE TO EXPLORE
+            <span /> HOVER THE CARD
           </div>
         </section>
         <section className="warm-section content-section" id="the-pool">
