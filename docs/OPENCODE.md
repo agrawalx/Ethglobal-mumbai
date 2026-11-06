@@ -55,6 +55,24 @@ Any OpenAI client works the same way: use base URL `<gateway>/v1` and the key as
 | The pool's context is small (4096 on Macs), and OpenCode resends the whole session each turn. | The gateway fits prompt + answer into the pool's live context: the smallest `max_seq` its fresh nodes report (`router.contextLength`, cached 10 s). When any pool has not reported one, or Arkiv fails, it falls back to `context_length` in shared config (4096 now). Steps:<br>1. compact the tools;<br>2. cut big tool results to head + tail;<br>3. drop the oldest turns, keeping the system prompt and the last user turn with its tool chain.<br>The `x-gpupool-trimmed` header gives the number of messages cut. If the prompt still does not fit, the response is 400 `context_length_exceeded` with the numbers. | `gateway/src/context.ts` |
 | OpenCode asks for `max_tokens` 32000, so the hold would fail every time. | For credit requests the gateway picks the answer cap:<br>`min(model max, room left in the context, learned need, what the balance pays)`<br>• the learned need is the p90 of the user's (or key's) last 50 answers × 1.25, at least 256;<br>• an answer that was cut off doubles the next cap.<br>The `x-gpupool-max-tokens` header gives the cap. A 403 comes only when the balance cannot pay 64 tokens. x402 requests keep the per-tier limit (400 above 2048). | `gateway/src/budget.ts`, `billing.ts` |
 
+## Keys from the backend (no website)
+
+`gateway/scripts/api-key.ts` works on the gateway's SQLite file directly. It is not an HTTP route. Run it on the gateway machine with the gateway `.env`:
+
+```sh
+cd gateway
+pnpm api-key create --dev alice --name opencode   # DEV: account without World (starter credits) + key
+pnpm api-key create --account acc_… --cap 500     # key for an existing account, cap in credits
+pnpm api-key list --account acc_…
+pnpm api-key credits gpa_…                        # or agt_…: same JSON as GET /v1/credits
+pnpm api-key requests agt_…
+pnpm api-key revoke agt_…
+```
+
+- `create` prints the token once.
+- Keys made here behave like keys made on `/keys`.
+- It never adds credits: credits for a key come only from testnet HBAR top-ups.
+
 ## Key credits and HBAR top-ups (Hedera testnet)
 
 - **See a key's credits:** `GET /v1/credits` with `Authorization: Bearer gpa_…` (key only; a World session gets 403). It returns:
