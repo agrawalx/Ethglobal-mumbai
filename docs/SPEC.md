@@ -464,7 +464,7 @@ The 90/5/5 split, cost formula and self-request rule do not change. Every credit
 | Vesting | A node owner's share is locked for `vesting_s` (3600), then unlocks. It counts in the contribution ratio at once. Spending order: starter → unlocked earned, oldest lot first. |
 | Expiry | Unlocked earned credits expire `earned_expiry_days` (90) after unlock (oldest first, never below running holds); `credits_expired` with `kind: earned`. |
 | Reserve | The reserve share of every settled request is booked in `network_reserve`. |
-| Fraud penalty | Only after a **final** fraud verdict (16.2, after the appeal window). Blamed nodes = route nodes with group-test risk ≥ `penalty_min_risk` (0.8; a one-node route is blamed directly). Their owners lose all **locked** credits (to the reserve, `credits_clawed_back`) and the nullifier is banned (`account_banned`): no new nodes, existing nodes leave routing. Unlocked credits stay. No evidence → no penalty. |
+| Fraud penalty | **Inactive while 16.2 is disabled.** Only after a **final** fraud verdict (16.2, after the appeal window). Blamed nodes = route nodes with group-test risk ≥ `penalty_min_risk` (0.8; a one-node route is blamed directly). Their owners lose all **locked** credits (to the reserve, `credits_clawed_back`) and the nullifier is banned (`account_banned`): no new nodes, existing nodes leave routing. Unlocked credits stay. No evidence → no penalty. |
 | Stage blame | A failed attempt gives the reliability failure only to route nodes whose heartbeat was late (the stalled stage), else to the whole route. |
 | Node cap | Start = `max_nodes_per_account` (3). Proven cap (5): account ≥ 7 days old, Orb or Passport, every node reliability ≥ 0.9, ≥ 200 good requests. Banned = 0. Shown in `/me.incentives`. |
 | Passport tier | World NFC document credential accepted at login. The strongest credential per account is kept (same nullifier = same account). Selfie Check cannot reach the proven cap. |
@@ -732,7 +732,9 @@ The MVP has no output verification. To not design against it, the gateway keeps:
 
 ---
 
-## 16. Out of scope for the MVP (to build after the MVP)
+## 16. Post-MVP features
+
+The MVP (§1–§15) is complete. The team built most items below on purpose after the MVP. Each row gives its status. **§16.2 Verification is disabled** and will be designed again later.
 
 ### 16.1 Inference and pools
 
@@ -754,9 +756,11 @@ The MVP has no output verification. To not design against it, the gateway keeps:
 | Speculative decoding, batching tuning | **Batching implemented** (`router.max_concurrent_per_pool`, node `MAX_BATCH_SIZE`). **Speculative decoding stays out:** Parallax `162354a` has no switch for it; adding it means changing Parallax (CLAUDE.md §3). |
 | Privacy | **Implemented (Section 5.6), no Parallax change:** `trusted-ends` and `trusted-all` routing, no transcript for privacy requests, encrypted transcripts at rest, salted public hashes, HTTPS on the gateway, no prompt logging on nodes; operators pin layers with `START_LAYER`/`END_LAYER`. Not done: hiding hidden states from untrusted middle nodes (would need a Parallax change) — use `trusted-all`. |
 
-### 16.2 Verification
+### 16.2 Verification (DISABLED — planned, will be redesigned)
 
-| Item | Notes |
+**Status:** off. `VERIFICATION_ENABLED=false` (default) turns off sampled checks, canaries, capability challenges, fraud penalties and the `/verifications` routes. The code in `gateway/src/verification.ts` stays as a draft; do not rely on it. A later design will decide the method (for example, a check that compares pools, with an optional external reference). The gateway still keeps the data in Section 14.
+
+| Item (planned) | Notes |
 |---|---|
 | Output verification | Canaries and sampled re-checks with Token-DiFR on idle pools. |
 | Verifier selection and appeals | Different owners, second verifier, reference node, appeal window. |
@@ -768,7 +772,7 @@ The MVP has no output verification. To not design against it, the gateway keeps:
 | Item | Notes |
 |---|---|
 | Vesting of earned credits | **Implemented (Section 8.8).** |
-| Fraud penalties and bans | **Implemented (Section 8.8)**, only after a final 16.2 verdict. |
+| Fraud penalties and bans | **Code exists (Section 8.8), inactive:** penalties need a final 16.2 verdict, and 16.2 is disabled. |
 | Stage-level blame | **Implemented (Section 8.8)** for the stalled stage (late heartbeats); other failures still blame the whole route. |
 | Expiry of earned credits | **Implemented (Section 8.8).** |
 | Collusion detection | **Implemented as flags (Section 8.8).** No automatic penalty. |

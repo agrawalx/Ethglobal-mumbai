@@ -104,7 +104,8 @@ export function heartbeatHandler(db: Db, cfg: Config, signer: Signer, isPoolIdle
     if (isBanned(db, node.account_id)) return errorResponse(c, 403, "unauthorized", "the owner of this node is banned (SPEC §16.3)");
     // An "auto" node may still say "auto" until it has seen its assigned pool.
     if (node.pool_id !== hb.pool_id && !(node.auto_pool === 1 && hb.pool_id === "auto")) return errorResponse(c, 400, "bad_request", `node is registered in pool ${node.pool_id}, heartbeat says ${hb.pool_id}`);
-    if (hb.challenge_result) recordChallengeReply(db, cfg, signer, hb.node_id, hb.challenge_result, now);
+    const verificationOn = cfg.env.VERIFICATION_ENABLED === "true";
+    if (verificationOn && hb.challenge_result) recordChallengeReply(db, cfg, signer, hb.node_id, hb.challenge_result, now);
     const score = db.transaction(() => {
       const prev = db.prepare("SELECT hb_online, hb_layers, hb_model FROM nodes WHERE node_id = ?").get(hb.node_id) as { hb_online: number | null; hb_layers: string | null; hb_model: string | null };
       db.prepare(`UPDATE nodes SET hb_ts = ?, hb_online = ?, hb_model = ?, hb_layers = ?, hb_tok_s = ?,
@@ -144,7 +145,7 @@ export function heartbeatHandler(db: Db, cfg: Config, signer: Signer, isPoolIdle
       ? { pool_id: poolId, dht_prefix: dhtPrefix(cfg, poolId), model: (db.prepare("SELECT model FROM pools WHERE pool_id = ?").get(poolId) as { model: string } | undefined)?.model ?? cfg.net.models[0]!.model_id }
       : null;
     const inPool = poolId !== "auto";
-    const challenge = inPool ? challengeForHeartbeat(db, signer, hb.node_id, poolId, isPoolIdle(poolId), cfg.env.HEARTBEAT_SECONDS, now) : null;
+    const challenge = verificationOn && inPool ? challengeForHeartbeat(db, signer, hb.node_id, poolId, isPoolIdle(poolId), cfg.env.HEARTBEAT_SECONDS, now) : null;
     return c.json(HeartbeatResponse.parse({
       ok: true, owner_account: node.account_id, reliability: score ?? cfg.net.reliability.initial_score,
       restart_id: inPool ? restartId(db, poolId) : 0,

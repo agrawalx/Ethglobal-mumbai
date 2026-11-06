@@ -61,13 +61,16 @@ const expiry = setInterval(() => {
   }
 }, 60_000);
 
+/** SPEC §16.2 verification is a planned feature; off unless VERIFICATION_ENABLED=true. */
+const verificationOn = cfg.env.VERIFICATION_ENABLED === "true";
+
 // SPEC §16.3 incentives: unlock vested credits, expire old earnings, act on final fraud verdicts,
 // pay standby rewards for the last epoch. Local SQLite + HCS events (async writer); once a minute.
 const incentiveTick = () => {
   try {
     unlockDue(db);
     expireEarned(db, cfg.net, signer);
-    runPenalties(db, cfg.net, signer);
+    if (verificationOn) runPenalties(db, cfg.net, signer); // penalties need verification verdicts
     const paid = payAvailability(db, cfg, signer);
     if (paid > 0) console.log(JSON.stringify({ msg: "availability_paid", mc: paid }));
   } catch (err) {
@@ -112,16 +115,16 @@ const router = createRouter(cfg, db, arkivDirectory(cfg));
 const queue = createPoolQueue(cfg.net.router.max_concurrent_per_pool);
 let stopVerification = () => {};
 let stopCanaries = () => {};
-if (e.VERIFIER_URL && e.VERIFIER_OWNER_ACCOUNT) {
+if (verificationOn && e.VERIFIER_URL && e.VERIFIER_OWNER_ACCOUNT) {
   stopVerification = startVerificationWorker(db, cfg, signer);
   stopCanaries = startCanaryWorker(db, cfg, signer, router, queue);
 } else {
-  console.warn("output verification disabled: configure a trusted VERIFIER_URL and VERIFIER_OWNER_ACCOUNT");
+  console.warn(verificationOn ? "output verification disabled: configure a trusted VERIFIER_URL and VERIFIER_OWNER_ACCOUNT" : "output verification disabled (VERIFICATION_ENABLED=false; planned feature)");
 }
 
 const app = createApp({ cfg, db, signer, x402, router, queue, onComplete: (completion) => {
   logCompletion(completion);
-  if (completion.ok) {
+  if (completion.ok && verificationOn) {
     const id = maybeQueueVerification(db, cfg, completion.reqId);
     if (id) console.log(JSON.stringify({ msg: "verification_queued", verification_id: id, req_id: completion.reqId }));
   }

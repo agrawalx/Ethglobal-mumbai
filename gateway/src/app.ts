@@ -146,8 +146,10 @@ export function createApp({ cfg, db, signer, x402 = null, worldFetch, directory,
     return c.json(PayoutsResponse.parse(payoutsFor(db, address.data)));
   });
 
-  app.get("/verifications/:id", session(secret, true), verificationReadHandler(db));
-  app.post("/verifications/:id/appeal", session(secret, true), verificationAppealHandler(db, cfg, signer));
+  if (cfg.env.VERIFICATION_ENABLED === "true") { // SPEC §16.2: planned, off by default
+    app.get("/verifications/:id", session(secret, true), verificationReadHandler(db));
+    app.post("/verifications/:id/appeal", session(secret, true), verificationAppealHandler(db, cfg, signer));
+  }
 
   app.get("/requests/:id", (c) => {
     const id = RequestId.safeParse(c.req.param("id"));

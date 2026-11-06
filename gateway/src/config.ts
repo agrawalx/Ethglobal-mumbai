@@ -97,7 +97,10 @@ export const GatewayEnv = z.preprocess(
     /** Privacy: serve HTTPS with this certificate + key (PEM files). Both empty = HTTP (MVP). */
     TLS_CERT_FILE: opt,
     TLS_KEY_FILE: opt,
-    /** P6.2 output sampling. Sampling stays off unless the trusted verifier is configured. */
+    /** SPEC §16.2 output verification: planned, NOT active. "false" (default) turns off sampled checks,
+     *  canaries, capability challenges, penalties and the /verifications routes. To be designed later. */
+    VERIFICATION_ENABLED: z.enum(["true", "false"]).default("false"),
+    /** P6.2 output sampling (only with VERIFICATION_ENABLED=true and a trusted verifier). */
     VERIFIER_URL: opt,
     VERIFIER_SECONDARY_URL: opt,
     VERIFIER_OWNER_ACCOUNT: opt,

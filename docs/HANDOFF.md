@@ -317,6 +317,7 @@ Each component has a `.env.example`. Copy it to `.env` and fill it. Summary:
 | `PRIVATE_POOLS` | SPEC §16.3 private pools: JSON `{"pool-id": ["acc_…"]}`; the pool's node owners may always use it |
 | `TRUSTED_ACCOUNTS` | SPEC §16.1 privacy: comma-separated `acc_` IDs trusted with the first/last layers |
 | `PARALLAX_ROUTE_LOG` | Post-MVP P5.8/P5.9: absolute path of the hook route log (`<repo>/pool/run/routes.jsonl`). Set **only** when the scheduler runs with `pool/hooks` (`HOOKS=1`): the gateway then tags requests with `gpupool_req_id`. Empty = off |
+| `VERIFICATION_ENABLED` | SPEC §16.2: `false` (default). Output verification is planned, not active: no sampled checks, canaries, capability challenges, penalties or `/verifications` routes. |
 | `VERIFIER_URL` / `VERIFIER_OWNER_ACCOUNT` | P6.1: trusted Token-DiFR reference service and its owner account; sampled checks stay disabled unless both are set |
 | `VERIFIER_SECONDARY_URL` / `VERIFIER_SECONDARY_OWNER_ACCOUNT` | P6.3: independent reference service and owner for appeals |
 | `VERIFICATION_MAX_RATE` / `VERIFICATION_MIN_RATE` / `VERIFICATION_COST_MC` | P6.2: sample-rate bounds and estimated cost used for pool checks |
