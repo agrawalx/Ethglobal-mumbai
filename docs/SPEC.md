@@ -2,7 +2,7 @@
 
 **Version:** 0.1 (MVP)
 **Writing standard:** ASD-STE100 (Simplified Technical English), about 80%. Code, tables, and names do not follow the standard.
-**Rule for this document:** Build the minimum that works. Do not add complexity that the MVP does not need. Do not design against the post-MVP items in Section 12.
+**Rule for this document:** Build the minimum that works. Do not add complexity that the MVP does not need. Do not design against the post-MVP items in Section 16.
 
 ---
 
@@ -126,7 +126,7 @@ The node agent is a small Python program on each node. It does not replace Paral
 | **Identity** | It creates a node key (EVM wallet) at first start. It stores the key in `~/.gpupool/node.key`. |
 | **Registration** | It prints a link. The owner opens the link, logs in with World, and confirms the node. The gateway links the node to the owner account. |
 | **Arkiv listing** | It creates a `gpupool.node` entity. It extends the expiry every 30 seconds. |
-| **Heartbeat to gateway** | It sends status every 10 seconds: online, model loaded, layers, tokens per second. |
+| **Heartbeat to gateway** | It sends status every 10 seconds: online, model loaded, layers, tokens per second. It reads its layer range from the local Parallax node log (Section 5.5). It signs the raw body with the node key. |
 | **Start / stop** | It calls `join-node.sh` and `stop-all.sh`. |
 
 ### 4.2 Commands
@@ -136,6 +136,9 @@ gpupool-node init          # create key, print registration link
 gpupool-node start         # start Parallax join + Arkiv listing + heartbeat
 gpupool-node stop          # stop the process group, set listing to offline
 ```
+
+`start --no-join` runs the agent next to a Parallax node that already runs. `stop --keep-parallax` stops only the agent.
+The coordinator (`IS_COORDINATOR=true`) also writes `gpupool.pool` from `GET /pools/:pool_id` (Section 5.5).
 
 ---
 
@@ -162,23 +165,28 @@ The gateway is one TypeScript service (Node 24, Hono or Fastify). It is the only
 | POST | `/auth/world/verify` | None | Verifies the IDKit proof. Creates the account. Returns a session token. |
 | GET | `/me` | Session | Balance, ratio, nodes, reliability. |
 | POST | `/nodes/register` | Session | Links a node key to the account. |
-| POST | `/nodes/heartbeat` | Node key signature | Node status. |
+| POST | `/nodes/heartbeat` | Node key signature | Node status and layer range. Response: owner account and reliability (for the Arkiv listing). |
+| GET | `/pools/:pool_id` | None | The gateway's view of a pool: members with a fresh heartbeat, layer map, status. The coordinator writes `gpupool.pool` from it. |
 | GET | `/requests/:id` | None | Receipt: route, cost, HCS sequence number. |
 | GET | `/network` | None | Pools and nodes (for the frontend). |
+| GET | `/ledger/events` | None | Recent ledger events with HCS sequence numbers (for the `/ledger` page). |
+| GET | `/payouts/:address` | None | Epoch payouts and Merkle proofs for a payout address (for the `/payouts` page). |
+
+Request and response bodies, headers, and the error shape are in `shared/` (`shared/README.md`).
 
 ### 5.3 Request flow
 
 1. The gateway reads the `model` field.
-2. If the request has a session token, the gateway checks the balance. If the request has no token, the gateway applies x402 (Section 7).
+2. If the request has a session token, the gateway checks the balance. If the request has no token, the gateway applies x402 (Section 7). An invalid token gets HTTP 401 (never x402).
 3. The router selects a pool (Section 5.4).
-4. The gateway holds `model_factor × (max_tokens + 0.2 × input_tokens)` credits.
+4. The gateway holds `model_factor × (max_tokens + 0.2 × input_tokens)` credits. Before the request runs, `input_tokens` = ceil(characters of all messages / 4). If the balance is too small, the gateway returns HTTP 403 `insufficient_credits`.
 5. The gateway forwards the request to the pool coordinator. It forces `enable_thinking: false` unless the user asks for it.
 6. The gateway streams the answer to the user.
 7. At the end, the gateway reads the token counts from `usage`.
-8. The gateway settles the actual cost. It returns the remaining hold.
-9. The gateway reads the layer ranges from `/cluster/status_json` (Section 5.5).
+8. The gateway settles the actual cost (never more than the hold). It returns the remaining hold.
+9. The route is the pool's layer map when the request starts (Section 5.5).
 10. The gateway writes a receipt and a ledger event.
-11. If the request fails, the user pays nothing. The nodes on the route get a reliability penalty (Section 9).
+11. If the request fails, the user pays nothing. The nodes on the route get a reliability penalty (Section 9). If the client stops the request before the answer is complete, the user pays nothing and the nodes get no penalty (provisional, step 2.2). If the answer is complete (the `usage` arrived), the gateway settles it normally.
 
 ### 5.4 Router
 
@@ -194,8 +202,11 @@ The router does not select nodes inside the pool. Parallax does that.
 ### 5.5 Route capture (MVP method)
 
 - In the MVP, the pool has one pipeline. Each request goes through all nodes in the pool.
-- The gateway reads the layer ranges from `GET /cluster/status_json` once per minute and after each pool change.
-- The route of a request is the current layer map.
+- Parallax `GET /cluster/status_json` has **no** layer ranges (only libp2p peer IDs and status). So each **node agent reports its own layer range** in its signed heartbeat (`NodeHeartbeat.layers`).
+- The node agent reads the range from its local Parallax node log (Parallax is not changed). It uses the last of these lines: `Join scheduler response: {… 'start_layer': S, 'end_layer': E …}`, `Layer allocation changed! … New: [S, E)`, `Reloading executor with layers [S, E)`.
+- The gateway builds the pool's layer map from the latest **fresh** heartbeats (30 s or newer) of the pool's registered nodes. The map is valid only if the ranges cover `[0, num_layers)` of the model **exactly once** (no gaps, no overlaps). `num_layers` is in the model config (Qwen3-14B = 40, Qwen3-8B = 36).
+- The route of a request is the valid layer map when the request starts.
+- If the map is not valid, the route is **unknown** (`null`). The gateway logs a warning. The node shares of that request go to the network reserve (credits), or stay in the treasury (x402).
 - Post-MVP: capture the exact route of each request from the Parallax scheduler.
 
 ---
@@ -206,16 +217,16 @@ The router does not select nodes inside the pool. Parallax does that.
 
 - World Developer Portal: one app, one RP, one action: `gpupool-account`.
 - Environment: staging with the simulator for the hackathon.
-- Credential: `selfieCheck`. Do not use the Orb.
+- Credentials: **Orb** or **`selfieCheck`**. The user can verify with either one. Both give one account and the same starter credits.
 
 ### 6.2 Flow
 
-1. The frontend asks the gateway for an RP signature (`/auth/world/rp-signature`). The signing key stays on the server.
+1. The frontend asks the gateway for an RP signature (`/auth/world/rp-signature`). The signing key stays on the server. The gateway signs with `signRequest` from `@worldcoin/idkit-core/signing` (secp256k1). The signature is valid for 300 seconds.
 2. The frontend opens the IDKit widget (`@worldcoin/idkit` v4).
-3. The user completes Selfie Check in the World App (simulator in staging).
+3. The user completes Orb verification or Selfie Check in the World App (simulator in staging).
 4. The frontend sends the result to `/auth/world/verify` **without changes**.
-5. The gateway sends the result to `POST https://developer.world.org/api/v4/verify/{rp_id}`.
-6. The gateway stores `(action, nullifier)` with a UNIQUE constraint.
+5. The gateway sends the result to `POST https://developer.world.org/api/v4/verify/{rp_id}` (no auth header). The gateway accepts only Orb (`proof_of_human`) or Selfie Check (`selfie`) results. Any other result, or a World error, gives HTTP 401.
+6. The gateway stores the nullifier (32-byte lowercase hex) with a UNIQUE constraint. World accepts a reused nullifier (HTTP 200, "nullifier reuse"). So this constraint is the only check for "one account for each human".
 7. If the nullifier is new, the gateway creates an account and gives the starter credits.
 8. If the nullifier exists, the gateway logs in to the existing account. It does not give starter credits again.
 9. The gateway returns a session token (JWT, 24 hours).
@@ -245,9 +256,9 @@ AI agents and users without credits pay for each request. They do not need an ac
 1. The agent sends a request with no session token and no payment.
 2. The gateway returns HTTP 402 with the price and the treasury account.
 3. The agent signs a payment and sends the request again with the payment header.
-4. The facilitator checks and settles the payment on Hedera testnet.
-5. The gateway serves the request.
-6. The gateway records the payment in the ledger and on HCS.
+4. The facilitator checks and settles the payment on Hedera testnet. The gateway settles **before** it sends the request to the pool.
+5. The gateway serves the request. If the pool fails after the payment, the gateway records the request as failed. There is no refund in the MVP.
+6. The gateway records the payment in the ledger (`requests` row with payer, transaction, amount, route) and on HCS (`x402_payment`, for served requests).
 
 ### 7.3 Prices (MVP)
 
@@ -257,7 +268,7 @@ AI agents and users without credits pay for each request. They do not need an ac
 | 14B | 0.02 HBAR | 0.06 HBAR |
 
 - Currency: HBAR on testnet. USDC is post-MVP.
-- Facilitator: the x402.org testnet facilitator, or a facilitator from the Hedera docs. Confirm at the Hedera booth.
+- Facilitator: the x402.org facilitator (supports `hedera:testnet`, confirmed 6 Nov). Packages: `@x402/*` 2.30 (x402 v2). See `scripts/x402-poc/README.md`.
 
 ### 7.4 What happens to the money
 
@@ -275,6 +286,7 @@ AI agents and users without credits pay for each request. They do not need an ac
 ```
 1 credit = 1 output token on an 8B model at 8 bits
 cost     = model_factor × (output_tokens + 0.2 × input_tokens)
+cost_mc  = floor(model_factor × (output_tokens + 0.2 × input_tokens) × 1000)
 ```
 
 | Model | model_factor |
@@ -299,9 +311,13 @@ The admin sets the factors in a configuration file.
 |---|---|
 | Nodes on the route | 90%, divided by the number of layers that each node served |
 | Burn | 5% (removed from the system) |
-| Network reserve | 5% |
+| Network reserve | 5%, plus every rounding remainder |
 
-Example: a 14B request costs 490 credits. Node M4 served 20 of 40 layers. Node M5 served 9. Node 4060 served 11. The nodes get 220.5, 99.2, and 121.3 credits. 24.5 credits are burned. 24.5 credits go to the reserve.
+Integer rule (millicredits): `nodes_share = floor(cost × 90%)`; each node gets `floor(nodes_share × layers / total_layers)`; burn = `floor(cost × 5%)`; reserve = cost − nodes − burn. The parts sum exactly to the cost.
+
+**Self-request rule:** a node that the requesting account owns gets 0 credits for that request. Its share goes to the network reserve.
+
+Example: a 14B request costs 490 credits (490,000 mc). Node M4 served 20 of 40 layers. Node M5 served 9. Node 4060 served 11. The nodes get 220,500, 99,225, and 121,275 mc. 24,500 mc are burned. 24,500 mc go to the reserve. If the requester owns M5, M5 gets 0 and the reserve gets 123,725 mc.
 
 ### 8.4 Rules from BitTorrent
 
@@ -310,7 +326,7 @@ Example: a 14B request costs 490 credits. Node M4 served 20 of 40 layers. Node M
 | Cold start | Signup bonus, optimistic unchoke | Starter credits for each verified human (World ID). |
 | Give now, use later | Share ratio on the tracker | Credits. The ratio is shown on the account page. |
 | Fake ratio reports | Tracker checks peer reports | The gateway records the work. The node does not report its own earnings. |
-| Self-dealing | (Ratio cheats) | A node gets 0 credits for a request from its own owner. The burn fee makes back-and-forth trading cost credits. |
+| Self-dealing | (Ratio cheats) | A node gets 0 credits for a request from its own owner; its share goes to the network reserve. The burn fee makes back-and-forth trading cost credits. |
 | Large files cost more | Size-based ratio | `model_factor`: a larger model costs more for each token. |
 | Bad peers | Choking | Reliability score lowers the routing score of unreliable pools (Section 9). |
 | Free riders | Choking | Priority: when requests wait, a higher ratio goes first (Section 8.5). |
@@ -338,16 +354,18 @@ Example: a 14B request costs 490 credits. Node M4 served 20 of 40 layers. Node M
 | Table | Columns |
 |---|---|
 | `accounts` | `id` PK, `world_nullifier` TEXT UNIQUE, `payout_address`, `created_at` |
-| `balances` | `account_id` PK/FK, `starter_credits`, `starter_expires_at`, `earned_credits`, `held_credits`, `earned_total`, `spent_total` |
+| `balances` | `account_id` PK/FK, `starter_mc`, `starter_expires_at`, `earned_mc`, `held_mc`, `earned_total_mc`, `spent_total_mc` |
 | `nodes` | `node_id` PK (node public key), `account_id` FK, `pool_id`, `gpu`, `mem_gb`, `registered_at` |
 | `node_reliability` | `node_id` PK/FK, `requests_routed`, `requests_ok`, `heartbeats_expected`, `heartbeats_received`, `score`, `updated_at` |
-| `requests` | `req_id` PK, `account_id` FK (null for x402), `x402_payer`, `x402_tx`, `model`, `pay_type` (`credits` / `x402`), `in_tokens`, `out_tokens`, `cost`, `route` JSON (node → layers), `status`, `prompt_hash`, `resp_hash`, `hcs_seq`, `ts` |
+| `requests` | `req_id` PK, `account_id` FK (null for x402), `x402_payer`, `x402_tx`, `x402_amount_tinybar`, `model`, `pay_type` (`credits` / `x402`), `in_tokens`, `out_tokens`, `cost_mc`, `split` JSON, `route` JSON (node → layers), `status`, `prompt_hash`, `resp_hash`, `hcs_seq`, `ts` |
 | `ledger_events` | `id` PK, `type`, `payload` JSON, `gateway_sig`, `hcs_seq` (null until written), `ts` |
 | `epochs` | `epoch` PK, `start_ts`, `end_ts`, `total_tinybar`, `merkle_root`, `post_tx`, `status` |
 | `epoch_payouts` | (`epoch`, `payout_address`) PK, `amount_tinybar`, `proof` JSON, `claimed`, `claim_tx` |
 | `transcripts` | `req_id` PK/FK, `prompt`, `response`, `expires_at` (7 days; kept for future verification) |
 
 Sessions use a signed JWT. They do not need a table.
+
+Credit columns are integer millicredits (`*_mc`, 1 credit = 1000 mc). HBAR columns are tinybar decimal strings. Times are Unix ms. See `shared/README.md`.
 
 ---
 
@@ -431,7 +449,7 @@ Hedera is the **payment rail** and the **permanent record** of the network.
 | Network reserve (stays in treasury) | 10% |
 | Operations (stays in treasury) | 10% |
 
-The provider share of each x402 request is divided by layers served, with the same rule as credits (Section 8.3). The self-request rule also applies.
+The provider share of each x402 request is divided by layers served, with the same rule as credits (Section 8.3). The self-request rule also applies: a share for a node that the payer owns stays in the treasury. If the route of the request is unknown (Section 5.5), its provider share stays in the treasury.
 
 **Epoch close (gateway settlement job):**
 
@@ -439,7 +457,7 @@ The provider share of each x402 request is divided by layers served, with the sa
 2. Calculate the amount for each payout address.
 3. Make a Merkle tree. Each leaf is `(payout_address, amount_tinybar)`.
 4. Write the full list as an `epoch_closed` event to HCS (if the list is large, write its hash and keep the list in the gateway).
-5. Call `postEpoch(epoch, root, total)` on the contract. Send `total` HBAR from the treasury with the call.
+5. Call `postEpoch(epoch, root)` on the contract. Send `total` HBAR from the treasury with the call (`msg.value = total`, in tinybars inside the EVM).
 6. After the claim delay, each provider calls `claim(epoch, amount, proof)` from the frontend.
 
 **Contract: `EpochPayout.sol` (Hedera EVM, testnet)**
@@ -456,7 +474,7 @@ contract EpochPayout {
     function postEpoch(uint64 epoch, bytes32 root) external payable;   // only settler; msg.value = total
     function claim(uint64 epoch, uint256 amount, bytes32[] calldata proof) external;
         // leaf = keccak256(abi.encodePacked(msg.sender, amount)); pays msg.sender
-    function sweep(uint64 epoch) external;   // only settler; returns unclaimed HBAR after a long period
+    function sweep(uint64 epoch) external;   // only settler; returns unclaimed HBAR after sweepDelay (constructor, default 7 days)
 
     event EpochPosted(uint64 indexed epoch, bytes32 root, uint256 total);
     event Claimed(uint64 indexed epoch, address indexed account, uint256 amount);
