@@ -42,8 +42,12 @@ def clean_environment():
             os.environ.pop(key)
 
 
+# Cloudflare (Browser Integrity Check, error 1010) blocks the default "Python-urllib" user agent with 403.
+USER_AGENT = "gpupool-provider-helper/1.0"
+
+
 def request(base, path, body=None, token=None, timeout=35):
-    headers = {"content-type": "application/json"}
+    headers = {"content-type": "application/json", "user-agent": USER_AGENT}
     if token:
         headers["authorization"] = "Bearer " + token
     req = urllib.request.Request(base.rstrip("/") + "/provider" + path,
@@ -60,7 +64,7 @@ def request(base, path, body=None, token=None, timeout=35):
 
 
 def fetch(url):
-    with urllib.request.urlopen(url, timeout=120) as response:
+    with urllib.request.urlopen(urllib.request.Request(url, headers={"user-agent": USER_AGENT}), timeout=120) as response:
         return response.read()
 
 
@@ -318,6 +322,7 @@ def forward_job(base, token, job, private_port=3001):
     try:
         connection.putrequest("POST", destination.path.rstrip("/") + "/provider/helper/jobs/" + job["id"])
         connection.putheader("Authorization", "Bearer " + token)
+        connection.putheader("User-Agent", USER_AGENT)
         connection.putheader("Content-Type", upstream.headers.get("content-type", "application/json"))
         connection.putheader("X-Upstream-Status", str(upstream.status))
         connection.putheader("Transfer-Encoding", "chunked")
