@@ -240,6 +240,23 @@ def env_file(path, values):
     path.chmod(0o600)
 
 
+# SPEC §16.1 batching: Parallax node flags (pool/join-node.sh). The gateway sends node_batching in
+# /provider/helper/config; these defaults apply when it does not. micro batch = 4 // 2 = 2, so one
+# stage works on one micro-batch while the next stage works on the other.
+BATCHING_DEFAULTS = {"max_batch_size": 4, "micro_batch_ratio": 2, "scheduler_wait_ms": 50}
+
+
+def batching_env(batching):
+    values = {**BATCHING_DEFAULTS, **(batching or {})}
+    for key in ("max_batch_size", "micro_batch_ratio"):
+        if not isinstance(values[key], int) or isinstance(values[key], bool) or values[key] < 1:
+            raise ValueError(key + " must be a positive integer")
+    if not isinstance(values["scheduler_wait_ms"], int) or isinstance(values["scheduler_wait_ms"], bool) or values["scheduler_wait_ms"] < 0:
+        raise ValueError("scheduler_wait_ms must be a non-negative integer")
+    return {"MAX_BATCH_SIZE": values["max_batch_size"], "MICRO_BATCH_RATIO": values["micro_batch_ratio"],
+            "SCHEDULER_WAIT_MS": values["scheduler_wait_ms"]}
+
+
 def configure(payload):
     root, app, parallax = app_paths(payload)
     member = payload["member"]
@@ -250,7 +267,7 @@ def configure(payload):
     base = {"PARALLAX_DIR": str(parallax), "DHT_PREFIX": payload["dht_prefix"], "LAN_IP": info["ip"],
             "HF_HOME": str(root / "hf"), "HOOKS": 1, "NOTIFY_PORT": 5190,
             "EXTRA_FLAGS": " ".join(flags), "CUDA_HOME": info.get("cuda_home", ""),
-            "MAX_BATCH_SIZE": 1}
+            **batching_env(payload.get("batching"))}
     env_file(app / "pool/node.env", {**base, "ROLE": "node", "TCP_PORT": member["port"], "UDP_PORT": member["port"],
                                     "SCHEDULER_ADDR": payload.get("scheduler_addr", "")})
     if member["ssh"] == "local":

@@ -67,6 +67,16 @@ export const GpupoolConfig = z.object({
     /** SPEC §16.1 batching: requests that run at once per pool (MVP = 1). Parallax batches them (--max-batch-size). */
     max_concurrent_per_pool: z.number().int().positive(),
   }),
+  /**
+   * SPEC §16.1 batching: Parallax flags for every node of a managed (website) pool. Sent to the
+   * helpers in /provider/helper/config; applied at the next pool start (Retry setup).
+   * micro batch = max_batch_size / micro_batch_ratio; scheduler_wait_ms = time to gather a batch.
+   */
+  node_batching: z.object({
+    max_batch_size: z.number().int().positive(),
+    micro_batch_ratio: z.number().int().positive(),
+    scheduler_wait_ms: z.number().int().min(0),
+  }),
   /** SPEC §16.1 automatic pool formation: nodes registered in pool "auto" are grouped by measured delay. */
   pool_formation: z.object({
     max_rtt_ms: z.number().positive(),

@@ -227,6 +227,7 @@ export function providerRoutes(db: Db, cfg: Config, signer: Signer, relay: Provi
       server_time: Date.now(), role: member.role, member_id: member.id, stage: member.stage,
       node_port: member.role === "coordinator" ? 5101 : 5102 + members.filter(m => m.role !== "coordinator").findIndex(m => m.id === member.id),
       coordinator_ip: coordinator.ip, member_ips: members.map(m => m.ip).filter(Boolean), model_config: cfg.model(pool.model),
+      node_batching: cfg.net.node_batching,
       arkiv: Object.fromEntries(["ARKIV_RPC_URL", "ARKIV_CHAIN_ID", "ARKIV_ACCESS_KEY"].map(key => [key, cfg.env[key as keyof typeof cfg.env]]).filter(([, value]) => !!value)) });
   });
   helper.post("/fund", async c => {

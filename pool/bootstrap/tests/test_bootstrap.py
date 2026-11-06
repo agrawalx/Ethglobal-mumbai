@@ -191,5 +191,23 @@ class BootstrapTests(unittest.TestCase):
             gateway.assert_not_called()
 
 
+    def test_configure_writes_batching_flags_from_the_gateway_and_keeps_mac_memory_flags(self):
+        def node_env(batching):
+            payload = {"pool_id": "pool_test", "member": {"ssh": "provider", "port": 5102}, "facts": {"backend": "mlx", "ip": "10.1.0.2"},
+                       "dht_prefix": "gp-test", "gateway_url": "http://127.0.0.1:8080", "frontend_url": "http://127.0.0.1:8080", "api_port": 3001}
+            if batching is not None: payload["batching"] = batching
+            with patch.object(host, "app_paths", return_value=(self.root, self.root, self.root)):
+                host.configure(payload)
+            return (self.root / "pool/node.env").read_text()
+        default = node_env(None)
+        for line in ("MAX_BATCH_SIZE=4\n", "MICRO_BATCH_RATIO=2\n", "SCHEDULER_WAIT_MS=50\n",
+                     "EXTRA_FLAGS='--kv-cache-memory-fraction 0.25 --max-sequence-length 4096'\n"):
+            self.assertIn(line, default)
+        tuned = node_env({"max_batch_size": 2, "micro_batch_ratio": 1, "scheduler_wait_ms": 0})
+        for line in ("MAX_BATCH_SIZE=2\n", "MICRO_BATCH_RATIO=1\n", "SCHEDULER_WAIT_MS=0\n"):
+            self.assertIn(line, tuned)
+        for bad in ({"max_batch_size": 0}, {"micro_batch_ratio": "2"}, {"scheduler_wait_ms": -1}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError): node_env(bad)
+
 if __name__ == "__main__":
     unittest.main()

@@ -16,6 +16,7 @@ const answer = () => Response.json({ choices: [{ message: { content: "hi" } }], 
 
 test("gateway queues by real account ratio, x402=1; cancelled/queued requests do not hold or pay", async () => {
   const cfg = loadConfig({ DATABASE_PATH: ":memory:", POOL_COORDINATOR_URL: "http://127.0.0.1:3001", JWT_SECRET: TEST_JWT_SECRET });
+  cfg.net.router.max_concurrent_per_pool = 1; // one slot, so the later requests queue by ratio
   const db = openDb(":memory:");
   const originalFetch = globalThis.fetch;
   let unblock!: () => void;
@@ -75,6 +76,7 @@ test("gateway queues by real account ratio, x402=1; cancelled/queued requests do
 
 test("pool becoming stale during queue wait is rejected before taking a hold; later requests still run", async () => {
   const cfg = loadConfig({ DATABASE_PATH: ":memory:", POOL_COORDINATOR_URL: "http://127.0.0.1:3001", JWT_SECRET: TEST_JWT_SECRET });
+  cfg.net.router.max_concurrent_per_pool = 1; // the second request must wait in the queue
   const db = openDb(":memory:");
   const originalFetch = globalThis.fetch;
   let unblock!: () => void;

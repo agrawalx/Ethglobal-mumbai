@@ -38,7 +38,9 @@ if [ -n "${NOTIFY_PORT:-}" ]; then NOTIFY_FLAGS=(--notify-url "http://127.0.0.1:
 #  SCHEDULER_ADDR  scheduler multiaddr (/ip4/…/tcp/…/p2p/<peer>) for a pool over the internet (WAN);
 #  RELAY_SERVERS / INITIAL_PEERS  your own relay / bootstrap multiaddrs (never the public ones by default);
 #  START_LAYER / END_LAYER  pin this node to [start, end) (privacy: trusted first/last layers);
-#  MAX_BATCH_SIZE  requests Parallax batches on this node (batching tuning).
+#  MAX_BATCH_SIZE  requests Parallax batches on this node (batching tuning);
+#  MICRO_BATCH_RATIO  micro batch = MAX_BATCH_SIZE / ratio (pipeline stages overlap; Parallax default 1);
+#  SCHEDULER_WAIT_MS  time to gather a batch before it runs (Parallax default 500; adds first-token delay).
 OPT_FLAGS=()
 [ -n "${SCHEDULER_ADDR:-}" ] && OPT_FLAGS+=(-s "$SCHEDULER_ADDR")
 # shellcheck disable=SC2206
@@ -50,6 +52,8 @@ if [ -n "${START_LAYER:-}" ] || [ -n "${END_LAYER:-}" ]; then
   OPT_FLAGS+=(--start-layer "$START_LAYER" --end-layer "$END_LAYER")
 fi
 [ -n "${MAX_BATCH_SIZE:-}" ] && OPT_FLAGS+=(--max-batch-size "$MAX_BATCH_SIZE")
+[ -n "${MICRO_BATCH_RATIO:-}" ] && OPT_FLAGS+=(--micro-batch-ratio "$MICRO_BATCH_RATIO")
+[ -n "${SCHEDULER_WAIT_MS:-}" ] && OPT_FLAGS+=(--scheduler-wait-ms "$SCHEDULER_WAIT_MS")
 
 # Mac: EXTRA_FLAGS="--kv-cache-memory-fraction 0.25 --max-sequence-length 4096"
 # shellcheck disable=SC2086 # EXTRA_FLAGS is a list of flags: word-split on purpose.
