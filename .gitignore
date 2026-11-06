@@ -1,4 +1,5 @@
 # secrets
+keys.txt
 .env
 .env.*
 node.env
@@ -11,6 +12,9 @@ p2p.key
 *.sqlite
 *.sqlite3
 *.db
+*.sqlite-*
+*.sqlite3-*
+*.db-*
 transcripts/
 # deps / builds
 node_modules/
@@ -31,3 +35,11 @@ contracts/broadcast/
 .DS_Store
 .idea/
 .vscode/
+# pool runtime
+pool/*.env
+pool/run/
+pool/logs/
+# contracts deps (install: cd contracts && forge install --no-git foundry-rs/forge-std)
+contracts/lib/
+# gateway runtime data (SQLite file, live-check logs)
+gateway/data/
