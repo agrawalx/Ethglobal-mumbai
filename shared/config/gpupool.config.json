@@ -1,0 +1,38 @@
+{
+  "models": [
+    {
+      "model_id": "Qwen/Qwen3-8B-FP8",
+      "mlx_variant": "Qwen/Qwen3-8B-MLX-8bit",
+      "size_gb": 9.0,
+      "num_layers": 36,
+      "model_factor": 1.0,
+      "license": "apache-2.0",
+      "x402_prices": [
+        { "max_tokens": 512, "price_tinybar": "1000000" },
+        { "max_tokens": 2048, "price_tinybar": "3000000" }
+      ]
+    },
+    {
+      "model_id": "Qwen/Qwen3-14B-FP8",
+      "mlx_variant": "Qwen/Qwen3-14B-MLX-8bit",
+      "size_gb": 16.3,
+      "num_layers": 40,
+      "model_factor": 1.75,
+      "license": "apache-2.0",
+      "x402_prices": [
+        { "max_tokens": 512, "price_tinybar": "2000000" },
+        { "max_tokens": 2048, "price_tinybar": "6000000" }
+      ]
+    }
+  ],
+  "cost": { "input_token_weight": 0.2, "default_max_tokens": 512 },
+  "credit_split_bps": { "nodes": 9000, "burn": 500, "reserve": 500 },
+  "x402_split_bps": { "providers": 8000, "reserve": 1000, "operations": 1000 },
+  "reliability": { "success_weight": 0.7, "uptime_weight": 0.3, "initial_score": 0.8, "window_days": 7 },
+  "router": { "pool_heartbeat_max_age_s": 30, "retry_after_s": 10 },
+  "arkiv_ttl_s": { "node": 120, "pool": 120, "model": 2592000, "account_stats": 86400 },
+  "arkiv_account_stats_update_s": 600,
+  "max_nodes_per_account": 3,
+  "session_ttl_s": 86400,
+  "transcript_retention_days": 7
+}
