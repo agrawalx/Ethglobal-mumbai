@@ -85,6 +85,26 @@ test("batching: max_concurrent_per_pool slots run at once; the next waits for a 
   assert.equal(third, true);
 });
 
+test("batching: 4 slots admit 4 requests at once; waiters get freed slots in ratio order", async () => {
+  const q = createPoolQueue(4);
+  const sig = new AbortController().signal;
+  const running = await Promise.all([1, 1, 1, 1].map((r) => q.acquire("p", r, sig)));
+  const order: string[] = [];
+  const low = q.acquire("p", 0.5, sig).then((rel) => { order.push("low"); return rel; });
+  const high = q.acquire("p", 2, sig).then((rel) => { order.push("high"); return rel; });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(order, [], "four slots busy");
+  assert.equal(q.queued(["p"]), 2);
+  running[0]!();
+  (await high)();
+  assert.deepEqual(order, ["high"]);
+  running[1]!();
+  (await low)();
+  assert.deepEqual(order, ["high", "low"]);
+  running.slice(2).forEach((r) => r());
+  assert.equal(q.isIdle("p"), true);
+});
+
 test("many pools: each pool routes to its own private coordinator (POOL_COORDINATORS)", async () => {
   const s = await setup([{ pool_id: "pool-a", url: fakeUrl(0) }, { pool_id: "pool-b", url: fakeUrl(1) }],
     { POOL_COORDINATORS: JSON.stringify({ "pool-b": fakeUrl(1) }) });

@@ -105,6 +105,26 @@ test("score uses the pool's own reliability (SPEC §9.2) and active request load
   } finally { db.close(); }
 });
 
+test("batching: load = running requests / slots, so a pool at 1 of 4 slots is 25 % loaded", async () => {
+  const { cfg, db, fake, model } = setup();
+  try {
+    const four = { ...cfg, net: { ...cfg.net, router: { ...cfg.net.router, max_concurrent_per_pool: 4 } } };
+    const listing = (await fake.readyPools(MODEL))[0]!;
+    const pool = listing.pool_id;
+    const router = createRouter(four, db, { ...fake, pools: async () => [listing] });
+    const idle = (await router.select(model))!.score;
+    const releases = [router.start(pool)];
+    assert.ok(Math.abs((await router.select(model))!.score - idle * 0.75) < 1e-9);
+    assert.equal((await router.network()).pools[0]!.load, 0.25);
+    for (let i = 0; i < 4; i++) releases.push(router.start(pool));
+    // Over the slot count the load stays 1: the pool is still a candidate and the queue makes callers wait.
+    assert.equal((await router.network()).pools[0]!.load, 1);
+    assert.equal((await router.select(model))!.score, 0);
+    releases.forEach((r) => r());
+    assert.equal((await router.select(model))!.score, idle);
+  } finally { db.close(); }
+});
+
 test("pool reliability: 0.7 × pool success + 0.3 × pool uptime; new pool starts at initial score", () => {
   const { cfg, db } = setup();
   try {

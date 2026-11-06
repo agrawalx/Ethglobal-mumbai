@@ -54,6 +54,9 @@ function privatePools(cfg: Config): Record<string, string[]> {
 /** One private coordinator in the MVP. Arkiv publishes only its URL hash. */
 export function createRouter(cfg: Config, db: Db, directory: Directory, queue?: PoolQueue) {
   const active = new Map<string, number>();
+  /** SPEC §16.1 batching: load = running requests / slots, so 1 of 4 slots is 25 % loaded (capped at 1). */
+  const slots = cfg.net.router.max_concurrent_per_pool;
+  const loadOf = (poolId: string) => Math.min(1, (active.get(poolId) ?? 0) / slots);
   /** Pool context per model, cached briefly so the request path adds no extra Arkiv read per request. */
   const contexts = new Map<string, { value: number | undefined; at: number }>();
   const minContext = (pools: SelectedPool[]): number | undefined =>
@@ -105,8 +108,7 @@ export function createRouter(cfg: Config, db: Db, directory: Directory, queue?: 
       if (members.some((n) => !n || n.hb_hw_verified === 0 || !n.hb_online || n.hb_ts === null || n.hb_ts < minTs || n.hb_ts > now + 60_000 || configModelFor(cfg.net, n.hb_model)?.model_id !== model.model_id)) continue;
       // SPEC §9.2: the pool is the reputation identity (its own success rate + uptime), not its weakest node.
       const reliability = poolReliability(db, cfg, p.pool_id, now);
-      const count = active.get(p.pool_id) ?? 0;
-      const load = count / (count + 1);
+      const load = loadOf(p.pool_id);
       // Use signed heartbeats for the receipt, never the public listing's claimed layer map.
       if (opts.minReliability !== undefined && reliability < opts.minReliability) continue;
       const route = poolLayerMap(db, cfg.net, p.pool_id, model, now);
@@ -155,8 +157,7 @@ export function createRouter(cfg: Config, db: Db, directory: Directory, queue?: 
         stats: directory.stats ? await directory.stats() : [],
         nodes,
         pools: pools.map((pool) => {
-          const count = active.get(pool.pool_id) ?? 0;
-          return { ...pool, reliability: poolReliability(db, cfg, pool.pool_id), load: count / (count + 1),
+          return { ...pool, reliability: poolReliability(db, cfg, pool.pool_id), load: loadOf(pool.pool_id),
             route_dispute: routeDispute(db, cfg, pool.pool_id), restarting: isRestarting(db, cfg, pool.pool_id) };
         }),
       };
