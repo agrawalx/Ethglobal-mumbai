@@ -7,94 +7,60 @@ proportion to the layers they serve, and records every balance change on Hedera.
 ## 1. System diagram
 
 ```mermaid
-flowchart TB
-  %% ---------------- people ----------------
-  subgraph Users["Users (buyers)"]
-    U1["Browser user<br/>chat + receipts"]
-    U2["Dev tools via API key<br/>(opencode, OpenAI SDK)"]
-    U3["AI agent<br/>pays per request (x402)"]
+flowchart LR
+  subgraph Buyers["Buyers"]
+    U1["Browser user<br/>World ID or wallet"]
+    U2["API key gpk_…<br/>opencode / OpenAI SDK"]
+    U3["AI agent<br/>x402 per request"]
   end
 
-  subgraph Providers["Providers (World ID required)"]
-    P1["Coordinator laptop<br/>starts a pool"]
-    P2["Member laptops<br/>join a pool"]
+  subgraph Web["Web app"]
+    W1["User page<br/>chat · models · API keys<br/>buy credits · receipts"]
+    W2["Provider page<br/>Start a pool / Join a pool<br/>World ID required"]
+    W3["Network page<br/>pool health (Arkiv)"]
   end
 
-  %% ---------------- web app ----------------
-  subgraph Web["Web app (Vite / React)"]
-    W1["User page<br/>chat · models · API keys · buy credits<br/>account: balance, ratio, receipts"]
-    W2["Provider page<br/>Start a pool / Join a pool guides<br/>info exchange + firewall rules<br/>my nodes, earnings, payouts"]
-    W3["Network page<br/>pool health from Arkiv"]
+  subgraph GW["Hosted gateway"]
+    G1["OpenAI-compatible API<br/>+ auth (JWT, API keys, x402)"]
+    G2["Router<br/>pool reliability × (1 − load)<br/>ratio queue · failover"]
+    G3["Billing + ledger<br/>hold → settle<br/>90% nodes · 5% burn · 5% reserve"]
+    G4["Reputation<br/>pool + node scores"]
+    G5["Settlement<br/>epoch Merkle → contract"]
+    DB[("Gateway DB<br/>SQLite → Postgres")]
   end
 
-  %% ---------------- identity ----------------
-  subgraph Identity["Identity"]
-    I1["World ID (IDKit v4)<br/>Orb or Selfie · 1 account / human<br/>mandatory for providers"]
-    I2["Wallet sign-in<br/>buyers without World ID"]
-    I3["Sessions (JWT) + API keys gpk_…"]
+  subgraph Pool["Pool (same LAN, ≤ 5 ms)"]
+    C1["Coordinator<br/>parallax run + agent<br/>outbound tunnel"]
+    N1["Member<br/>parallax join + agent"]
+    N2["Member<br/>parallax join + agent"]
   end
 
-  %% ---------------- gateway ----------------
-  subgraph GW["Hosted gateway (our servers)"]
-    G1["OpenAI-compatible API<br/>/v1/chat/completions · /v1/models"]
-    G2["Router<br/>ready pools from Arkiv<br/>score = pool reliability × (1 − load)<br/>priority queue by ratio · 1 failover · 503"]
-    G3["Billing + credits ledger<br/>hold → settle · 90% nodes by layers<br/>5% burn · 5% reserve · 0 on own requests"]
-    G4["Reputation<br/>pool: 0.7 success + 0.3 uptime<br/>node: success + heartbeats"]
-    G5["Settlement job<br/>epoch Merkle tree → contract"]
-    G6["Tunnel endpoint<br/>coordinators dial in (outbound)"]
-    DB[("Gateway DB<br/>SQLite now → Postgres hosted<br/>balances · receipts · keys · reputation")]
+  subgraph Public["Public record"]
+    A1[("Arkiv<br/>pools · nodes · models<br/>account stats")]
+    H1[("Hedera HCS<br/>signed ledger events")]
+    H2["Treasury + x402<br/>(HBAR)"]
+    H3["EpochPayout<br/>contract"]
   end
 
-  %% ---------------- pools ----------------
-  subgraph PoolA["Pool A — same LAN, every pair ≤ 5 ms"]
-    C1["Coordinator<br/>parallax run (scheduler)<br/>API private on 127.0.0.1<br/>node agent + tunnel"]
-    N1["Member: parallax join<br/>layers [0,14)"]
-    N2["Member: parallax join<br/>layers [14,29)"]
-    N3["Coordinator's own GPU<br/>layers [29,40)"]
-  end
-  PoolB["Pool B (another model / LAN)"]
-
-  %% ---------------- chains ----------------
-  subgraph Chain["Public record"]
-    A1[("Arkiv (directory)<br/>gpupool.pool · gpupool.node<br/>gpupool.model · account_stats<br/>expires if not renewed")]
-    H1[("Hedera HCS topic<br/>signed event per balance change")]
-    H2["x402 + treasury (HBAR)"]
-    H3["EpochPayout contract<br/>providers claim HBAR"]
-  end
-
-  %% ---------------- flows ----------------
   U1 --> W1
-  U2 -- "Bearer gpk_…" --> G1
-  U3 -- "x402 HBAR" --> G1
-  P1 --> W2
-  P2 --> W2
-  W1 --> G1
-  W3 -. reads .-> A1
-  W1 & W2 --> I1
-  W1 --> I2
-  I1 & I2 --> I3 --> G1
+  W1 & W2 --> G1
+  U2 --> G1
+  U3 --> G1
+  W3 -.-> A1
 
-  G1 --> G2 --> G6
-  G6 <-->|"tunnel: requests down, tokens up"| C1
-  C1 --- N1
-  C1 --- N2
-  C1 --- N3
-  G2 -. "other pools" .-> PoolB
-
-  G1 --> G3
-  G3 --> DB
+  G1 --> G2
+  G2 <-->|"tunnel"| C1
+  C1 --- N1 & N2
+  N1 & N2 & C1 -->|"heartbeats"| G4
   G4 --> DB
-  G2 -. "reads ready pools" .-> A1
-  C1 & N1 & N2 -- "signed heartbeats 10 s" --> G4
-  N1 & N2 & C1 -- "node listing (30 s)" --> A1
-  C1 -- "pool listing + pool reliability" --> A1
-  G3 -- "every balance change" --> H1
-  U3 -.-> H2
-  W1 -- "buy credits (wallet / x402)" --> H2
-  H2 --> G3
+  G1 --> G3 --> DB
+
+  C1 & N1 & N2 -->|"listings"| A1
+  G2 -.->|"ready pools"| A1
+  G3 -->|"every balance change"| H1
+  U3 & W1 -->|"HBAR"| H2 --> G3
   G5 --> H3
-  G5 -- "epoch_closed" --> H1
-  P1 & P2 -- "claim HBAR" --> H3
+  W2 -->|"claim HBAR"| H3
 ```
 
 ## 2. Components
