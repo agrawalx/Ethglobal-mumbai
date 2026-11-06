@@ -41,7 +41,7 @@ export type Failover = (f: { reason: Exclude<FailReason, "client_aborted">; stre
  * credit hold; no session → x402 settle. Returns a Response to stop (402/403/…), or extra response
  * headers (x402 PAYMENT-RESPONSE), the pool, `finish` (runs once with the completion) and `failover`.
  */
-export type Prepared = { headers: Record<string, string>; coordinatorUrl: string; poolId: string; finish: OnComplete; failover?: Failover };
+export type Prepared = { headers: Record<string, string>; coordinatorUrl: string; poolId: string; finish: OnComplete; failover?: Failover; /** Answer cap picked for a credit request (budget.ts); else the asked one. */ maxTokens?: number };
 export type Prepare = (c: Context, req: ChatCompletionRequest, model: ModelConfig, maxTokens: number, reqId: string) => Promise<Prepared | Response>;
 
 const withHeaders = (res: Response, headers: Record<string, string>): Response => {
@@ -153,9 +153,13 @@ export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker) 
     const model: ModelConfig | undefined = cfg.model(asked.model);
     if (!model) return errorResponse(c, 404, "model_not_found", `unknown model ${asked.model}`);
 
-    let maxTokens = effectiveMaxTokens(asked, cfg.net.cost.default_max_tokens);
+    // Credit requests (session or key): the gateway picks the answer cap (budget.ts), so a large
+    // client max_tokens is capped, not refused. x402 prices are per max_tokens tier: refuse above it.
+    const credit = !!c.get("accountId");
     const limit = model.x402_prices[model.x402_prices.length - 1]!.max_tokens;
-    if (maxTokens > limit) return errorResponse(c, 400, "bad_request", `max_tokens ${maxTokens} is above the limit ${limit} for ${asked.model}`);
+    let maxTokens = effectiveMaxTokens(asked, cfg.net.cost.default_max_tokens);
+    if (credit) maxTokens = Math.min(maxTokens, limit);
+    else if (maxTokens > limit) return errorResponse(c, 400, "bad_request", `max_tokens ${maxTokens} is above the limit ${limit} for ${asked.model}`);
 
     // Fit the prompt into the pool's context; the answer gets the room that is left.
     const toolsMode: ToolsMode = cfg.env.TOOLS_MODE;
@@ -170,6 +174,7 @@ export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker) 
 
     const prep = await prepare(c, req, model, maxTokens, reqId);
     if (prep instanceof Response) return prep;
+    if (prep.maxTokens !== undefined) maxTokens = prep.maxTokens;
     const extra = { ...prep.headers, ...(fit.trimmed ? { [TRIMMED_HEADER]: String(fit.trimmed) } : {}) };
     const clientSignal = c.req.raw.signal;
     const complete = (usage: Usage | null, text: string, ok: boolean, reason?: FailReason, streamedTokens = 0) =>

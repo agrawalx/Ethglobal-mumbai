@@ -251,3 +251,20 @@ test("context: a prompt that cannot fit gets 400 context_length_exceeded and cos
   assert.match(body.error.message, /context 4096/);
   assert.deepEqual(balance(db, acc), before);
 });
+
+test("budget: header reports the picked cap; a low balance gets a short answer; an empty one gets 403", async () => {
+  const r = await post({ model: MODEL, max_tokens: 32000, messages: [{ role: "user", content: "hi" }] });
+  assert.equal(r.status, 200);
+  assert.equal(Number(r.headers.get("x-gpupool-max-tokens")), seen.at(-1).max_tokens);
+  const saved = balance(db, acc);
+  db.prepare("UPDATE balances SET starter_mc = 120000, earned_mc = 0 WHERE account_id = ?").run(acc); // 120 credits
+  const low = await post({ model: MODEL, max_tokens: 2048, messages: [{ role: "user", content: "hi" }] });
+  assert.equal(low.status, 200);
+  const cap = Number(low.headers.get("x-gpupool-max-tokens"));
+  assert.ok(cap >= 64 && cap < 70, `cap ${cap}`); // 120 credits / 1.75 ≈ 68 answer tokens
+  db.prepare("UPDATE balances SET starter_mc = 0, earned_mc = 0, held_mc = 0 WHERE account_id = ?").run(acc);
+  const none = await post({ model: MODEL, messages: [{ role: "user", content: "hi" }] });
+  assert.equal(none.status, 403);
+  assert.equal(((await none.json()) as any).error.code, "insufficient_credits");
+  db.prepare("UPDATE balances SET starter_mc = ?, earned_mc = ?, held_mc = 0 WHERE account_id = ?").run(saved.starter_mc, saved.earned_mc, acc);
+});

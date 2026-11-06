@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
  * tinybar decimal strings, times are Unix ms. No migrations (dev phase): when SCHEMA_VERSION
  * changes, delete the database file and restart.
  */
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 export const TABLES = [
   "accounts",
@@ -129,6 +129,7 @@ CREATE TABLE IF NOT EXISTS requests (
   agent_id             TEXT,                         -- §16.3: agent key that sent the request (human-backed)
   sampling_seed       INTEGER,
   sampling_settings   TEXT,
+  max_tokens           INTEGER,                      -- answer cap the gateway picked (budget.ts); learns per user
   ts                   INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS ledger_events (

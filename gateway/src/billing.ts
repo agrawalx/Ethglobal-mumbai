@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Context } from "hono";
-import { canonicalJson, type ChatCompletionRequest, type ModelConfig, type PayoutRoute, type RequestAttempt, type Route } from "@gpupool/shared";
-import type { Completion, Failover, OnComplete, Prepare } from "./chat.ts";
+import { canonicalJson, MAX_TOKENS_HEADER, type ChatCompletionRequest, type ModelConfig, type PayoutRoute, type RequestAttempt, type Route } from "@gpupool/shared";
+import type { Completion, Failover, OnComplete, Prepare, Prepared } from "./chat.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { errorResponse } from "./errors.ts";
@@ -11,6 +11,7 @@ import { contributionRatio } from "./accounts.ts";
 import { countRouted } from "./reliability.ts";
 import { agentBudgetLeft, chargeAgent, recordPoolWait } from "./incentives.ts";
 import { exactRoute } from "./pools.ts";
+import { learnedNeed, MIN_ANSWER, pickMaxTokens } from "./budget.ts";
 import type { PoolQueue } from "./queue.ts";
 import type { Router, SelectedPool, SelectOptions } from "./router.ts";
 import { HASH_SALT_HEADER, isPrivacyMode, newSalt, PRIVACY_HEADER, PRIVACY_MODES, promptHashOf, saltedHash, seal, trustedAccounts } from "./privacy.ts";
@@ -38,12 +39,12 @@ function payoutSnapshot(db: Db, route: Route | null): PayoutRoute | null {
   }) ?? null;
 }
 
-function insertRequest(db: Db, cfg: Config, row: { reqId: string; accountId: string | null; payer?: string; tx?: string; amount?: string; asset?: string; raw?: string; model: string; payType: "credits" | "x402"; route: Route | null; promptHash: string; prompt: string; seed: number; settings: string; salt: string; privacy: string | null }, now: number) {
+function insertRequest(db: Db, cfg: Config, row: { reqId: string; accountId: string | null; payer?: string; tx?: string; amount?: string; asset?: string; raw?: string; model: string; payType: "credits" | "x402"; route: Route | null; promptHash: string; prompt: string; seed: number; settings: string; salt: string; privacy: string | null; maxTokens: number }, now: number) {
   db.transaction(() => {
     db.prepare(
-      `INSERT INTO requests (req_id, account_id, x402_payer, x402_tx, x402_amount_tinybar, x402_asset, x402_amount_raw, model, pay_type, route, status, prompt_hash, sampling_seed, sampling_settings, ts)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
-    ).run(row.reqId, row.accountId, row.payer ?? null, row.tx ?? null, row.amount ?? null, row.asset ?? null, row.raw ?? null, row.model, row.payType, row.route ? JSON.stringify(row.route) : null, row.promptHash, row.seed, row.settings, now);
+      `INSERT INTO requests (req_id, account_id, x402_payer, x402_tx, x402_amount_tinybar, x402_asset, x402_amount_raw, model, pay_type, route, status, prompt_hash, sampling_seed, sampling_settings, max_tokens, ts)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+    ).run(row.reqId, row.accountId, row.payer ?? null, row.tx ?? null, row.amount ?? null, row.asset ?? null, row.raw ?? null, row.model, row.payType, row.route ? JSON.stringify(row.route) : null, row.promptHash, row.seed, row.settings, row.maxTokens, now);
     if (row.payType === "x402") {
       const snapshot = payoutSnapshot(db, row.route);
       db.prepare("UPDATE requests SET payout_snapshot = ? WHERE req_id = ?").run(snapshot ? JSON.stringify(snapshot) : null, row.reqId);
@@ -88,7 +89,8 @@ function markFailed(db: Db, cfg: Config, reqId: string, route: Route | null, com
 
 export function makePrepare(d: BillingDeps): Prepare {
   const { cfg, db, signer } = d;
-  return async (c: Context, req: ChatCompletionRequest, model: ModelConfig, maxTokens: number, reqId: string) => {
+  return async (c: Context, req: ChatCompletionRequest, model: ModelConfig, askedMax: number, reqId: string): Promise<Prepared | Response> => {
+    let maxTokens = askedMax;
     const accountId = (c.get("accountId") as string | null | undefined) ?? null;
     let now = Date.now();
     // Salted hashes: the public ledger cannot be searched for short prompts (src/privacy.ts).
@@ -226,7 +228,16 @@ export function makePrepare(d: BillingDeps): Prepare {
       };
 
       if (accountId) {
-        const hold = holdMc(cfg.net, model, maxTokens, estimateInputTokens(req.messages, req.tools));
+        // Answer cap for this user (budget.ts): never more than the balance (and key budget) can pay.
+        const inTokens = estimateInputTokens(req.messages, req.tools);
+        const spendable = Math.min(availableMc(db, accountId, now), agentId ? agentBudgetLeft(db, agentId) : Infinity);
+        const asked = req.max_tokens ?? req.max_completion_tokens ?? null;
+        const pick = pickMaxTokens({ cfg: cfg.net, model, ceiling: maxTokens, asked, learned: learnedNeed(db, accountId, agentId), availableMc: spendable, inTokens });
+        if (pick.maxTokens === null) {
+          return errorResponse(c, 403, "insufficient_credits", `available ${spendable} mc pays for ${pick.affordable} answer tokens; at least ${MIN_ANSWER} are needed`);
+        }
+        maxTokens = pick.maxTokens;
+        const hold = holdMc(cfg.net, model, maxTokens, inTokens);
         if (agentId && hold > agentBudgetLeft(db, agentId)) {
           return errorResponse(c, 403, "insufficient_credits", `agent budget left ${agentBudgetLeft(db, agentId)} mc; this request needs a hold of ${hold} mc`);
         }
@@ -234,13 +245,14 @@ export function makePrepare(d: BillingDeps): Prepare {
           return errorResponse(c, 403, "insufficient_credits", `this request needs a hold of ${hold} mc; available ${availableMc(db, accountId, now)} mc`);
         }
         try {
-          insertRequest(db, cfg, { reqId, accountId, model: model.model_id, payType: "credits", route: cur.route, promptHash: pHash, prompt, seed: req.seed!, settings: samplingSettings, salt, privacy: privacy ?? null }, now);
+          insertRequest(db, cfg, { reqId, accountId, model: model.model_id, payType: "credits", route: cur.route, promptHash: pHash, prompt, seed: req.seed!, settings: samplingSettings, salt, privacy: privacy ?? null, maxTokens }, now);
         } catch (e) {
           releaseHold(db, accountId, hold);
           throw e;
         }
         return {
-          headers: { [HASH_SALT_HEADER]: salt },
+          maxTokens,
+          headers: { [HASH_SALT_HEADER]: salt, [MAX_TOKENS_HEADER]: String(maxTokens) },
           coordinatorUrl: cur.coordinatorUrl,
           poolId: cur.poolId,
           failover,
@@ -277,7 +289,7 @@ export function makePrepare(d: BillingDeps): Prepare {
       if (!d.x402) return errorResponse(c, 402, "payment_required", "no session token, and x402 is not configured on this gateway");
       const paid = await d.x402.charge(c, req, maxTokens);
       if (paid instanceof Response) return paid;
-      insertRequest(db, cfg, { reqId, accountId: null, payer: paid.payer, tx: paid.tx, amount: paid.amountTinybar, asset: paid.asset, raw: paid.amountRaw, model: model.model_id, payType: "x402", route: cur.route, promptHash: pHash, prompt, seed: req.seed!, settings: samplingSettings, salt, privacy: privacy ?? null }, Date.now());
+      insertRequest(db, cfg, { reqId, accountId: null, payer: paid.payer, tx: paid.tx, amount: paid.amountTinybar, asset: paid.asset, raw: paid.amountRaw, model: model.model_id, payType: "x402", route: cur.route, promptHash: pHash, prompt, seed: req.seed!, settings: samplingSettings, salt, privacy: privacy ?? null, maxTokens }, Date.now());
       console.log(JSON.stringify({ msg: "x402_settled", reqId, payer: paid.payer, tx: paid.tx, amount_tinybar: paid.amountTinybar }));
       return {
         headers: { ...paid.headers, [HASH_SALT_HEADER]: salt },
