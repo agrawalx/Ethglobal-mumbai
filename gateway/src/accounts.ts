@@ -2,9 +2,13 @@ import { randomBytes } from "node:crypto";
 import type { MeResponse } from "@gpupool/shared";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
+import { refreshReliability } from "./reliability.ts";
 import { recordEvent, type Signer } from "./events.ts";
 
 export const newAccountId = (): string => `acc_${randomBytes(10).toString("hex")}`;
+
+/** Contribution ratio uses a one-credit denominator floor; all stored amounts are millicredits. */
+export const contributionRatio = (earnedMc: number, spentMc: number): number => earnedMc / Math.max(spentMc, 1000);
 
 export type LoginResult = { accountId: string; newAccount: boolean; starterGrantedMc: number };
 
@@ -34,6 +38,8 @@ export function me(db: Db, cfg: Config, accountId: string, now = Date.now()): Me
   const a = db.prepare("SELECT id, payout_address FROM accounts WHERE id = ?").get(accountId) as { id: string; payout_address: string | null } | undefined;
   if (!a) return null;
   const b = db.prepare("SELECT starter_mc, starter_expires_at, earned_mc, held_mc, earned_total_mc, spent_total_mc FROM balances WHERE account_id = ?").get(accountId) as MeResponse["balance"];
+  const owned = db.prepare("SELECT node_id FROM nodes WHERE account_id = ?").all(accountId) as { node_id: string }[];
+  for (const n of owned) refreshReliability(db, cfg, n.node_id, now);
   const fresh = now - cfg.net.router.pool_heartbeat_max_age_s * 1000;
   const nodes = db
     .prepare(
@@ -46,7 +52,7 @@ export function me(db: Db, cfg: Config, accountId: string, now = Date.now()): Me
     payout_address: a.payout_address as MeResponse["payout_address"],
     balance: b,
     // SPEC §8.2: earned_total / max(spent_total, 1 credit). Both in mc, so the floor is 1000 mc.
-    ratio: b.earned_total_mc / Math.max(b.spent_total_mc, 1000),
+    ratio: contributionRatio(b.earned_total_mc, b.spent_total_mc),
     nodes: nodes.map((n) => ({
       node_id: n.node_id as `0x${string}`,
       pool_id: n.pool_id,

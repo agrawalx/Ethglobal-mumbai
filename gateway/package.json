@@ -10,7 +10,9 @@
     "start": "node --env-file-if-exists=.env src/main.ts",
     "dev": "node --watch --env-file-if-exists=.env src/main.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"test/**/*.test.ts\""
+    "test": "node --test \"test/**/*.test.ts\"",
+    "test:demo": "node --test test/backend-demo.test.ts",
+    "verify": "node --env-file-if-exists=.env scripts/verify-backend.ts"
   },
   "dependencies": {
     "@gpupool/shared": "workspace:*",
@@ -22,7 +24,8 @@
     "better-sqlite3": "^13.0.3",
     "hono": "^4.13.16",
     "viem": "^2.57.16",
-    "zod": "^4.6.7"
+    "zod": "^4.6.7",
+    "@gpupool/arkiv": "workspace:*"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",

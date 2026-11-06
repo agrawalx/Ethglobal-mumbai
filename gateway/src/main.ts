@@ -5,6 +5,10 @@ import { createApp } from "./app.ts";
 import { signerFromSeed } from "./events.ts";
 import { hederaSubmitter, startHcsWriter } from "./hcs.ts";
 import { expireStarterCredits } from "./ledger.ts";
+import { refreshReliability } from "./reliability.ts";
+import { createSettlement, startSettlementWorker } from "./settlement.ts";
+import { hederaSettlementChain } from "./payout-chain.ts";
+import { arkivStatsWriter, startAccountStatsPublisher } from "./account-stats.ts";
 import { createX402 } from "./x402.ts";
 
 let cfg: Config;
@@ -46,6 +50,26 @@ const expiry = setInterval(() => {
   }
 }, 60_000);
 
+refreshReliability(db, cfg);
+const reliabilityTimer = setInterval(() => {
+  try { refreshReliability(db, cfg); }
+  catch (err) { console.error(`reliability refresh failed: ${(err as Error).message}`); }
+}, cfg.env.HEARTBEAT_SECONDS * 1000);
+
+let stopSettlement = () => {};
+if (e.PAYOUT_CONTRACT_ADDRESS) {
+  const chain = hederaSettlementChain(cfg);
+  if (!e.HCS_TOPIC_ID || !e.HEDERA_OPERATOR_ID || !e.HEDERA_OPERATOR_KEY) throw new Error("epoch settlement requires the HCS writer configuration");
+  stopSettlement = startSettlementWorker(createSettlement(db, cfg, signer, chain));
+} else {
+  console.warn("epoch settlement disabled: set PAYOUT_CONTRACT_ADDRESS and treasury/settler keys to enable");
+}
+
+const statsPublisher = e.ARKIV_PRIVATE_KEY
+  ? startAccountStatsPublisher(db, cfg, arkivStatsWriter(cfg))
+  : null;
+if (!statsPublisher) console.warn("Arkiv account stats disabled: ARKIV_PRIVATE_KEY is not configured");
+
 const app = createApp({ cfg, db, signer, x402 });
 const server = serve({ fetch: app.fetch, port: e.PORT, hostname: e.HOST }, (info) => {
   console.log(`gateway listening on http://${info.address}:${info.port} → pool ${e.POOL_COORDINATOR_URL}; gateway pubkey ${signer.publicKeyHex}`);
@@ -53,6 +77,9 @@ const server = serve({ fetch: app.fetch, port: e.PORT, hostname: e.HOST }, (info
 
 const shutdown = () => {
   clearInterval(expiry);
+  clearInterval(reliabilityTimer);
+  void statsPublisher?.stop();
+  stopSettlement();
   stopHcs();
   closeHcs();
   server.close();

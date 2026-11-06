@@ -8,7 +8,7 @@ import { loadConfig } from "../src/config.ts";
 import { openDb, TABLES, type Db } from "../src/db.ts";
 import { createApp } from "../src/app.ts";
 import type { Completion } from "../src/chat.ts";
-import { signer, testAccount, TEST_JWT_SECRET } from "./helpers.ts";
+import { signer, testAccount, TEST_JWT_SECRET, testDirectory } from "./helpers.ts";
 
 const MODEL = "Qwen/Qwen3-14B-FP8";
 
@@ -80,7 +80,7 @@ before(async () => {
   const cfg = loadConfig({ POOL_COORDINATOR_URL: `http://127.0.0.1:${poolPort}`, DATABASE_PATH: ":memory:", PORT: "0", JWT_SECRET: TEST_JWT_SECRET });
   db = openDb(":memory:");
   auth = (await testAccount(db, cfg)).auth;
-  const app = createApp({ cfg, db, signer, onComplete: (c) => completions.push(c) });
+  const app = createApp({ cfg, db, signer, directory: testDirectory(cfg, db), onComplete: (c) => completions.push(c) });
   await new Promise<void>((res) => {
     gw = serve({ fetch: app.fetch, port: 0, hostname: "127.0.0.1" }, (info) => { base = `http://127.0.0.1:${info.port}`; res(); });
   });
@@ -151,6 +151,7 @@ test("streaming: SSE passed through unchanged, include_usage forced, usage + tex
 });
 
 test("streaming: client disconnect aborts the upstream request", async () => {
+  const outcomesBefore = (db.prepare("SELECT count(*) AS n FROM node_request_outcomes").get() as { n: number }).n;
   completions.length = 0;
   streamMode = "slow";
   const ac = new AbortController();
@@ -163,6 +164,7 @@ test("streaming: client disconnect aborts the upstream request", async () => {
   await waitFor(() => completions.length === 1);
   assert.equal(completions[0]!.ok, false);
   assert.equal(completions[0]!.reason, "client_aborted");
+  assert.equal((db.prepare("SELECT count(*) AS n FROM node_request_outcomes").get() as { n: number }).n, outcomesBefore);
   streamMode = "normal";
 });
 
@@ -201,11 +203,11 @@ test("unknown model → 404 model_not_found; max_tokens above the last tier → 
   assert.equal(ErrorResponse.parse(await b.json()).error.code, "bad_request");
 });
 
-test("GET /v1/models lists config models the pool reports", async () => {
+test("GET /v1/models lists catalog models with fresh Arkiv pools", async () => {
   const r = await fetch(`${base}/v1/models`);
   const body = ModelsResponse.parse(await r.json());
-  assert.deepEqual(body.data.map((m) => m.id), [MODEL]);
-  assert.equal(body.data[0]!.model_factor, 1.75);
+  assert.ok(body.data.some((m) => m.id === MODEL));
+  assert.equal(body.data.find((m) => m.id === MODEL)!.model_factor, 1.75);
 });
 
 test("healthz and unknown route", async () => {
@@ -215,7 +217,7 @@ test("healthz and unknown route", async () => {
   assert.equal(ErrorResponse.parse(await r.json()).error.code, "not_found");
 });
 
-test("pool down → 502 pool_error; /v1/models → empty list", async () => {
+test("pool down after directory lookup → 502 pool_error; discovery still follows Arkiv", async () => {
   // A port with nothing listening.
   const dead = createServer();
   const port = await listen(dead);
@@ -223,7 +225,7 @@ test("pool down → 502 pool_error; /v1/models → empty list", async () => {
   const cfg = loadConfig({ POOL_COORDINATOR_URL: `http://127.0.0.1:${port}`, DATABASE_PATH: ":memory:", JWT_SECRET: TEST_JWT_SECRET });
   const local = openDb(":memory:");
   const failed: Completion[] = [];
-  const app = createApp({ cfg, db: local, signer, onComplete: (c) => failed.push(c) });
+  const app = createApp({ cfg, db: local, signer, directory: testDirectory(cfg, local), onComplete: (c) => failed.push(c) });
   const acc = await testAccount(local, cfg);
   const r = await app.request("/v1/chat/completions", {
     method: "POST", headers: { "content-type": "application/json", ...acc.auth },
@@ -234,7 +236,7 @@ test("pool down → 502 pool_error; /v1/models → empty list", async () => {
   assert.equal(ErrorResponse.parse(await r.json()).error.code, "pool_error");
   assert.equal(failed[0]!.ok, false);
   const m = ModelsResponse.parse(await (await app.request("/v1/models")).json());
-  assert.deepEqual(m.data, []);
+  assert.ok(m.data.some((entry) => entry.id === MODEL));
   local.close();
 });
 
@@ -243,7 +245,7 @@ test("POOL_TIMEOUT_MS bounds time to headers only: a long stream is not cut", as
   const cfg = loadConfig({ POOL_COORDINATOR_URL: `http://127.0.0.1:${(fake.address() as AddressInfo).port}`, DATABASE_PATH: ":memory:", POOL_TIMEOUT_MS: "150", JWT_SECRET: TEST_JWT_SECRET });
   const local = openDb(":memory:");
   const done: Completion[] = [];
-  const app = createApp({ cfg, db: local, signer, onComplete: (c) => done.push(c) });
+  const app = createApp({ cfg, db: local, signer, directory: testDirectory(cfg, local), onComplete: (c) => done.push(c) });
   const acc = await testAccount(local, cfg);
   const r = await app.request("/v1/chat/completions", {
     method: "POST", headers: { "content-type": "application/json", ...acc.auth },

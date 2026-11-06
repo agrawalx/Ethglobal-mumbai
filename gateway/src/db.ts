@@ -7,13 +7,15 @@ import Database from "better-sqlite3";
  * tinybar decimal strings, times are Unix ms. No migrations (dev phase): when SCHEMA_VERSION
  * changes, delete the database file and restart.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 4;
 
 export const TABLES = [
   "accounts",
   "balances",
   "nodes",
   "node_reliability",
+  "node_heartbeats",
+  "node_request_outcomes",
   "requests",
   "ledger_events",
   "epochs",
@@ -60,6 +62,18 @@ CREATE TABLE IF NOT EXISTS node_reliability (
   score                REAL NOT NULL,
   updated_at           INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS node_heartbeats (
+  node_id  TEXT NOT NULL REFERENCES nodes(node_id),
+  slot_ts  INTEGER NOT NULL,
+  PRIMARY KEY (node_id, slot_ts)
+);
+CREATE TABLE IF NOT EXISTS node_request_outcomes (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  node_id  TEXT NOT NULL REFERENCES nodes(node_id),
+  ok       INTEGER NOT NULL CHECK (ok IN (0, 1)),
+  ts       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS node_outcomes_window ON node_request_outcomes(node_id, ts);
 CREATE TABLE IF NOT EXISTS requests (
   req_id               TEXT PRIMARY KEY,             -- req_…
   account_id           TEXT REFERENCES accounts(id), -- null for x402
@@ -72,6 +86,7 @@ CREATE TABLE IF NOT EXISTS requests (
   out_tokens           INTEGER,
   cost_mc              INTEGER,
   split                TEXT,                         -- JSON CreditSplit
+  payout_snapshot      TEXT,                         -- x402 provider attribution frozen at request start
   route                TEXT,                         -- JSON Route (node → layers); NULL = unknown (SPEC §5.5)
   status               TEXT NOT NULL CHECK (status IN ('pending', 'ok', 'failed')),
   prompt_hash          TEXT NOT NULL,
@@ -94,7 +109,14 @@ CREATE TABLE IF NOT EXISTS epochs (
   total_tinybar  TEXT NOT NULL,
   merkle_root    TEXT,
   post_tx        TEXT,
-  status         TEXT NOT NULL
+  status         TEXT NOT NULL,
+  hcs_event_id    INTEGER REFERENCES ledger_events(id),
+  funding_raw    TEXT,
+  funding_tx     TEXT,
+  post_raw       TEXT,
+  posted_block   TEXT,
+  claims_block   TEXT,
+  claimable_at   INTEGER
 );
 CREATE TABLE IF NOT EXISTS epoch_payouts (
   epoch           INTEGER NOT NULL REFERENCES epochs(epoch),

@@ -7,7 +7,7 @@ import { loadConfig } from "../src/config.ts";
 import { openDb } from "../src/db.ts";
 import { createApp } from "../src/app.ts";
 import { createX402, priceTinybar } from "../src/x402.ts";
-import { signer, TEST_JWT_SECRET } from "./helpers.ts";
+import { signer, TEST_JWT_SECRET, testDirectory } from "./helpers.ts";
 
 const MODEL = "Qwen/Qwen3-14B-FP8";
 const FEE_PAYER = "0.0.9185802";
@@ -52,7 +52,7 @@ function setup() {
   const cfg = loadConfig({ POOL_COORDINATOR_URL: `http://127.0.0.1:${(pool.address() as AddressInfo).port}`, DATABASE_PATH: ":memory:", JWT_SECRET: TEST_JWT_SECRET });
   const db = openDb(":memory:");
   const x402 = createX402({ cfg: cfg.net, facilitatorUrl: facUrl, network: "hedera:testnet", payTo: "0.0.11331600" });
-  const app = createApp({ cfg, db, signer, x402, onComplete: () => {} });
+  const app = createApp({ cfg, db, signer, directory: testDirectory(cfg, db), x402, onComplete: () => {} });
   return { cfg, db, app };
 }
 
@@ -84,7 +84,8 @@ test("unpaid request (no session) → 402 with HBAR requirements priced by the b
   const big = await send(app, { model: MODEL, messages: [{ role: "user", content: "hi" }], max_tokens: 1000 });
   assert.equal(requirementsOf(big).accepts[0].amount, "6000000");
   const s8 = await send(app, { model: "Qwen/Qwen3-8B-FP8", messages: [{ role: "user", content: "hi" }] });
-  assert.equal(requirementsOf(s8).accepts[0].amount, "1000000");
+  assert.equal(s8.status, 503); // No eligible 8B pool: never offer payment for unavailable inference.
+  assert.equal(s8.headers.get("PAYMENT-REQUIRED"), null);
   assert.equal((db.prepare("SELECT count(*) AS n FROM requests").get() as { n: number }).n, 0);
   // Validation still comes first: bad body → 400, not 402.
   assert.equal((await send(app, { model: MODEL, messages: [] })).status, 400);
@@ -93,6 +94,8 @@ test("unpaid request (no session) → 402 with HBAR requirements priced by the b
 
 test("paid request: verify + settle BEFORE the pool runs; row with payer/tx/amount; x402_payment event; PAYMENT-RESPONSE", async () => {
   const { app, db } = setup();
+  const providerAddress = `0x${"b1".repeat(20)}`;
+  db.prepare("UPDATE accounts SET payout_address = ? WHERE id = 'acc_router'").run(providerAddress);
   const unpaid = await send(app, { model: MODEL, messages: [{ role: "user", content: "hi" }], max_tokens: 64 });
   const reqs = requirementsOf(unpaid);
   const payload = { x402Version: 2, resource: reqs.resource, accepted: reqs.accepts[0], payload: { transaction: "AAAA" } };
@@ -109,6 +112,9 @@ test("paid request: verify + settle BEFORE the pool runs; row with payer/tx/amou
   assert.equal(receipt.x402_amount_tinybar, "2000000");
   assert.equal(receipt.account_id, null);
   assert.equal(receipt.cost_mc, null);
+  db.prepare("UPDATE accounts SET payout_address = ? WHERE id = 'acc_router'").run(`0x${"b2".repeat(20)}`);
+  const snapshot = JSON.parse((db.prepare("SELECT payout_snapshot FROM requests WHERE req_id = ?").get(receipt.req_id) as { payout_snapshot: string }).payout_snapshot);
+  assert.equal(snapshot[0].payout_address, providerAddress); // later wallet changes cannot redirect this request
   const ev = LedgerEvent.parse(JSON.parse((db.prepare("SELECT payload FROM ledger_events WHERE type = 'x402_payment'").get() as { payload: string }).payload));
   assert.equal(ev.type === "x402_payment" && ev.tx_id, TX);
   assert.equal(ev.type === "x402_payment" && ev.out_tokens, 2);

@@ -6,7 +6,7 @@ import { GpupoolConfig, type ModelConfig } from "@gpupool/shared";
 /**
  * Gateway env (see gateway/.env.example, HANDOFF §8).
  * Required by the schema: POOL_COORDINATOR_URL, DATABASE_PATH. main.ts also needs GATEWAY_SIGNING_KEY.
- * Feature keys (World + JWT, HCS operator, x402) switch their feature on; payouts 3.3 / Arkiv 3.1 come later.
+ * Feature keys (World + JWT, HCS operator, x402) switch their feature on; payouts require treasury/settler keys and the contract address. Arkiv reads use RPC/chain/access key only.
  */
 const opt = z.string().min(1).optional();
 const emptyToUndefined = (v: unknown) => (v === "" ? undefined : v);
@@ -25,6 +25,8 @@ export const GatewayEnv = z.preprocess(
     /** Time to the pool's response headers, ms. Non-streaming Parallax answers send headers only after the
      *  whole generation (2048 tokens at ~5 tok/s ≈ 6 min), so keep this long. Generation after headers is not timed. */
     POOL_TIMEOUT_MS: z.coerce.number().int().positive().default(600_000),
+
+    HEARTBEAT_SECONDS: z.coerce.number().int().positive().default(10),
 
     JWT_SECRET: opt,
     GATEWAY_SIGNING_KEY: opt,

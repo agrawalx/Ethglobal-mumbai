@@ -43,21 +43,6 @@ export function poolLayerMap(db: Db, cfg: GpupoolConfig, poolId: string, model: 
   return validLayerMap(hops, model.num_layers);
 }
 
-/**
- * The route of a request for `model` (MVP: one pipeline per pool, every request goes through all
- * nodes, SPEC §5.5). The router (step 3.1) picks the pool; until then: the first pool (by id) with a
- * valid map for the model. null = unknown → warning; node shares go to reserve.
- */
-export function currentRoute(db: Db, cfg: GpupoolConfig, model: ModelConfig, now = Date.now()): Route | null {
-  const pools = [...new Set(freshNodes(db, cfg, null, now).map((n) => n.pool_id))].sort();
-  for (const p of pools) {
-    const map = poolLayerMap(db, cfg, p, model, now);
-    if (map) return map;
-  }
-  console.warn(`route unknown for ${model.model_id}: no pool has a valid layer map from fresh heartbeats; node shares go to reserve`);
-  return null;
-}
-
 /** GET /pools/:pool_id. The coordinator's node agent writes gpupool.pool from this. */
 export function poolState(db: Db, cfg: GpupoolConfig, poolId: string, now = Date.now()): PoolStateResponse {
   const fresh = freshNodes(db, cfg, poolId, now);

@@ -4,6 +4,7 @@ import { HeartbeatResponse, NodeHeartbeat, NodeRegisterRequest, NODE_SIGNATURE_H
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { errorResponse } from "./errors.ts";
+import { recordHeartbeat } from "./reliability.ts";
 import { recordEvent, type Signer } from "./events.ts";
 
 /** shared/README.md "Signatures": the exact string the node key signs at registration. */
@@ -65,8 +66,7 @@ export function registerHandler(db: Db, cfg: Config, signer: Signer) {
 /**
  * POST /nodes/heartbeat. Header x-gpupool-node-signature = EIP-191 personal_sign by the node key
  * over the RAW body bytes. The body is checked against the signature before it is parsed. ts must
- * be within 60 s. Stores the latest status + layers; counts the heartbeat for uptime (SPEC §9.1;
- * heartbeats_expected is derived from registered_at in step 3.2).
+ * be within 60 s. Stores the latest status + layers; records one online observation per heartbeat slot for the rolling uptime score (SPEC §9.1).
  */
 export function heartbeatHandler(db: Db, cfg: Config) {
   return async (c: Context): Promise<Response> => {
@@ -97,7 +97,7 @@ export function heartbeatHandler(db: Db, cfg: Config) {
     const score = db.transaction(() => {
       db.prepare("UPDATE nodes SET hb_ts = ?, hb_online = ?, hb_model = ?, hb_layers = ?, hb_tok_s = ? WHERE node_id = ?").run(
         now, hb.online ? 1 : 0, hb.model, hb.layers ? JSON.stringify(hb.layers) : null, hb.tok_s, hb.node_id);
-      db.prepare("UPDATE node_reliability SET heartbeats_received = heartbeats_received + 1, updated_at = ? WHERE node_id = ?").run(now, hb.node_id);
+      recordHeartbeat(db, cfg, hb.node_id, hb.online, now);
       return (db.prepare("SELECT score FROM node_reliability WHERE node_id = ?").get(hb.node_id) as { score: number } | undefined)?.score;
     })();
     return c.json(HeartbeatResponse.parse({ ok: true, owner_account: node.account_id, reliability: score ?? cfg.net.reliability.initial_score }));

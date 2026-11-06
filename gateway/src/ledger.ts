@@ -164,15 +164,6 @@ export function settle(db: Db, cfg: GpupoolConfig, signer: Signer, s: SettleInpu
 }
 
 /**
- * Reliability counters (SPEC §9.1). Every node on the route: requests_routed + 1; requests_ok + 1
- * if the request succeeded. The score itself is computed in step 3.2.
- */
-export function countRouted(db: Db, route: Route | null, ok: boolean, now = Date.now()): void {
-  const stmt = db.prepare("UPDATE node_reliability SET requests_routed = requests_routed + 1, requests_ok = requests_ok + ?, updated_at = ? WHERE node_id = ?");
-  for (const hop of route ?? []) stmt.run(ok ? 1 : 0, now, hop.node_id);
-}
-
-/**
  * Starter credit expiry (SPEC §8.2): every account whose starter credits expired gets
  * starter_mc = 0 and a credits_expired event. Returns the number of accounts expired.
  */

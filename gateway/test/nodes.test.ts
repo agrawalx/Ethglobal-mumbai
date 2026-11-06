@@ -9,7 +9,7 @@ import { openDb, type Db } from "../src/db.ts";
 import { createApp } from "../src/app.ts";
 import { registerMessage } from "../src/nodes.ts";
 import { validLayerMap } from "../src/route.ts";
-import { balance, signer, testAccount, TEST_JWT_SECRET } from "./helpers.ts";
+import { balance, signer, testAccount, TEST_JWT_SECRET, testDirectory } from "./helpers.ts";
 
 const MODEL = "Qwen/Qwen3-14B-FP8";
 const POOL = "pool-test-1";
@@ -37,7 +37,7 @@ after(() => fake.close());
 function setup() {
   const cfg = loadConfig({ POOL_COORDINATOR_URL: `http://127.0.0.1:${(fake.address() as AddressInfo).port}`, DATABASE_PATH: ":memory:", JWT_SECRET: TEST_JWT_SECRET });
   const db = openDb(":memory:");
-  const app = createApp({ cfg, db, signer, onComplete: () => {} });
+  const app = createApp({ cfg, db, signer, directory: testDirectory(cfg, db, POOL, false), onComplete: () => {} });
   return { cfg, db, app };
 }
 
@@ -105,7 +105,7 @@ test("heartbeat: signed raw body; bad sig / stale ts / unregistered rejected; co
   await register(app, owner.auth, 0);
   const r = await heartbeat(app, 0, [29, 40]);
   assert.equal(r.status, 200);
-  assert.deepEqual(HeartbeatResponse.parse(await r.json()), { ok: true, owner_account: owner.accountId, reliability: 0.8 });
+  assert.deepEqual(HeartbeatResponse.parse(await r.json()), { ok: true, owner_account: owner.accountId, reliability: 0.86 });
   const row = db.prepare("SELECT hb_layers, hb_model FROM nodes WHERE node_id = ?").get(id(0)) as { hb_layers: string; hb_model: string };
   assert.deepEqual(JSON.parse(row.hb_layers), [29, 40]);
   assert.equal((db.prepare("SELECT heartbeats_received AS n FROM node_reliability WHERE node_id = ?").get(id(0)) as { n: number }).n, 1);
@@ -126,7 +126,10 @@ test("credits end to end: hold → settle → split to node owners by layers (se
   await register(app, provider.auth, 0);
   await register(app, provider.auth, 1);
   await register(app, user.auth, 2); // the requester's own node
-  // No heartbeats yet → route unknown, the node share goes to reserve.
+  // Fresh members but incomplete layer coverage → route unknown, shares go to reserve.
+  await heartbeat(app, 0, [0, 10]);
+  await heartbeat(app, 1, null);
+  await heartbeat(app, 2, null);
   let r = await chat(app, user.auth);
   assert.equal(r.status, 200);
   let receipt = Receipt.parse(await (await app.request(`/requests/${r.headers.get(REQUEST_ID_HEADER)}`)).json());
@@ -196,6 +199,8 @@ test("credits end to end: hold → settle → split to node owners by layers (se
 test("insufficient credits → 403 insufficient_credits (shared error shape), nothing forwarded or held", async () => {
   const { app, db, cfg } = setup();
   const user = await testAccount(db, cfg);
+  await register(app, user.auth, 0);
+  await heartbeat(app, 0, [0, 40]);
   db.prepare("UPDATE balances SET starter_mc = 1000 WHERE account_id = ?").run(user.accountId);
   const r = await chat(app, user.auth);
   assert.equal(r.status, 403);

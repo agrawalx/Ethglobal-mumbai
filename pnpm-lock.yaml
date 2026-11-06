@@ -57,6 +57,9 @@ importers:
 
   gateway:
     dependencies:
+      '@gpupool/arkiv':
+        specifier: workspace:*
+        version: link:../arkiv
       '@gpupool/shared':
         specifier: workspace:*
         version: link:../shared

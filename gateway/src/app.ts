@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { ModelsResponse, PoolId, Receipt, REQUEST_ID_HEADER, RequestId } from "@gpupool/shared";
+import { EvmAddress, LedgerEventsResponse, ModelsResponse, NetworkResponse, PayoutsResponse, PoolId, Receipt, REQUEST_ID_HEADER, RequestId } from "@gpupool/shared";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { chatHandler, logCompletion, type OnComplete } from "./chat.ts";
@@ -14,6 +14,9 @@ import { heartbeatHandler, registerHandler } from "./nodes.ts";
 import { poolState } from "./route.ts";
 import { rpSignatureHandler, verifyHandler, type WorldFetch } from "./world.ts";
 import type { X402 } from "./x402.ts";
+import { payoutsFor } from "./settlement.ts";
+import { createPoolQueue } from "./queue.ts";
+import { arkivDirectory, createRouter, type Directory } from "./router.ts";
 
 export type Deps = {
   cfg: Config;
@@ -22,6 +25,7 @@ export type Deps = {
   /** null = x402 not configured: requests without a session get 402 payment_required. */
   x402?: X402 | null;
   worldFetch?: WorldFetch;
+  directory?: Directory;
   /** Observer, runs after billing for every completion. */
   onComplete?: OnComplete;
 };
@@ -36,9 +40,11 @@ type RequestRow = {
   cost_mc: number | null; split: string | null; route: string | null; prompt_hash: string; resp_hash: string | null; hcs_seq: number | null; ts: number;
 };
 
-export function createApp({ cfg, db, signer, x402 = null, worldFetch, onComplete = logCompletion }: Deps): Hono<AppEnv> {
+export function createApp({ cfg, db, signer, x402 = null, worldFetch, directory, onComplete = logCompletion }: Deps): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
   const secret = cfg.env.JWT_SECRET;
+  const router = createRouter(cfg, db, directory ?? arkivDirectory(cfg));
+  const queue = createPoolQueue();
 
   if (cfg.corsOrigins.length > 0) {
     app.use("*", cors({ origin: cfg.corsOrigins, exposeHeaders: [REQUEST_ID_HEADER, "PAYMENT-REQUIRED", "PAYMENT-RESPONSE"] }));
@@ -55,7 +61,7 @@ export function createApp({ cfg, db, signer, x402 = null, worldFetch, onComplete
   app.get("/healthz", (c) => c.json({ ok: true as const }));
 
   // Session if an Authorization header is present (invalid → 401), else x402 (SPEC §5.3 step 2).
-  app.post("/v1/chat/completions", session(secret, false), chatHandler(cfg, makePrepare({ cfg, db, signer, x402, observe: onComplete })));
+  app.post("/v1/chat/completions", session(secret, false), chatHandler(cfg, makePrepare({ cfg, db, signer, x402, router, queue, observe: onComplete })));
 
   app.post("/auth/world/rp-signature", rpSignatureHandler(cfg));
   app.post("/auth/world/verify", verifyHandler(db, cfg, signer, worldFetch));
@@ -74,6 +80,29 @@ export function createApp({ cfg, db, signer, x402 = null, worldFetch, onComplete
     return c.json(poolState(db, cfg.net, id.data));
   });
 
+  app.get("/network", async (c) => {
+    try { return c.json(NetworkResponse.parse(await router.network())); }
+    catch (e) {
+      console.warn(`arkiv network read failed: ${(e as Error).name}`);
+      c.header("Retry-After", String(cfg.net.router.retry_after_s));
+      return errorResponse(c, 503, "no_pool_available", "Arkiv directory unavailable");
+    }
+  });
+
+  app.get("/ledger/events", (c) => {
+    const limits = c.req.queries("limit") ?? [];
+    const raw = limits[0] ?? "50";
+    if (limits.length > 1 || !/^[1-9][0-9]*$/.test(raw) || Number(raw) > 100) return errorResponse(c, 400, "bad_request", "limit must be an integer from 1 to 100");
+    const rows = db.prepare("SELECT id, payload, hcs_seq FROM ledger_events ORDER BY id DESC LIMIT ?").all(Number(raw)) as { id: number; payload: string; hcs_seq: number | null }[];
+    return c.json(LedgerEventsResponse.parse({ events: rows.map((r) => ({ id: r.id, event: JSON.parse(r.payload), hcs_seq: r.hcs_seq })) }));
+  });
+
+  app.get("/payouts/:address", (c) => {
+    const address = EvmAddress.safeParse(c.req.param("address").toLowerCase());
+    if (!address.success) return errorResponse(c, 400, "bad_request", "invalid payout address");
+    return c.json(PayoutsResponse.parse(payoutsFor(db, address.data)));
+  });
+
   app.get("/requests/:id", (c) => {
     const id = RequestId.safeParse(c.req.param("id"));
     if (!id.success) return errorResponse(c, 400, "bad_request", "bad request id");
@@ -87,29 +116,14 @@ export function createApp({ cfg, db, signer, x402 = null, worldFetch, onComplete
     return c.json(Receipt.parse(receipt));
   });
 
-  // TEMP (until step 3.1): the model list comes from the pool's GET /v1/models, filtered to
-  // config models, with pools = 1. Step 3.1 replaces this with ready gpupool.pool entities from
-  // Arkiv (that is why `source` is "arkiv" in the shared schema). Pool down → empty list.
   app.get("/v1/models", async (c) => {
-    let live: string[] = [];
     try {
-      const r = await fetch(new URL("/v1/models", cfg.env.POOL_COORDINATOR_URL), { signal: AbortSignal.timeout(3000) });
-      if (r.ok) {
-        const body = (await r.json()) as { data?: { id?: unknown }[] };
-        live = (body.data ?? []).map((m) => String(m.id));
-      } else {
-        console.warn(`pool /v1/models returned HTTP ${r.status}`);
-      }
+      return c.json(ModelsResponse.parse(await router.models()));
     } catch (e) {
-      console.warn(`pool /v1/models unreachable: ${(e as Error).message}`);
+      console.warn(`arkiv discovery failed: ${(e as Error).name}`);
+      c.header("Retry-After", String(cfg.net.router.retry_after_s));
+      return errorResponse(c, 503, "no_pool_available", "Arkiv directory unavailable");
     }
-    const res: ModelsResponse = {
-      object: "list",
-      data: cfg.net.models
-        .filter((m) => live.includes(m.model_id))
-        .map((m) => ({ id: m.model_id, object: "model", created: 0, owned_by: "gpupool", model_factor: m.model_factor, pools: 1, source: "arkiv" })),
-    };
-    return c.json(ModelsResponse.parse(res));
   });
 
   app.notFound((c) => errorResponse(c, 404, "not_found", `no route ${c.req.method} ${c.req.path}`));

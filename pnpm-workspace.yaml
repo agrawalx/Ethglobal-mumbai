@@ -8,4 +8,5 @@ packages:
 
 # protobufjs postinstall only checks versions; not needed (pulled in by @hiero-ledger/sdk via @grpc).
 allowBuilds:
+  better-sqlite3: true
   protobufjs: false

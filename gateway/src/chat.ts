@@ -20,7 +20,7 @@ export type OnComplete = (c: Completion) => void;
  * credit hold; no session → x402 settle. Returns a Response to stop (402/403/…), or extra response
  * headers (x402 PAYMENT-RESPONSE) and `finish`, which runs once with the completion.
  */
-export type Prepared = { headers: Record<string, string>; finish: OnComplete };
+export type Prepared = { headers: Record<string, string>; coordinatorUrl: string; finish: OnComplete };
 export type Prepare = (c: Context, req: ChatCompletionRequest, model: ModelConfig, maxTokens: number, reqId: string) => Promise<Prepared | Response>;
 
 const withHeaders = (res: Response, headers: Record<string, string>): Response => {
@@ -82,12 +82,13 @@ export function chatHandler(cfg: Config, prepare: Prepare) {
 
     // Client disconnect (request signal) or stream cancel aborts the upstream request.
     const abort = new AbortController();
+    if (c.req.raw.signal.aborted) abort.abort();
     c.req.raw.signal.addEventListener("abort", () => abort.abort(), { once: true });
     const timer = setTimeout(() => abort.abort(new Error("pool timeout")), cfg.env.POOL_TIMEOUT_MS);
 
     let upstream: Response;
     try {
-      upstream = await fetch(new URL("/v1/chat/completions", cfg.env.POOL_COORDINATOR_URL), {
+      upstream = await fetch(new URL("/v1/chat/completions", prep.coordinatorUrl), {
         method: "POST",
         headers: { "content-type": "application/json", accept: req.stream ? "text/event-stream" : "application/json" },
         body: JSON.stringify(upstreamBody(req, maxTokens)),
