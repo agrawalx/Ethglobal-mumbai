@@ -75,7 +75,7 @@ export function createApp({ cfg, db, signer, x402 = null, worldFetch, directory,
     ? c.json(agentRegistration(cfg)) : errorResponse(c, 503, "internal", "agent registration needs PUBLIC_URL"));
 
   // Session if an Authorization header is present (invalid → 401), else x402 (SPEC §5.3 step 2).
-  app.post("/v1/chat/completions", session(secret, false, (t) => agentFromToken(db, t)), chatHandler(cfg, makePrepare({ cfg, db, signer, x402, router, queue, observe: onComplete }), stall));
+  app.post("/v1/chat/completions", session(secret, false, (t) => agentFromToken(db, t)), chatHandler(cfg, makePrepare({ cfg, db, signer, x402, router, queue, observe: onComplete }), stall, (m) => router.contextLength(m)));
 
   app.post("/auth/world/rp-signature", rpSignatureHandler(cfg));
   app.post("/auth/world/verify", verifyHandler(db, cfg, signer, worldFetch));

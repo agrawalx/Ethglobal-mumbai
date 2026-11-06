@@ -52,7 +52,7 @@ Any OpenAI client works the same way: use base URL `<gateway>/v1` and the key as
 |---|---|---|
 | OpenCode sends `tools`, `tool_calls`, `tool` messages and text-part arrays. The old schema dropped them. | The shared schema accepts them (`ChatMessage` union, `Tool`, `ToolChoice`, `ToolCall`). | `shared/src/api.ts` |
 | Parallax has no native tool calling we can rely on. | `TOOLS_MODE=emulate` (default) works in four steps:<br>• tools are compacted and put into the system prompt in Qwen3's own format;<br>• earlier calls become `<tool_call>` text and results become `<tool_response>` turns;<br>• a streaming parser turns the model's `<tool_call>{…}</tool_call>` back into OpenAI `delta.tool_calls` with `finish_reason: "tool_calls"`;<br>• broken JSON gets one repair pass, and if that fails it is returned as text, never dropped.<br>`TOOLS_MODE=native` passes tools through unchanged. | `gateway/src/tools.ts` |
-| The pool's context is small (4096 on Macs), and OpenCode resends the whole session each turn. | The gateway fits prompt + answer into the model's `context_length` (shared config, 4096 now) in this order:<br>1. compact the tools;<br>2. cut big tool results to head + tail;<br>3. drop the oldest turns, keeping the system prompt and the last user turn with its tool chain.<br>The `x-gpupool-trimmed` header gives the number of messages cut. If the prompt still does not fit, the response is 400 `context_length_exceeded` with the numbers. | `gateway/src/context.ts` |
+| The pool's context is small (4096 on Macs), and OpenCode resends the whole session each turn. | The gateway fits prompt + answer into the pool's live context: the smallest `max_seq` its fresh nodes report (`router.contextLength`, cached 10 s). When any pool has not reported one, or Arkiv fails, it falls back to `context_length` in shared config (4096 now). Steps:<br>1. compact the tools;<br>2. cut big tool results to head + tail;<br>3. drop the oldest turns, keeping the system prompt and the last user turn with its tool chain.<br>The `x-gpupool-trimmed` header gives the number of messages cut. If the prompt still does not fit, the response is 400 `context_length_exceeded` with the numbers. | `gateway/src/context.ts` |
 | OpenCode asks for `max_tokens` 32000, so the hold would fail every time. | For credit requests the gateway picks the answer cap:<br>`min(model max, room left in the context, learned need, what the balance pays)`<br>• the learned need is the p90 of the user's (or key's) last 50 answers × 1.25, at least 256;<br>• an answer that was cut off doubles the next cap.<br>The `x-gpupool-max-tokens` header gives the cap. A 403 comes only when the balance cannot pay 64 tokens. x402 requests keep the per-tier limit (400 above 2048). | `gateway/src/budget.ts`, `billing.ts` |
 
 ## Errors OpenCode can see
@@ -132,12 +132,12 @@ a pool slot, returns it as JSON in `x-gpupool-price`, and stores its multiplier
 in `requests.price_multiplier`. Credit holds and actual-usage settlement use
 that locked multiplier, including across retries and load changes. Charges never
 exceed the hold. The signed `request_settled` HCS event includes the multiplier.
-x402's existing fixed HBAR tiers are unchanged.
+x402's existing fixed HBAR tiers are unchanged: x402 requests get no `x-gpupool-price` header and store no multiplier (the receipt shows null).
 
 SQLite schema is 15. Use a fresh development database. No live database was changed.
 
 Person 1 integration points: `router.pricing.quote(model)` gives a copy of the current
-quote; `SelectedPool.context_length` gives that pool's optional runtime limit.
+quote; `SelectedPool.context_length` gives that pool's optional runtime limit; `router.contextLength(model)` (the minimum over ready pools) now drives context fitting in `chat.ts`, and the Keys page shows the live price, multiplier and pool context from `/v1/models`, falling back to config.
 `holdMc` and `costMc` take an optional final multiplier (default 1). The existing
 billing path locks and passes the multiplier to settlement and affordability budgeting.
 Person 1's Keys page, per-user budgeting and context fitting are integrated from `origin/api`.

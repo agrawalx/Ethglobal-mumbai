@@ -39,7 +39,7 @@ function payoutSnapshot(db: Db, route: Route | null): PayoutRoute | null {
   }) ?? null;
 }
 
-function insertRequest(db: Db, cfg: Config, row: { reqId: string; accountId: string | null; payer?: string; tx?: string; amount?: string; asset?: string; raw?: string; model: string; payType: "credits" | "x402"; route: Route | null; promptHash: string; prompt: string; seed: number; settings: string; salt: string; privacy: string | null; maxTokens: number; priceMultiplier: number }, now: number) {
+function insertRequest(db: Db, cfg: Config, row: { reqId: string; accountId: string | null; payer?: string; tx?: string; amount?: string; asset?: string; raw?: string; model: string; payType: "credits" | "x402"; route: Route | null; promptHash: string; prompt: string; seed: number; settings: string; salt: string; privacy: string | null; maxTokens: number; priceMultiplier: number | null }, now: number) {
   db.transaction(() => {
     db.prepare(
       `INSERT INTO requests (req_id, account_id, x402_payer, x402_tx, x402_amount_tinybar, x402_asset, x402_amount_raw, model, pay_type, route, status, prompt_hash, sampling_seed, sampling_settings, max_tokens, ts)
@@ -131,10 +131,10 @@ export function makePrepare(d: BillingDeps): Prepare {
       c.header("Retry-After", String(cfg.net.router.retry_after_s));
       return errorResponse(c, 503, "no_pool_available", `no ready pool for ${model.model_id}`);
     }
-    // Lock before queueing: queue/load changes and failover never reprice this request.
+    // Lock before queueing: queue/load changes and failover never reprice this request. Credits
+    // only: x402 keeps its fixed HBAR tiers, so its receipts carry no multiplier.
     const price = d.router.pricing.quote(model);
     const priceHeader = JSON.stringify(price);
-    c.header(PRICE_HEADER, priceHeader);
     const ratioRow = accountId ? db.prepare("SELECT earned_total_mc, spent_total_mc FROM balances WHERE account_id = ?").get(accountId) as { earned_total_mc: number; spent_total_mc: number } | undefined : undefined;
     const ratio = accountId ? contributionRatio(ratioRow?.earned_total_mc ?? 0, ratioRow?.spent_total_mc ?? 0) : 1;
     let releaseQueue: () => void;
@@ -293,10 +293,10 @@ export function makePrepare(d: BillingDeps): Prepare {
       if (!d.x402) return errorResponse(c, 402, "payment_required", "no session token, and x402 is not configured on this gateway");
       const paid = await d.x402.charge(c, req, maxTokens);
       if (paid instanceof Response) return paid;
-      insertRequest(db, cfg, { reqId, accountId: null, payer: paid.payer, tx: paid.tx, amount: paid.amountTinybar, asset: paid.asset, raw: paid.amountRaw, model: model.model_id, payType: "x402", route: cur.route, promptHash: pHash, prompt, seed: req.seed!, settings: samplingSettings, salt, privacy: privacy ?? null, maxTokens, priceMultiplier: price.multiplier }, Date.now());
+      insertRequest(db, cfg, { reqId, accountId: null, payer: paid.payer, tx: paid.tx, amount: paid.amountTinybar, asset: paid.asset, raw: paid.amountRaw, model: model.model_id, payType: "x402", route: cur.route, promptHash: pHash, prompt, seed: req.seed!, settings: samplingSettings, salt, privacy: privacy ?? null, maxTokens, priceMultiplier: null }, Date.now());
       console.log(JSON.stringify({ msg: "x402_settled", reqId, payer: paid.payer, tx: paid.tx, amount_tinybar: paid.amountTinybar }));
       return {
-        headers: { ...paid.headers, [HASH_SALT_HEADER]: salt, [PRICE_HEADER]: priceHeader },
+        headers: { ...paid.headers, [HASH_SALT_HEADER]: salt },
         coordinatorUrl: cur.coordinatorUrl,
         poolId: cur.poolId,
         failover,

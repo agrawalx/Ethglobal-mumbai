@@ -49,6 +49,10 @@ function privatePools(cfg: Config): Record<string, string[]> {
 /** One private coordinator in the MVP. Arkiv publishes only its URL hash. */
 export function createRouter(cfg: Config, db: Db, directory: Directory, queue?: PoolQueue) {
   const active = new Map<string, number>();
+  /** Pool context per model, cached briefly so the request path adds no extra Arkiv read per request. */
+  const contexts = new Map<string, { value: number | undefined; at: number }>();
+  const minContext = (pools: SelectedPool[]): number | undefined =>
+    pools.length && pools.every((p) => p.context_length !== undefined) ? Math.min(...pools.map((p) => p.context_length!)) : undefined;
   const pricing = createPricing((model) => {
     const rows = db.prepare("SELECT DISTINCT pool_id, hb_model FROM nodes WHERE hb_online = 1 AND hb_ts >= ?")
       .all(Date.now() - cfg.net.router.pool_heartbeat_max_age_s * 1000) as { pool_id: string; hb_model: string | null }[];
@@ -106,6 +110,14 @@ export function createRouter(cfg: Config, db: Db, directory: Directory, queue?: 
 
   return {
     pricing,
+    /** Smallest live context over the ready pools, or undefined when any pool has not reported one. */
+    async contextLength(model: ModelConfig): Promise<number | undefined> {
+      const hit = contexts.get(model.model_id);
+      if (hit && Date.now() - hit.at < 10_000) return hit.value;
+      const value = minContext(await candidates(model));
+      contexts.set(model.model_id, { value, at: Date.now() });
+      return value;
+    },
     /** Best ready pool; `poolId` = only that pool; `exclude` = any pool but that one (P5.2 failover). */
     async select(model: ModelConfig, poolId?: string, exclude?: string, opts: SelectOptions = {}): Promise<SelectedPool | null> {
       const selected = (await candidates(model, opts)).find((p) => (!poolId || p.poolId === poolId) && p.poolId !== exclude) ?? null;
@@ -154,7 +166,7 @@ export function createRouter(cfg: Config, db: Db, directory: Directory, queue?: 
         if (!pools.length) continue;
         data.push({ id: model.model_id, object: "model", created: 0, owned_by: "gpupool",
           model_factor: model.model_factor, pools: pools.length, source: "arkiv",
-          context_length: pools.every((p) => p.context_length !== undefined) ? Math.min(...pools.map((p) => p.context_length!)) : undefined,
+          context_length: minContext(pools),
           price: pricing.quote(model) });
       }
       return { object: "list", data };

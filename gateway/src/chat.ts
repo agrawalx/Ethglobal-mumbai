@@ -132,7 +132,10 @@ async function openUpstream(url: string, body: Record<string, unknown>, stream: 
 
 const isOpenError = (a: Attempt | OpenError): a is OpenError => !("upstream" in a);
 
-export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker) {
+/** The live pool context for a model; undefined = not reported, use the config value. */
+export type ContextFor = (model: ModelConfig) => Promise<number | undefined>;
+
+export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker, contextFor?: ContextFor) {
   return async (c: Context): Promise<Response> => {
     const reqId = c.get("reqId") as string;
 
@@ -163,7 +166,11 @@ export function chatHandler(cfg: Config, prepare: Prepare, stall: StallTracker) 
 
     // Fit the prompt into the pool's context; the answer gets the room that is left.
     const toolsMode: ToolsMode = cfg.env.TOOLS_MODE;
-    const ctx = model.context_length;
+    const live = contextFor ? await contextFor(model).catch((e: Error) => {
+      console.warn(`pool context read failed: ${e.name}; using config ${model.context_length}`);
+      return undefined;
+    }) : undefined;
+    const ctx = live ?? model.context_length;
     const fit = fitContext(asked, ctx, Math.min(maxTokens, MIN_OUTPUT), toolsMode === "emulate" && usesTools(asked));
     if (!fit.ok) {
       return errorResponse(c, 400, "context_length_exceeded",

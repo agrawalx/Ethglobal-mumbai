@@ -102,3 +102,103 @@ test("request locks its quote: load changes during inference, receipt/HCS and de
     assert.equal(models.data.find((m) => m.id === model.model_id)?.price?.multiplier, 2);
   } finally { globalThis.fetch = originalFetch; db.close(); }
 });
+
+function fakeUpstream(usage: { prompt_tokens: number; completion_tokens: number }) {
+  const sent: Record<string, unknown>[] = [];
+  const fetch = async (_url: unknown, init?: RequestInit) => {
+    sent.push(JSON.parse(String(init?.body)));
+    return new Response(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "ok" } }] })}\n\ndata: ${JSON.stringify({ choices: [], usage: { ...usage, total_tokens: usage.prompt_tokens + usage.completion_tokens } })}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } });
+  };
+  return { sent, fetch: fetch as typeof globalThis.fetch };
+}
+
+const chat = (auth: Record<string, string>, content: string, extra: Record<string, unknown> = {}) => ({
+  method: "POST", headers: { "content-type": "application/json", ...auth },
+  body: JSON.stringify({ model: model.model_id, messages: [{ role: "user", content }], max_tokens: 32, stream: true, ...extra }),
+});
+
+test("a locked 2× quote doubles the hold and the charge, and the receipt says 2", async () => {
+  const db = openDb(":memory:");
+  const originalFetch = globalThis.fetch;
+  try {
+    const router = createRouter(cfg, db, testDirectory(cfg, db));
+    router.pricing.quote = (m) => ({ credits_per_1k_in: m.model_factor * 400, credits_per_1k_out: m.model_factor * 2000, multiplier: 2, quoted_at: 1 });
+    const user = await testAccount(db, cfg);
+    const before = balance(db, user.accountId).starter_mc;
+    globalThis.fetch = fakeUpstream({ prompt_tokens: 4, completion_tokens: 2 }).fetch;
+    const app = createApp({ cfg, db, signer, router, onComplete: () => {} });
+    const res = await app.request("/v1/chat/completions", chat(user.auth, "hello"));
+    assert.equal(res.status, 200);
+    await res.text();
+    assert.equal(JSON.parse(res.headers.get(PRICE_HEADER)!).multiplier, 2);
+    const receipt = Receipt.parse(await (await app.request(`/requests/${res.headers.get("x-gpupool-request-id")}`)).json());
+    assert.equal(receipt.price_multiplier, 2);
+    assert.equal(receipt.cost_mc, costMc(cfg.net, model, 4, 2, 2));
+    assert.equal(receipt.cost_mc, 2 * 4900);
+    assert.equal(before - balance(db, user.accountId).starter_mc, 9800);
+    assert.equal(balance(db, user.accountId).held_mc, 0);
+  } finally { globalThis.fetch = originalFetch; db.close(); }
+});
+
+test("context fitting uses the pool's live context, and falls back to config when it is unknown", async () => {
+  const db = openDb(":memory:");
+  const originalFetch = globalThis.fetch;
+  try {
+    const router = createRouter(cfg, db, testDirectory(cfg, db));
+    const user = await testAccount(db, cfg);
+    const up = fakeUpstream({ prompt_tokens: 10, completion_tokens: 2 });
+    globalThis.fetch = up.fetch;
+    const app = createApp({ cfg, db, signer, router, onComplete: () => {} });
+    const prompt = "word ".repeat(2400); // ~3000 tokens: fits config 4096, not a 1024 pool
+    assert.equal(model.context_length, 4096);
+
+    router.contextLength = async () => 1024;
+    const small = await app.request("/v1/chat/completions", chat(user.auth, prompt));
+    assert.equal(small.status, 400);
+    assert.match(await small.text(), /context_length_exceeded[\s\S]*context 1024/);
+
+    router.contextLength = async () => { throw new Error("arkiv down"); };
+    const fallback = await app.request("/v1/chat/completions", chat(user.auth, prompt));
+    assert.equal(fallback.status, 200, await fallback.clone().text());
+    await fallback.text();
+
+    // A bigger live context lets the answer use the room config would have refused.
+    router.contextLength = async () => 16384;
+    const big = await app.request("/v1/chat/completions", chat(user.auth, prompt, { max_tokens: 2048 }));
+    assert.equal(big.status, 200);
+    await big.text();
+    assert.equal(up.sent.at(-1)!.max_tokens, Number(big.headers.get("x-gpupool-max-tokens")));
+    router.contextLength = async () => undefined;
+    const cfgOnly = await app.request("/v1/chat/completions", chat(user.auth, prompt, { max_tokens: 2048 }));
+    await cfgOnly.text();
+    assert.ok(Number(cfgOnly.headers.get("x-gpupool-max-tokens")) < 1100, "config 4096 leaves under ~1000 tokens for the answer");
+    assert.ok(Number(big.headers.get("x-gpupool-max-tokens")) > Number(cfgOnly.headers.get("x-gpupool-max-tokens")));
+  } finally { globalThis.fetch = originalFetch; db.close(); }
+});
+
+test("router.contextLength: smallest reported pool context; unknown when any pool has none", async () => {
+  const db = openDb(":memory:");
+  const router = createRouter(cfg, db, testDirectory(cfg, db));
+  // testDirectory's pool has nodes without max_seq heartbeats: unknown, so config applies.
+  assert.equal(await router.contextLength(model), undefined);
+  db.close();
+});
+
+test("x402 keeps its fixed HBAR tiers: no floating price header, no multiplier on the receipt", async () => {
+  const db = openDb(":memory:");
+  const originalFetch = globalThis.fetch;
+  try {
+    const router = createRouter(cfg, db, testDirectory(cfg, db));
+    router.pricing.quote = (m) => ({ credits_per_1k_in: m.model_factor * 400, credits_per_1k_out: m.model_factor * 2000, multiplier: 2, quoted_at: 1 });
+    globalThis.fetch = fakeUpstream({ prompt_tokens: 4, completion_tokens: 2 }).fetch;
+    const x402 = { charge: async () => ({ payer: "0.0.9", tx: "0.0.9@1.1", amountTinybar: "2000000", asset: "hbar" as const, amountRaw: "2000000", headers: {} }) };
+    const app = createApp({ cfg, db, signer, router, x402, onComplete: () => {} });
+    const res = await app.request("/v1/chat/completions", chat({}, "hello"));
+    assert.equal(res.status, 200);
+    await res.text();
+    assert.equal(res.headers.get(PRICE_HEADER), null);
+    const receipt = Receipt.parse(await (await app.request(`/requests/${res.headers.get("x-gpupool-request-id")}`)).json());
+    assert.equal(receipt.pay_type, "x402");
+    assert.equal(receipt.price_multiplier ?? null, null);
+  } finally { globalThis.fetch = originalFetch; db.close(); }
+});
