@@ -44,3 +44,35 @@ Passed: frontend app and Vite-config typechecks; Vite production build; gateway/
 A clean `pnpm install` from the workspace root works (checked 2026-11-06); the frontend uses the root pnpm lockfile.
 
 Gateway suite remains blocked by missing better-sqlite3, even with local sockets permitted. Python suite is blocked by an uncached pycryptodome wheel. Foundry is blocked by missing solc 0.8.28. Lint reports two pre-existing ParticleScene React warnings. Browser E2E/visual tests and live World, Ethernet pool, chain claims and advanced-service acceptance are not completed. The operator must supply current environment-file locations and machine access. No real payment, deployment, inference launch, push or database reset was performed.
+
+## Live 3-node run record (2026-11-06, evening)
+
+Pool: M4 `[0,14)` → M5 `[14,29)` → RTX 4060 `[29,40)`, Qwen3-14B, launched over SSH as in `docs/MAC-SSH-TESTING.md`. Gateway `:8080`, Vite `:5173`, testnet only.
+
+| Component | Result | Evidence |
+|---|---|---|
+| 3-node pool | PASS | 5/5 bench runs, median decode 7.92 tok/s, TTFT 0.43 s |
+| World ID login (staging simulator) | PASS | new account + 10,000 starter (HCS #8, #9); repeat login = same account, no grant; cancel = no account. Widget must request `any(proof_of_human, selfie)`; simulator "Human" = proof_of_human |
+| Node agents (Linux + 2 Macs) | PASS | layers read from Parallax logs; signed heartbeats; Arkiv node listings; pool listing `ready` with exact layer map; `/v1/models` from Arkiv |
+| Node registration | PASS | signed `init` links → `POST /nodes/register` for 3 owner accounts with provider payout addresses |
+| Credit chat (browser) | PASS | `req_mw50mfg49ae357208d0d179b`: cost 900,550 mc; split 283,673 / 303,935 / 222,886, burn 45,027, reserve 45,029 (exact); owners' credits vest; HCS #19 schema + signature valid |
+| x402 agent | PASS | 3 × 2,000,000 tinybar agent → treasury, SUCCESS; HCS #20–22 |
+| Priority queue | PASS | ratio 12.96 request queued later was served before a ratio-0 request |
+| Self-request rule | PASS | owner's own node share 0 → reserve |
+| Availability rewards (§16.3) | PASS | `availability_reward` events while the pool had a queue |
+| Epoch settlement + claim | PASS | epoch 2989953: 4,800,000 tinybar (80% of 6,000,000) → 1,680,000 / 1,800,000 / 1,320,000 by layers; claim tx `0x9a3581ef…` moved 1,320,000 tinybar; repeat claim reverts; `payout_claimed` HCS #32 |
+| Hooks live (§16.1) | PASS | `gpupool hooks: patched …` on scheduler and nodes; ghost guard rejected a stale peer; route log maps request → routing table |
+| Node killed mid-answer | PASS | stall event `pool_error` 5 s after the kill; request `failed`; charge 0 |
+| Node rejoin | PASS with hooks | cool-down hook avoided a global rebalance; other nodes kept weights; served again 139 s after rejoin. Without hooks the rejoin failed (scheduler exception, node gave up after 5 min) |
+
+Fixed during the run: World widget credential (`any(proof_of_human, selfie)`); swap watch only on unified-memory (Mac) nodes (a swapping CUDA host blocked the pool silently); router logs why it skips a pool; elected pool writer signs the pool listing with its node key when it has no pool key.
+
+Open findings:
+- The staging simulator returned the same nullifier for every test identity; multiple World accounts from one browser are not possible. Owner accounts were made with `gateway/scripts/dev-session.ts`.
+- The UI payout address needs a browser wallet; none in the test browser (registration done through the API).
+- Settle is capped at the hold; the chars/4 input estimate undercharged one request by 3.15 credits.
+- Claim gas (~0.107 HBAR) exceeded the demo payout (0.0132 HBAR); batch claims or larger epochs are needed.
+- Stage blame fell back to the whole route: the 5 s stall check fires before a heartbeat is 20 s late.
+- Node agents do not report tok/s.
+- Hashio JSON-RPC returned intermittent 502s and timeouts; settlement retried until it posted.
+- Use the hooks-on launch (`GPUPOOL_HOOKS=1`, `PYTHONPATH=pool/hooks`, cool-down 60 s, route log) for the demo.
