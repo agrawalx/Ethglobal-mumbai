@@ -59,6 +59,10 @@ const EXAMPLES: Record<string, z.ZodType> = {
   "agent-key-create-response.json": S.AgentKeyCreateResponse,
   "agent-key-list-response.json": S.AgentKeyListResponse,
   "agent-requests-response.json": S.AgentRequestsResponse,
+  "hcs-credits-purchased.json": S.CreditsPurchasedEvent,
+  "key-credits-response.json": S.KeyCreditsResponse,
+  "credit-topup-request.json": S.CreditTopupRequest,
+  "credit-topup-response.json": S.CreditTopupResponse,
   "collusion-flags-response.json": S.CollusionFlagsResponse,
 };
 
@@ -92,6 +96,7 @@ test("ledger event types are exactly SPEC §8.6", () => {
     "agent_key_created",
     "availability_reward",
     "credits_clawed_back",
+    "credits_purchased",
     "credits_expired",
     "epoch_closed",
     "epoch_resolved",
@@ -106,6 +111,14 @@ test("ledger event types are exactly SPEC §8.6", () => {
     "verification_result",
     "x402_payment",
   ].sort());
+});
+
+test("top-up amounts: whole tinybars only; key credits fields are required on keys", () => {
+  assert.ok(S.CreditTopupRequest.safeParse({ hbar: 2.5 }).success);
+  assert.ok(S.CreditTopupRequest.safeParse({ hbar: 0.000000001 }).success === false, "below 1 tinybar");
+  assert.ok(!S.CreditTopupRequest.safeParse({ hbar: 0 }).success);
+  assert.ok(!S.CreditTopupRequest.safeParse({ hbar: "5" }).success);
+  assert.ok(!S.AgentKey.safeParse({ agent_id: "agt_a", name: "a", budget_mc: null, spent_mc: 0, revoked: false, created_at: 1, last_used_at: null }).success);
 });
 
 test("config file matches GpupoolConfig", () => {

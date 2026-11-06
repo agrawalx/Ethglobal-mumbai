@@ -295,6 +295,10 @@ export const AgentKey = z.object({
   created_at: TimestampMs,
   /** Last settled request with this key; null = never used. */
   last_used_at: TimestampMs.nullable(),
+  /** Credits bought for this key with HBAR (x402 top-ups) and not spent yet. Only this key can spend them. */
+  key_credits_mc: Millicredits,
+  /** All credits ever bought for this key. */
+  bought_total_mc: Millicredits,
 });
 export type AgentKey = z.infer<typeof AgentKey>;
 export const AgentKeyCreateRequest = z.object({ name: z.string().min(1).max(64), budget_mc: Millicredits.nullable().optional() });
@@ -304,6 +308,41 @@ export const AgentKeyCreateResponse = AgentKey.extend({ token: z.string().regex(
 export type AgentKeyCreateResponse = z.infer<typeof AgentKeyCreateResponse>;
 export const AgentKeyListResponse = z.object({ agents: z.array(AgentKey) });
 export type AgentKeyListResponse = z.infer<typeof AgentKeyListResponse>;
+
+/**
+ * GET /v1/credits (Bearer gpa_ key only): what this key can spend now. A key spends its own bought
+ * credits first, then the account's credits (starter, then earned) within its cap.
+ */
+export const KeyCreditsResponse = z.object({
+  agent_id: z.string().regex(/^agt_[A-Za-z0-9]+$/),
+  name: z.string().min(1).max(64),
+  /** Bought credits not spent or held. */
+  key_credits_mc: Millicredits,
+  bought_total_mc: Millicredits,
+  /** Account credits available now (starter + earned − held). */
+  account_available_mc: Millicredits,
+  /** null = no cap on the account credits this key may spend. */
+  cap_mc: Millicredits.nullable(),
+  cap_left_mc: Millicredits.nullable(),
+  /** key_credits + min(account_available, cap_left). */
+  spendable_mc: Millicredits,
+  spent_mc: Millicredits,
+  topup: z.object({ credits_per_hbar: z.number().int().positive(), min_hbar: z.number().positive(), max_hbar: z.number().positive() }),
+});
+export type KeyCreditsResponse = z.infer<typeof KeyCreditsResponse>;
+
+/** POST /v1/credits/topup (Bearer gpa_ key + x402 HBAR payment on Hedera testnet). */
+export const CreditTopupRequest = z.object({ hbar: z.number().positive().multipleOf(1e-8) });
+export type CreditTopupRequest = z.infer<typeof CreditTopupRequest>;
+export const CreditTopupResponse = z.object({
+  agent_id: z.string().regex(/^agt_[A-Za-z0-9]+$/),
+  payer: HederaAccountId,
+  tx_id: HederaTxId,
+  amount_tinybar: Tinybar,
+  added_mc: Millicredits,
+  credits: KeyCreditsResponse,
+});
+export type CreditTopupResponse = z.infer<typeof CreditTopupResponse>;
 
 /** GET /agents/:id/requests (session; own keys only): the key's latest requests, newest first. */
 export const AgentRequest = z.object({

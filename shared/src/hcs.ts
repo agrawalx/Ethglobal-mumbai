@@ -56,6 +56,8 @@ export const RequestSettledEvent = z.object({
   cost_mc: Millicredits,
   split: CreditSplit,
   pay: z.literal("credits"),
+  /** Part of cost_mc paid from the API key's bought credits; the rest came from the account. */
+  key_mc: Millicredits.optional(),
   prompt_hash: Hex32,
   resp_hash: Hex32,
 });
@@ -228,6 +230,18 @@ export const AgentKeyCreatedEvent = z.object({
   budget_mc: Millicredits.nullable(),
 });
 
+/** Testnet HBAR paid via x402 bought credits for one API key. The HBAR stays in the treasury. */
+export const CreditsPurchasedEvent = z.object({
+  ...base,
+  type: z.literal("credits_purchased"),
+  account_id: AccountId,
+  agent_id: z.string().regex(/^agt_[A-Za-z0-9]+$/),
+  payer: HederaAccountId,
+  tx_id: HederaTxId,
+  amount_tinybar: Tinybar,
+  amount_mc: Millicredits,
+});
+
 export const LedgerEvent = z.discriminatedUnion("type", [
   AccountCreatedEvent,
   StarterGrantEvent,
@@ -247,6 +261,7 @@ export const LedgerEvent = z.discriminatedUnion("type", [
   AccountBannedEvent,
   AvailabilityRewardEvent,
   AgentKeyCreatedEvent,
+  CreditsPurchasedEvent,
 ]);
 export type LedgerEvent = z.infer<typeof LedgerEvent>;
 export type LedgerEventType = LedgerEvent["type"];

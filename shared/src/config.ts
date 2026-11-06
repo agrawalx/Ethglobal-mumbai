@@ -108,6 +108,13 @@ export const GpupoolConfig = z.object({
     /** Tinybar value of one USDC base unit (1e-6 USDC). 500 ≈ 1 USDC = 5 HBAR. */
     tinybar_per_unit: z.number().int().positive(),
   }),
+  /** API key top-ups: testnet HBAR via x402 buys credits that only that key can spend. */
+  topup: z.object({
+    /** Credits per 1 HBAR (1 HBAR = 1e8 tinybar). */
+    credits_per_hbar: z.number().int().positive(),
+    min_hbar: z.number().positive(),
+    max_hbar: z.number().positive(),
+  }),
   /** SPEC §16.3 incentives. */
   incentives: z.object({
     /** Earned credits stay locked (can be taken back for fraud) this long before they can be spent. */
