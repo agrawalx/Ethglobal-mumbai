@@ -58,6 +58,7 @@ const EXAMPLES: Record<string, z.ZodType> = {
   "hcs-agent-key-created.json": S.AgentKeyCreatedEvent,
   "agent-key-create-response.json": S.AgentKeyCreateResponse,
   "agent-key-list-response.json": S.AgentKeyListResponse,
+  "agent-requests-response.json": S.AgentRequestsResponse,
   "collusion-flags-response.json": S.CollusionFlagsResponse,
 };
 

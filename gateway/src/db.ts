@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
  * tinybar decimal strings, times are Unix ms. No migrations (dev phase): when SCHEMA_VERSION
  * changes, delete the database file and restart.
  */
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 14;
 
 export const TABLES = [
   "accounts",
@@ -289,7 +289,7 @@ CREATE TABLE IF NOT EXISTS agent_keys (               -- §16.3 Agent Pass (MVP 
   account_id   TEXT NOT NULL REFERENCES accounts(id),
   name         TEXT NOT NULL,
   secret_hash  TEXT NOT NULL,                         -- sha256 of the secret part; the token is shown once
-  budget_mc    INTEGER NOT NULL CHECK (budget_mc >= 0),
+  budget_mc    INTEGER CHECK (budget_mc IS NULL OR budget_mc >= 0), -- NULL = no cap (whole balance)
   spent_mc     INTEGER NOT NULL DEFAULT 0,
   created_at   INTEGER NOT NULL,
   revoked_at   INTEGER

@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import type { AgentKey, CollusionFlagsResponse, CreditSplit, GpupoolConfig } from "@gpupool/shared";
+import type { AgentKey, AgentRequest, CollusionFlagsResponse, CreditSplit, GpupoolConfig } from "@gpupool/shared";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { recordEvent, type Signer } from "./events.ts";
@@ -305,22 +305,30 @@ export function payAvailability(db: Db, cfg: Config, signer: Signer, now = Date.
 // ---------- human-backed agent keys (World Agent Pass, MVP form) ----------
 
 const hashSecret = (s: string) => createHash("sha256").update(s).digest("hex");
-type AgentRow = { id: string; account_id: string; name: string; secret_hash: string; budget_mc: number; spent_mc: number; created_at: number; revoked_at: number | null };
-const toKey = (r: AgentRow): AgentKey => ({ agent_id: r.id, name: r.name, budget_mc: r.budget_mc, spent_mc: r.spent_mc, revoked: r.revoked_at !== null, created_at: r.created_at });
+type AgentRow = { id: string; account_id: string; name: string; secret_hash: string; budget_mc: number | null; spent_mc: number; created_at: number; revoked_at: number | null; last_used_at?: number | null };
+const toKey = (r: AgentRow): AgentKey => ({ agent_id: r.id, name: r.name, budget_mc: r.budget_mc, spent_mc: r.spent_mc, revoked: r.revoked_at !== null, created_at: r.created_at, last_used_at: r.last_used_at ?? null });
+const KEY_ROWS = "SELECT k.*, (SELECT max(ts) FROM requests r WHERE r.agent_id = k.id) AS last_used_at FROM agent_keys k";
 
-/** A World-verified human creates an agent key with a credit budget. The token is returned once. */
-export function createAgentKey(db: Db, signer: Signer, accountId: string, name: string, budgetMc: number, now = Date.now()): AgentKey & { token: string } {
+/** A World-verified human creates an API key, with an optional credit cap (null = whole balance). The token is returned once. */
+export function createAgentKey(db: Db, signer: Signer, accountId: string, name: string, budgetMc: number | null, now = Date.now()): AgentKey & { token: string } {
   const id = `agt_${randomBytes(8).toString("hex")}`;
   const secret = randomBytes(32).toString("hex");
   db.transaction(() => {
     db.prepare("INSERT INTO agent_keys (id, account_id, name, secret_hash, budget_mc, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, accountId, name, hashSecret(secret), budgetMc, now);
     recordEvent(db, signer, { type: "agent_key_created", account_id: accountId as Acc, agent_id: id, budget_mc: budgetMc }, now);
   })();
-  return { ...toKey(db.prepare("SELECT * FROM agent_keys WHERE id = ?").get(id) as AgentRow), token: `gpa_${id}_${secret}` };
+  return { ...toKey(db.prepare(`${KEY_ROWS} WHERE k.id = ?`).get(id) as AgentRow), token: `gpa_${id}_${secret}` };
 }
 
 export const listAgentKeys = (db: Db, accountId: string): AgentKey[] =>
-  (db.prepare("SELECT * FROM agent_keys WHERE account_id = ? ORDER BY created_at").all(accountId) as AgentRow[]).map(toKey);
+  (db.prepare(`${KEY_ROWS} WHERE k.account_id = ? ORDER BY k.created_at`).all(accountId) as AgentRow[]).map(toKey);
+
+/** The key's latest requests (newest first), or null when the key is not this account's. */
+export function agentRequests(db: Db, accountId: string, agentId: string, limit = 50): AgentRequest[] | null {
+  if (!db.prepare("SELECT 1 FROM agent_keys WHERE id = ? AND account_id = ?").get(agentId, accountId)) return null;
+  return db.prepare("SELECT req_id, model, status, in_tokens, out_tokens, max_tokens, cost_mc, hcs_seq, ts FROM requests WHERE agent_id = ? AND account_id = ? ORDER BY ts DESC LIMIT ?")
+    .all(agentId, accountId, limit) as AgentRequest[];
+}
 
 export function revokeAgentKey(db: Db, accountId: string, agentId: string, now = Date.now()): boolean {
   return db.prepare("UPDATE agent_keys SET revoked_at = ? WHERE id = ? AND account_id = ? AND revoked_at IS NULL").run(now, agentId, accountId).changes === 1;
@@ -336,9 +344,10 @@ export function agentFromToken(db: Db, token: string): { accountId: string; agen
   return a.length === b.length && timingSafeEqual(a, b) ? { accountId: r.account_id, agentId: r.id } : null;
 }
 
+/** Credits the key may still spend; no cap = Infinity (the account balance is the only limit). */
 export const agentBudgetLeft = (db: Db, agentId: string): number => {
-  const r = db.prepare("SELECT budget_mc, spent_mc FROM agent_keys WHERE id = ?").get(agentId) as { budget_mc: number; spent_mc: number };
-  return Math.max(0, r.budget_mc - r.spent_mc);
+  const r = db.prepare("SELECT budget_mc, spent_mc FROM agent_keys WHERE id = ?").get(agentId) as { budget_mc: number | null; spent_mc: number };
+  return r.budget_mc === null ? Infinity : Math.max(0, r.budget_mc - r.spent_mc);
 };
 
 export function chargeAgent(db: Db, agentId: string, reqId: string, mc: number): void {

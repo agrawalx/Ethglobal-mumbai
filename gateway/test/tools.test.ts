@@ -268,3 +268,46 @@ test("budget: header reports the picked cap; a low balance gets a short answer; 
   assert.equal(((await none.json()) as any).error.code, "insufficient_credits");
   db.prepare("UPDATE balances SET starter_mc = ?, earned_mc = ?, held_mc = 0 WHERE account_id = ?").run(saved.starter_mc, saved.earned_mc, acc);
 });
+
+// ---------- API keys (OpenCode uses one as its OpenAI apiKey) ----------
+
+const api = (path: string, init: RequestInit = {}, h: Record<string, string> = auth) =>
+  fetch(`${base}${path}`, { ...init, headers: { "content-type": "application/json", ...h, ...(init.headers as Record<string, string> ?? {}) } });
+
+test("API key: no cap spends the account's credits; requests listed per key; revoke → 401", async () => {
+  const created = await api("/agents", { method: "POST", body: JSON.stringify({ name: "opencode" }) });
+  assert.equal(created.status, 200);
+  const key = await created.json() as any;
+  assert.equal(key.budget_mc, null);
+  assert.equal(key.last_used_at, null);
+  const keyAuth = { authorization: `Bearer ${key.token}` };
+  const before = balance(db, acc);
+  const r = await api("/v1/chat/completions", { method: "POST", body: JSON.stringify({ ...turn1, stream: true }) }, keyAuth);
+  assert.equal(r.status, 200);
+  await r.text();
+  await new Promise((res) => setTimeout(res, 100));
+  assert.equal(balance(db, acc).spent_total_mc - before.spent_total_mc, cost());
+  const list = await (await api("/agents")).json() as any;
+  const k = list.agents.find((a: any) => a.agent_id === key.agent_id);
+  assert.equal(k.spent_mc, cost());
+  assert.ok(k.last_used_at > 0);
+  const reqs = await (await api(`/agents/${key.agent_id}/requests`)).json() as any;
+  assert.equal(reqs.requests.length, 1);
+  assert.equal(reqs.requests[0].cost_mc, cost());
+  assert.ok(reqs.requests[0].max_tokens > 0);
+  // another account cannot read this key's requests
+  const other = await testAccount(db, cfg);
+  assert.equal((await api(`/agents/${key.agent_id}/requests`, {}, other.auth)).status, 404);
+  assert.equal((await api(`/agents/${key.agent_id}`, { method: "DELETE" })).status, 200);
+  const revoked = await api("/v1/chat/completions", { method: "POST", body: JSON.stringify(turn1) }, keyAuth);
+  assert.equal(revoked.status, 401);
+});
+
+test("API key: a wrong key is 401 (never falls through to x402); a capped key stops at its cap", async () => {
+  const wrong = await api("/v1/chat/completions", { method: "POST", body: JSON.stringify(turn1) }, { authorization: `Bearer gpa_agt_nope_${"0".repeat(64)}` });
+  assert.equal(wrong.status, 401);
+  const key = await (await api("/agents", { method: "POST", body: JSON.stringify({ name: "capped", budget_mc: 1000 }) })).json() as any;
+  const r = await api("/v1/chat/completions", { method: "POST", body: JSON.stringify(turn1) }, { authorization: `Bearer ${key.token}` });
+  assert.equal(r.status, 403); // 1 credit cannot pay even the prompt
+  assert.equal(((await r.json()) as any).error.code, "insufficient_credits");
+});

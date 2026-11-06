@@ -282,23 +282,45 @@ export type MeResponse = z.infer<typeof MeResponse>;
 
 // ---------- /agents (SPEC §16.3 World Agent Pass, MVP form; session auth) ----------
 
-/** A human-backed agent key: requests use the human's credits and ratio, up to `budget_mc`. */
+/**
+ * A human-backed API key (OpenCode, scripts, agents): requests use the human's credits and ratio,
+ * up to `budget_mc` (null = no cap: the whole balance).
+ */
 export const AgentKey = z.object({
   agent_id: z.string().regex(/^agt_[A-Za-z0-9]+$/),
   name: z.string().min(1).max(64),
-  budget_mc: Millicredits,
+  budget_mc: Millicredits.nullable(),
   spent_mc: Millicredits,
   revoked: z.boolean(),
   created_at: TimestampMs,
+  /** Last settled request with this key; null = never used. */
+  last_used_at: TimestampMs.nullable(),
 });
 export type AgentKey = z.infer<typeof AgentKey>;
-export const AgentKeyCreateRequest = z.object({ name: z.string().min(1).max(64), budget_mc: Millicredits });
+export const AgentKeyCreateRequest = z.object({ name: z.string().min(1).max(64), budget_mc: Millicredits.nullable().optional() });
 export type AgentKeyCreateRequest = z.infer<typeof AgentKeyCreateRequest>;
 /** `token` is shown once: `Authorization: Bearer <token>` on /v1/chat/completions. */
 export const AgentKeyCreateResponse = AgentKey.extend({ token: z.string().regex(/^gpa_agt_[A-Za-z0-9]+_[0-9a-f]{64}$/) });
 export type AgentKeyCreateResponse = z.infer<typeof AgentKeyCreateResponse>;
 export const AgentKeyListResponse = z.object({ agents: z.array(AgentKey) });
 export type AgentKeyListResponse = z.infer<typeof AgentKeyListResponse>;
+
+/** GET /agents/:id/requests (session; own keys only): the key's latest requests, newest first. */
+export const AgentRequest = z.object({
+  req_id: RequestId,
+  model: ModelId,
+  status: z.enum(["pending", "ok", "failed"]),
+  in_tokens: z.number().int().nonnegative().nullable(),
+  out_tokens: z.number().int().nonnegative().nullable(),
+  /** Answer cap the gateway picked for the request. */
+  max_tokens: z.number().int().positive().nullable(),
+  cost_mc: Millicredits.nullable(),
+  hcs_seq: z.number().int().nonnegative().nullable(),
+  ts: TimestampMs,
+});
+export type AgentRequest = z.infer<typeof AgentRequest>;
+export const AgentRequestsResponse = z.object({ requests: z.array(AgentRequest) });
+export type AgentRequestsResponse = z.infer<typeof AgentRequestsResponse>;
 
 /** GET /incentives/flags (loopback; operator): collusion flags. Flags only — no automatic penalty. */
 export const CollusionFlagsResponse = z.object({

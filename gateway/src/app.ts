@@ -19,8 +19,8 @@ import { createPoolQueue, type PoolQueue } from "./queue.ts";
 import { arkivDirectory, createRouter, type Directory, type Router } from "./router.ts";
 import { createStallTracker } from "./stall.ts";
 import { HASH_SALT_HEADER } from "./privacy.ts";
-import { AgentKeyCreateRequest, AgentKeyCreateResponse, AgentKeyListResponse, CollusionFlagsResponse } from "@gpupool/shared";
-import { agentFromToken, collusionFlags, createAgentKey, isBanned, listAgentKeys, revokeAgentKey } from "./incentives.ts";
+import { AgentKeyCreateRequest, AgentKeyCreateResponse, AgentKeyListResponse, AgentRequestsResponse, CollusionFlagsResponse } from "@gpupool/shared";
+import { agentFromToken, agentRequests, collusionFlags, createAgentKey, isBanned, listAgentKeys, revokeAgentKey } from "./incentives.ts";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { PoolPlanResponse } from "@gpupool/shared";
 import { poolPlan } from "./formation.ts";
@@ -91,9 +91,13 @@ export function createApp({ cfg, db, signer, x402 = null, worldFetch, directory,
     if (!body.success) return errorResponse(c, 400, "bad_request", body.error.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`).join("; "));
     const acc = c.get("accountId")!;
     if (isBanned(db, acc)) return errorResponse(c, 403, "unauthorized", "this account is banned");
-    return c.json(AgentKeyCreateResponse.parse(createAgentKey(db, signer, acc, body.data.name, body.data.budget_mc)));
+    return c.json(AgentKeyCreateResponse.parse(createAgentKey(db, signer, acc, body.data.name, body.data.budget_mc ?? null)));
   });
   app.get("/agents", session(secret, true), (c) => c.json(AgentKeyListResponse.parse({ agents: listAgentKeys(db, c.get("accountId")!) })));
+  app.get("/agents/:id/requests", session(secret, true), (c) => {
+    const rows = agentRequests(db, c.get("accountId")!, c.req.param("id"));
+    return rows ? c.json(AgentRequestsResponse.parse({ requests: rows })) : errorResponse(c, 404, "not_found", "no such API key");
+  });
   app.delete("/agents/:id", session(secret, true), (c) =>
     revokeAgentKey(db, c.get("accountId")!, c.req.param("id")) ? c.json({ ok: true as const }) : errorResponse(c, 404, "not_found", "no such active agent key"));
 

@@ -223,7 +223,8 @@ export const AgentKeyCreatedEvent = z.object({
   type: z.literal("agent_key_created"),
   account_id: AccountId,
   agent_id: z.string().regex(/^agt_[A-Za-z0-9]+$/),
-  budget_mc: Millicredits,
+  /** null = no cap (the key may spend the whole balance). */
+  budget_mc: Millicredits.nullable(),
 });
 
 export const LedgerEvent = z.discriminatedUnion("type", [
