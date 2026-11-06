@@ -7,6 +7,7 @@ import { isRestarting, routeDispute, swappingMembers } from "./pools.ts";
 import { poolReliability } from "./reliability.ts";
 import { coordinatorFor, coordinatorMap, urlHash as hashUrl } from "./formation.ts";
 import type { PrivacyMode } from "./privacy.ts";
+import { providerCoordinator, providerAvailable } from "./provider-state.ts";
 
 /** Read-only Arkiv boundary; tests inject readers without contacting the network. */
 export type Directory = {
@@ -59,7 +60,9 @@ export function createRouter(cfg: Config, db: Db, directory: Directory) {
     const minTs = now - cfg.net.router.pool_heartbeat_max_age_s * 1000;
     const out = new Map<string, SelectedPool>();
     for (const p of pools) {
-      const coordinatorUrl = coordinatorFor(cfg, p.pool_id, coordinators);
+      const provider = providerCoordinator(db, p.pool_id);
+      if (provider && !providerAvailable(db, p.pool_id)) continue;
+      const coordinatorUrl = provider ?? coordinatorFor(cfg, p.pool_id, coordinators);
       if (p.status !== "ready" || !p.models.includes(model.model_id) || p.coordinator_url_hash !== hashUrl(coordinatorUrl) || p.members.length === 0) continue;
       // SPEC §16.3: pinning, private pools, banned owners.
       if (opts.pin && p.pool_id !== opts.pin) continue;

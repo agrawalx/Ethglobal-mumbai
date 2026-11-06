@@ -5,6 +5,7 @@ import Account from "./pages/Account";
 import Ledger from "./pages/Ledger";
 import Payouts from "./pages/Payouts";
 import NotFound from "./pages/NotFound";
+import GettingStarted from "./pages/GettingStarted";
 import ConsoleShell from "./components/ConsoleShell";
 import Providers from "./wallet/Providers";
 import WalletButton from "./wallet/WalletButton";
@@ -12,6 +13,8 @@ import type { Route } from "./lib/router";
 
 function page(route: Route) {
   switch (route.name) {
+    case "provider":
+      return <GettingStarted query={route.query} />;
     case "chat":
       return <Chat query={route.query} />;
     case "account":
@@ -29,7 +32,7 @@ function page(route: Route) {
 
 export default function ConsoleRoot({ route }: { route: Route }) {
   // The wallet is only needed where HBAR moves: payout address (/account) and claims (/payouts).
-  const wallet = route.name === "payouts" || route.name === "account" ? <WalletButton /> : null;
+  const wallet = route.name === "payouts" || route.name === "account" || route.name === "provider" ? <WalletButton /> : null;
   return (
     <Providers>
       <ConsoleShell current={route.name} wallet={wallet}>

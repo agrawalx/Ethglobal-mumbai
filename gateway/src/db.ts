@@ -7,9 +7,10 @@ import Database from "better-sqlite3";
  * tinybar decimal strings, times are Unix ms. No migrations (dev phase): when SCHEMA_VERSION
  * changes, delete the database file and restart.
  */
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 export const TABLES = [
+  "provider_pools", "provider_members", "provider_enrollments",
   "accounts",
   "balances",
   "nodes",
@@ -38,6 +39,25 @@ export const TABLES = [
 ] as const;
 
 const SCHEMA = `
+CREATE TABLE IF NOT EXISTS provider_pools (
+  pool_id TEXT PRIMARY KEY, owner_account TEXT NOT NULL, name TEXT NOT NULL, model TEXT NOT NULL,
+  expected_members INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'preparing', generation INTEGER NOT NULL DEFAULT 0,
+  dht_prefix TEXT NOT NULL, lan_secret TEXT NOT NULL, snapshots TEXT, scheduler_addr TEXT, start_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS provider_members (
+  id TEXT PRIMARY KEY, pool_id TEXT NOT NULL REFERENCES provider_pools(pool_id), account_id TEXT NOT NULL,
+  role TEXT NOT NULL, approved INTEGER NOT NULL DEFAULT 0, revoked INTEGER NOT NULL DEFAULT 0,
+  node_id TEXT UNIQUE, payout_address TEXT NOT NULL, token_hash TEXT UNIQUE, token_expires_at INTEGER,
+  stage TEXT NOT NULL DEFAULT 'waiting', message TEXT NOT NULL DEFAULT '', ip TEXT, gpu TEXT, mem_gb REAL,
+  bytes_done INTEGER NOT NULL DEFAULT 0, bytes_total INTEGER NOT NULL DEFAULT 0, last_seen INTEGER,
+  funding_raw TEXT, funding_hash TEXT, funded_at INTEGER,
+  UNIQUE(pool_id, account_id)
+);
+CREATE TABLE IF NOT EXISTS provider_enrollments (
+  code_hash TEXT PRIMARY KEY, member_id TEXT NOT NULL REFERENCES provider_members(id), expires_at INTEGER NOT NULL,
+  consumed_at INTEGER
+);
 CREATE TABLE IF NOT EXISTS accounts (
   id               TEXT PRIMARY KEY,                 -- acc_…
   world_nullifier  TEXT NOT NULL UNIQUE,             -- never leaves the gateway

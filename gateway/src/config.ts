@@ -80,6 +80,10 @@ export const GatewayEnv = z.preprocess(
     ARKIV_CHAIN_ID: opt,
     ARKIV_ACCESS_KEY: opt,
     ARKIV_PRIVATE_KEY: opt,
+    /** Dedicated central Rabdi testnet wallet; never included in provider helper config. */
+    PROVIDER_ARKIV_FUNDER_KEY: opt,
+    /** One bounded, persisted grant per enrolled node. No transfers without the funder key. */
+    PROVIDER_ARKIV_GRANT_WEI: z.string().regex(/^\d+$/).default("10000000000000000"),
     /** Post-MVP P5.4: the gateway writes the admission allow-list here (absolute path, scheduler host). */
     PARALLAX_ALLOWED_PEERS_FILE: opt,
     /** Post-MVP P5.8/P5.9: the hook's route log (absolute path). Set only when the pool runs pool/hooks. */

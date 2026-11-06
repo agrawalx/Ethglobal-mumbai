@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
  * - `/#how-it-works` → the landing, scrolled to that anchor.
  * - Old hash links (`#/chat`) are rewritten to `/chat` once at start-up.
  */
-export type RouteName = "landing" | "chat" | "account" | "network" | "ledger" | "payouts" | "notfound";
+export type RouteName = "landing" | "chat" | "account" | "network" | "ledger" | "payouts" | "provider" | "notfound";
 
 export type Route = { name: RouteName; path: string; query: URLSearchParams };
 
@@ -17,6 +17,7 @@ const paths: Record<string, RouteName> = {
   "/network": "network",
   "/ledger": "ledger",
   "/payouts": "payouts",
+  "/getting-started": "provider",
 };
 
 export function parseLocation(pathname: string, search: string): Route {

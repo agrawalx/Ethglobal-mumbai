@@ -273,7 +273,7 @@ def agent_env(app):
     env = dict(os.environ)
     # Do not inherit World/server credentials into the provider agent.
     for key in list(env):
-        if key.startswith(("WORLD_", "TREASURY_", "HEDERA_", "SETTLER_")) or key in ("ARKIV_PRIVATE_KEY", "JWT_SECRET", "GATEWAY_SIGNING_KEY"):
+        if key.startswith(("WORLD_", "TREASURY_", "HEDERA_", "SETTLER_")) or key in ("ARKIV_PRIVATE_KEY", "JWT_SECRET", "GATEWAY_SIGNING_KEY", "PROVIDER_ARKIV_FUNDER_KEY"):
             env.pop(key)
     for line in (app / "node-agent/.env").read_text().splitlines():
         key, value = line.split("=", 1)

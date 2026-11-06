@@ -1,5 +1,10 @@
 # pool (C1: Parallax pool runner)
 
+Website onboarding: `/getting-started` → Create Pool / Join Pool → World login → native local
+helper command. See [`docs/PROVIDER-ONBOARDING.md`](../docs/PROVIDER-ONBOARDING.md).
+`provider/helper.py` keeps marketplace credentials on the central gateway and runs locally
+in each owner's Terminal; it does not require SSH sessions between laptops.
+
 Spec: `docs/SPEC.md` §3. Known-good commands and quirks: `docs/HANDOFF.md` §2.2 and §3.1.
 Bash; works on Linux and macOS. Parallax is an installed dependency (`$PARALLAX_DIR`), never forked here.
 

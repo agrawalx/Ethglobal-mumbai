@@ -12,6 +12,7 @@ import { available, liveStarter } from "../lib/credits";
 import { fmtNum } from "../lib/format";
 
 const nav: { name: RouteName; to: string; label: string; icon: IconName }[] = [
+  { name: "provider", to: "/getting-started", label: "Provide", icon: "laptop" },
   { name: "chat", to: "/chat", label: "Chat", icon: "chat" },
   { name: "account", to: "/account", label: "Account", icon: "user-check" },
   { name: "network", to: "/network", label: "Network", icon: "pod" },

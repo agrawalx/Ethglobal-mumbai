@@ -72,6 +72,9 @@ export default function Landing() {
           <a href="/network" onClick={() => setMenu(false)}>
             Network
           </a>
+          <a href="/getting-started" onClick={() => setMenu(false)}>
+            Become a provider
+          </a>
         </nav>
         <div className="header-actions">
           <button

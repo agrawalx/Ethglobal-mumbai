@@ -152,6 +152,30 @@ all joins concurrently, warm up inference and check Arkiv-backed marketplace dis
 Parallax chooses actual layer placement; not every registered worker must be an active stage.
 See `docs/POOL-KICKSTART.md` for commands, permissions, recovery and live-verification limits.
 
+### 3.7 Self-service provider onboarding
+
+`/getting-started` offers Create Pool and Join Pool ID with the existing World login. Pool
+creation sets an owner, configured model, expected member count and payout address. Joining
+requires coordinator approval. Approved owners receive a single-use 15-minute enrollment
+code; their native local helper proves node-key possession and receives a restricted helper
+credential. Existing node caps, payout auditing and World account rules still apply.
+
+Helpers prepare models and dependencies before a synchronized start. The coordinator downloads
+each GPU/MLX format once, serves verified snapshots over authenticated Ethernet transfers,
+starts a private scheduler and reports its multiaddress. Members start on a common gateway
+release after all expected members are prepared. Progress, approvals and errors appear live.
+
+For these pools the marketplace gateway remains CENTRAL. The provider's scheduler remains
+on its own `127.0.0.1`; a scoped outbound coordinator relay carries inference back through
+the existing central authentication, billing and settlement flow. This extends the co-located
+scheduler arrangement above without introducing additional marketplace/payment gateways.
+Marketplace credentials are never distributed. Arkiv remains the directory and the router
+still requires signed heartbeats, valid layer coverage, eligible listings and a live relay.
+
+Optional bounded, persisted Rabdi gas grants use a dedicated central funder key. Provider
+keys remain local. See `docs/PROVIDER-ONBOARDING.md` for installation, operator configuration,
+scoped APIs, retries, OS permissions and pending live-hardware acceptance.
+
 ## 4. C2: Node agent
 
 The node agent is a small Python program on each node. It does not replace Parallax. It runs next to it.

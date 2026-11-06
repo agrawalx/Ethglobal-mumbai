@@ -1,5 +1,9 @@
 # Kickstart a pool from its coordinator
 
+For the website's **Create Pool / Join Pool** flow, see
+[`PROVIDER-ONBOARDING.md`](PROVIDER-ONBOARDING.md). That flow uses a central gateway and native
+per-laptop helpers. This document describes the older operator-managed SSH workflow only.
+
 This workflow targets a group of 2–16 trusted laptops on wired Ethernet. One of them is both
 the Parallax coordinator and the marketplace gateway host. It can also contribute a GPU.
 All four laptops in the example contribute; a requester is a separate browser/client.
