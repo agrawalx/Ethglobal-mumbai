@@ -1,0 +1,91 @@
+# shellcheck shell=bash
+# Shared helpers for the pool scripts. Source it; do not run it.
+# Works on Linux and macOS (bash 3.2+; no GNU-only flags).
+
+POOL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUN_DIR="$POOL_DIR/run"
+LOG_DIR="$POOL_DIR/logs"
+
+# Every Parallax process (scheduler, node, spawn_main / resource_tracker children, vllm-rs frontend).
+# CLAUDE.md §6.1: after a stop, `pgrep -f "parallax/.venv/bin/python"` must be empty.
+PARALLAX_PROC_PATTERN='parallax/\.venv/bin/(python|vllm-rs)'
+
+die() { echo "error: $*" >&2; exit 1; }
+
+# load_env <file>: export every key in the env file (shell syntax, comments allowed).
+load_env() {
+  local file="$1"
+  [ -f "$file" ] || die "env file not found: $file (copy pool/node.env.example)"
+  set -a
+  # shellcheck disable=SC1090
+  . "$file"
+  set +a
+}
+
+# require KEY...: fail with a clear message if a key is empty.
+require() {
+  local k
+  for k in "$@"; do
+    [ -n "${!k:-}" ] || die "$k is not set (see pool/node.env.example)"
+  done
+}
+
+# Fixed ports and LAN announce addresses (HANDOFF §2.2: no random ports, no Docker bridge IPs).
+net_flags() {
+  NET_FLAGS=(-u --dht-prefix "$DHT_PREFIX"
+    --tcp-port "$TCP_PORT" --udp-port "$UDP_PORT"
+    --announce-maddrs "/ip4/$LAN_IP/tcp/$TCP_PORT" "/ip4/$LAN_IP/udp/$UDP_PORT/quic-v1")
+}
+
+# Use the Parallax venv without `source activate` (works the same in any shell).
+use_venv() {
+  [ -x "$PARALLAX_DIR/.venv/bin/parallax" ] || die "no Parallax venv at $PARALLAX_DIR/.venv"
+  export VIRTUAL_ENV="$PARALLAX_DIR/.venv"
+  export PATH="$VIRTUAL_ENV/bin:$PATH"
+  [ -n "${HF_HOME:-}" ] && export HF_HOME
+  return 0
+}
+
+# is_running <name>: true if the pid file's process group is still alive.
+is_running() {
+  local f="$RUN_DIR/$1.pgid" pgid
+  [ -f "$f" ] || return 1
+  pgid="$(cat "$f")"
+  [ -n "$pgid" ] && kill -0 -- "-$pgid" 2>/dev/null
+}
+
+# start_group <name> <cmd...>: start the command in a NEW session / process group, log to
+# logs/<name>.log, record the process group ID in run/<name>.pgid.
+# Linux has setsid(1). macOS does not, so we call POSIX setsid() from perl (ships with macOS).
+start_group() {
+  local name="$1"; shift
+  local log="$LOG_DIR/$name.log"
+
+  if [ "${DRY_RUN:-0}" = "1" ]; then
+    printf 'DRY_RUN: cd %q &&' "$PARALLAX_DIR"
+    [ -n "${HF_HUB_OFFLINE:-}" ] && printf ' HF_HUB_OFFLINE=%s' "$HF_HUB_OFFLINE"
+    [ -n "${HF_HOME:-}" ] && printf ' HF_HOME=%q' "$HF_HOME"
+    [ -n "${CUDA_HOME:-}" ] && printf ' CUDA_HOME=%q' "$CUDA_HOME"
+    printf ' setsid'
+    printf ' %q' "$@"
+    printf ' > %q 2>&1 &\n' "$log"
+    return 0
+  fi
+
+  is_running "$name" && die "$name already running (pgid $(cat "$RUN_DIR/$name.pgid")); run pool/stop-all.sh first"
+  mkdir -p "$RUN_DIR" "$LOG_DIR"
+
+  # p2p.key (scheduler identity) lives in the cwd of `parallax run`.
+  cd "$PARALLAX_DIR" || die "cannot cd to $PARALLAX_DIR"
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$@" >>"$log" 2>&1 </dev/null &
+  else
+    perl -MPOSIX -e 'POSIX::setsid() or die "setsid: $!"; exec @ARGV or die "exec: $!"' -- "$@" >>"$log" 2>&1 </dev/null &
+  fi
+  local pid=$!
+  # The new session leader's PID is its process group ID.
+  echo "$pid" >"$RUN_DIR/$name.pgid"
+  sleep 1
+  kill -0 "$pid" 2>/dev/null || die "$name exited at start; see $log"
+  echo "$name started: pgid $pid, log $log"
+}
