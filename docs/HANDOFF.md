@@ -177,6 +177,49 @@ Each step has an owner stream (see `docs/SPEC.md` §2.1 and the parallel plan in
 
 ### Phase 3: Router, reputation, payouts
 
+Step 3.1 implemented: gateway `src/router.ts` reads Arkiv models and ready pools, checks the private
+coordinator URL hash and fresh registered member heartbeats, and scores by minimum stored reliability
+and active request load. Both credit and x402 paths capture the selected pool's heartbeat layer map.
+No pool / Arkiv outage returns 503 + Retry-After before payment; discovery has no Parallax fallback.
+Load and URL mapping rules: SPEC §5.4; run instructions: `gateway/README.md` "Arkiv routing".
+Validation: `pnpm --filter @gpupool/gateway test` (50 passed), shared tests (41 passed), Arkiv
+tests (10 passed), and typechecks for all three packages passed. Read-only live `list-models`
+returned both Qwen3-8B-FP8 and Qwen3-14B-FP8 from Rabdi. Live three-node inference through the
+router remains unverified.
+
+Step 3.2 implemented: persisted seven-day request/heartbeat observations drive reliability scores
+(70% success / 30% uptime), refreshed on events, account reads, and a periodic timer. `/me` and
+node heartbeat responses expose the score; node agents publish it on their existing Arkiv cadence.
+MVP defaults confirmed: missing rates use 0.8; online heartbeats count once per 10-second slot.
+One inference slot per pool; waiting requests sort by account contribution ratio, x402 ratio 1,
+FIFO ties. Queue cancellation and failed preparation release the slot without charging waiters.
+Admission rechecks Arkiv and fresh heartbeats. Schema version is 3; use a fresh development DB
+(no migrations; existing v2 files are not deleted automatically). Validation: gateway tests
+(59 passed), including priority ordering, queued cancellation, stale admission, rolling-window
+expiry, restart persistence, and rollback on reliability-write failure; gateway typecheck passed. Live three-node load is unverified.
+Step 3.3 backend implemented: epoch close, immutable provider snapshots, BigInt provider amounts,
+Merkle proofs, HCS-before-funding, treasury-to-settler funding, durable signed transactions, payable
+posting, proof/status API, claim/sweep log indexing, and provider claim CLI (preview by default).
+Validation: `pnpm --filter @gpupool/gateway test` (71 passed), shared schema tests (42 passed),
+`forge test -vv` in contracts (17 passed), gateway/shared typechecks, and diff whitespace checks.
+Tests include actual ECDSA transaction signing against a fake Hedera RPC, persisted transaction
+retry, Solidity-compatible proofs, claim delays, and claim/sweep event synchronization.
+See `gateway/README.md` "Epoch settlement and provider payouts". SQLite schema is now 4; older
+local development databases need recreation. No live money-moving transaction has been executed
+for this change; live testnet posting/claim evidence and the frontend claim page remain unverified.
+
+Remaining backend API/read-path work implemented: `/network`, `/ledger/events`, and background
+Arkiv account-stat publishing every ten minutes (one-day TTL, owner-scoped writer, no per-request
+writes or private World data). Proof/status API remains `/payouts/:address`. No schema change beyond
+version 4. Reproducible local demo: `pnpm --filter @gpupool/gateway test:demo` (two fixture runs).
+User explicitly deferred live-environment verification; no runtime .env files or local gateway/pool
+were available in this checkout. `gateway/scripts/verify-backend.ts` is prepared for that later check.
+Local validation completed: gateway tests (79 passed), shared schema tests (42 passed), Arkiv tests
+(10 passed), Solidity tests (17 passed); gateway, Arkiv and shared typechecks passed. Both complete
+local demo runs passed. These 148 tests use local service/wallet fixtures; they do not certify live
+World login, real three-machine inference, or public-chain payouts. The frontend and real three-node/
+public-testnet demo evidence remain separate pending work, with live verification explicitly deferred.
+
 | Step | Stream | Work | Done when |
 |---|---|---|---|
 | 3.1 | B + F | Router reads `gpupool.pool` from Arkiv; score = reliability × (1 − load); 503 when none | Model list and routing come from Arkiv |
@@ -228,8 +271,10 @@ Each component has a `.env.example`. Copy it to `.env` and fill it. Summary:
 | `PORT` | Gateway HTTP port (e.g. 8080) |
 | `HOST` | Bind address (default `0.0.0.0`; the gateway is the public entry point) |
 | `PUBLIC_URL` | URL that the requester laptop uses (e.g. `http://10.73.185.71:8080`) |
-| `POOL_COORDINATOR_URL` | Parallax scheduler API (`http://127.0.0.1:3001`) |
+| `POOL_COORDINATOR_URL` | Private Parallax scheduler API (`http://127.0.0.1:3001`); exact URL must hash to the Arkiv pool listing's `coordinator_url_hash` |
 | `DATABASE_PATH` | SQLite file path |
+| `VERIFY_SESSION_TOKEN` | Optional verification CLI session token for an idle requester account; only `--inference` spends credits; server does not use it |
+| `HEARTBEAT_SECONDS` | Expected node heartbeat interval / score refresh period (default `10`); must match node-agent configuration |
 | `POOL_TIMEOUT_MS` | Time to the pool response headers, ms (default `600000`; generation after the headers is not timed) |
 | `JWT_SECRET` | Signs session tokens |
 | `GATEWAY_SIGNING_KEY` | ed25519 private key; signs receipts and HCS events |
@@ -257,7 +302,7 @@ Each component has a `.env.example`. Copy it to `.env` and fill it. Summary:
 | `ARKIV_RPC_URL` | `https://rpc.rabdi.db-chain.testnet.arkiv.network` |
 | `ARKIV_CHAIN_ID` | `7794095` |
 | `ARKIV_ACCESS_KEY` | From hub.arkiv.network |
-| `ARKIV_PRIVATE_KEY` | Gateway writer (model catalog, account stats) |
+| `ARKIV_PRIVATE_KEY` | Gateway writer; enables background account-stat publishing (startup, then every 600 s); not needed for read-only APIs |
 
 ### pool/node.env (one per node; also used by the coordinator)
 | Key | Purpose |
@@ -324,6 +369,14 @@ The coordinator runs both roles: `pool/scheduler.env` (`ROLE=scheduler`, ports 5
 | `AGENT_ACCOUNT_ID` / `AGENT_PRIVATE_KEY` | Pays with x402 |
 | `AGENT_BUDGET_HBAR` | Spending cap (the agent stops before a payment would exceed it) |
 | `HEDERA_NETWORK` | `testnet` |
+
+### gateway/.env.provider (CLI only; copy gateway/provider.env.example)
+| Key | Purpose |
+|---|---|
+| `GATEWAY_URL` | Gateway payout proofs API |
+| `PROVIDER_PRIVATE_KEY` | Provider's ECDSA claim key; private, never a frontend variable |
+| `PAYOUT_CONTRACT_ADDRESS` | Confirmed testnet EpochPayout address |
+| `HEDERA_JSON_RPC_URL` / `HEDERA_CHAIN_ID` / `HEDERA_NETWORK` | Testnet RPC / `296` / `testnet` |
 
 ### frontend/.env.local
 | Key | Purpose |

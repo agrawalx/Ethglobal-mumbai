@@ -174,6 +174,14 @@ The gateway is one TypeScript service (Node 24, Hono or Fastify). It is the only
 
 Request and response bodies, headers, and the error shape are in `shared/` (`shared/README.md`).
 
+`GET /network` lists Arkiv node and pool entities, including loading/offline listings until their
+expiry. Pool reliability is the minimum member score (gateway score where known, otherwise the
+Arkiv node score or initial 0.8); load uses the gateway's active request count. The response never
+contains the private coordinator URL. An Arkiv read failure returns 503 with `Retry-After`.
+`GET /ledger/events` reads the SQLite audit copy, newest event ID first, with each signed payload
+and its HCS sequence (null until confirmed). `limit` defaults to 50 and must be an integer 1–100.
+
+
 ### 5.3 Request flow
 
 1. The gateway reads the `model` field.
@@ -196,6 +204,20 @@ The router selects the pool for a model. In the MVP there is one pool. The route
 2. Remove pools whose last heartbeat to the gateway is older than 30 seconds.
 3. Select the pool with the highest score: `score = reliability × (1 − load)`.
 4. If no pool is available, return HTTP 503 with `Retry-After`.
+
+MVP routing details (step 3.1):
+- The private coordinator URL comes from `POOL_COORDINATOR_URL`. A pool is reachable only if
+  `coordinator_url_hash` equals keccak256 of that exact URL's UTF-8 bytes. Unknown hashes are excluded.
+- Every listed member must be registered in that pool and have an online heartbeat received within
+  30 seconds reporting the requested model (GPU or MLX variant). Pool reliability is the minimum
+  stored member score (initially 0.8).
+- `load = active_requests / (active_requests + 1)`, tracked in memory from successful payment
+  preparation until completion, failure, or cancellation. Equal scores use pool ID order.
+- Selection happens before holding credits or settling x402. Arkiv read failures also return 503
+  with `Retry-After`; there is no discovery fallback.
+- `/v1/models` reads the Arkiv model catalog and includes only configured models with eligible
+  ready pool listings. Billing factors and price tiers remain the admin configuration. No eligible
+  pools gives an empty model list; an Arkiv read failure gives 503.
 
 The router does not select nodes inside the pool. Parallax does that.
 
@@ -337,6 +359,13 @@ Example: a 14B request costs 490 credits (490,000 mc). Node M4 served 20 of 40 l
 - The gateway keeps one queue for each pool.
 - If the pool is busy, waiting requests are sorted by the contribution ratio of the account. x402 requests have ratio 1.
 - A low ratio does not block a request.
+- The MVP runs one inference at a time per pool. Equal ratios use arrival order. The ratio is
+  captured when the request joins the queue; x402 uses 1.
+- Waiting requests do not hold credits or settle x402. Cancelled waiters are removed without a
+  request row, payment, or reliability penalty (HTTP 408 if the caller still reads the response).
+- After waiting, recheck the selected pool and capture its latest heartbeat layer map before
+  payment preparation. A stale/unavailable pool returns 503 with `Retry-After`.
+- Completion, failure, cancellation, and payment/preparation rejection release the pool slot.
 
 ### 8.6 Ledger storage
 
@@ -357,9 +386,11 @@ Example: a 14B request costs 490 credits (490,000 mc). Node M4 served 20 of 40 l
 | `balances` | `account_id` PK/FK, `starter_mc`, `starter_expires_at`, `earned_mc`, `held_mc`, `earned_total_mc`, `spent_total_mc` |
 | `nodes` | `node_id` PK (node public key), `account_id` FK, `pool_id`, `gpu`, `mem_gb`, `registered_at` |
 | `node_reliability` | `node_id` PK/FK, `requests_routed`, `requests_ok`, `heartbeats_expected`, `heartbeats_received`, `score`, `updated_at` |
-| `requests` | `req_id` PK, `account_id` FK (null for x402), `x402_payer`, `x402_tx`, `x402_amount_tinybar`, `model`, `pay_type` (`credits` / `x402`), `in_tokens`, `out_tokens`, `cost_mc`, `split` JSON, `route` JSON (node → layers), `status`, `prompt_hash`, `resp_hash`, `hcs_seq`, `ts` |
+| `node_heartbeats` | (`node_id`, `slot_ts`) PK; one online observation per registration-aligned slot |
+| `node_request_outcomes` | `id` PK, `node_id` FK, `ok`, `ts`; rolling request success/failure history |
+| `requests` | `req_id` PK, `account_id` FK (null for x402), `x402_payer`, `x402_tx`, `x402_amount_tinybar`, `model`, `pay_type` (`credits` / `x402`), `in_tokens`, `out_tokens`, `cost_mc`, `split` JSON, `route` JSON (node → layers), `payout_snapshot` JSON (provider ownership/wallet/layers), `status`, `prompt_hash`, `resp_hash`, `hcs_seq`, `ts` |
 | `ledger_events` | `id` PK, `type`, `payload` JSON, `gateway_sig`, `hcs_seq` (null until written), `ts` |
-| `epochs` | `epoch` PK, `start_ts`, `end_ts`, `total_tinybar`, `merkle_root`, `post_tx`, `status` |
+| `epochs` | `epoch` PK, `start_ts`, `end_ts`, `total_tinybar`, `merkle_root`, `post_tx`, `status`, `hcs_event_id`, `funding_raw`, `funding_tx`, `post_raw`, `posted_block`, `claims_block`, `claimable_at` |
 | `epoch_payouts` | (`epoch`, `payout_address`) PK, `amount_tinybar`, `proof` JSON, `claimed`, `claim_tx` |
 | `transcripts` | `req_id` PK/FK, `prompt`, `response`, `expires_at` (7 days; kept for future verification) |
 
@@ -381,7 +412,19 @@ success_rate = successful_requests / requests_routed      (last 7 days)
 uptime_rate  = heartbeats_received / heartbeats_expected  (last 7 days)
 ```
 
-- A new node starts at 0.8.
+- A new node starts at 0.8. A rate with no observations uses this initial value.
+- Request outcomes and online heartbeat observations are persisted in SQLite for the rolling
+  seven-day window. Client aborts before completion and unknown routes do not add outcomes.
+- Heartbeat slots start at node registration and use `HEARTBEAT_SECONDS` (10 by default; must
+  match the node agent). At most one online observation counts per node per slot. An offline
+  report does not add an online observation. Repeated reports cannot raise uptime above 1.
+- Completed slots count as expected heartbeats. The current slot counts early only if its online
+  heartbeat has arrived. Slots before registration and outside the window do not count.
+- Scores refresh after heartbeats and request outcomes, when `/me` is read, and every heartbeat
+  interval (including missed heartbeats). Old observations are pruned by the periodic refresh.
+- Heartbeat responses provide the current score for the node agent's next Arkiv listing update.
+- Successful credit completion commits balances, its ledger event, transcript, and reliability
+  outcome in one SQLite transaction. Persistence failure rolls settlement back and releases the hold.
 - A failed request on the route counts as a failure for each node on the route. (In the MVP we do not find the stage that failed.)
 
 ### 9.2 Use of the score
@@ -460,6 +503,26 @@ The provider share of each x402 request is divided by layers served, with the sa
 5. Call `postEpoch(epoch, root)` on the contract. Send `total` HBAR from the treasury with the call (`msg.value = total`, in tinybars inside the EVM).
 6. After the claim delay, each provider calls `claim(epoch, amount, proof)` from the frontend.
 
+**Settlement details (step 3.3):**
+- Epoch membership uses the paid request row's insertion time, after payment settlement. A closed
+  epoch waits for its in-flight x402 requests to finish. Requests still pending never enter a root.
+- Only successfully served requests earn providers a share. Failed paid requests remain in treasury.
+  Duplicate payment transaction IDs contribute once, using their earliest recorded request.
+- Provider owner, payout address, and layers are frozen in the request's `payout_snapshot`. Missing
+  payout addresses and invalid/unknown attribution are not reassigned to another provider.
+- The payer Hedera account's EVM address comes from the testnet mirror node. A match to a provider's
+  registered payout address identifies a self-request. Unresolved identities defer settlement.
+- The epoch row, payout list/proofs, and signed `epoch_closed` event commit together. The worker
+  waits until this event has an HCS sequence number before moving money. No provider amounts means
+  an audited empty epoch with no funding or contract call.
+- Treasury and settler may be distinct: transfer the exact provider total from treasury to settler,
+  then call `postEpoch` from the contract-authorized settler. The settler needs pre-funded gas.
+- Persist signed transactions and hashes before broadcast and reuse them on retry/restart. A
+  reverted transaction or conflicting on-chain root needs review, not a second transfer.
+- The proofs endpoint exposes only confirmed posted epochs and their claim delay/status. The
+  worker polls `Claimed` and `Swept` logs; claims produce `payout_claimed` events once. The provider
+  claim CLI previews/simulates by default and submits only with `--broadcast` (frontend remains separate).
+
 **Contract: `EpochPayout.sol` (Hedera EVM, testnet)**
 
 ```solidity
@@ -530,6 +593,14 @@ Arkiv is the **public directory** of the network. It shows what exists **now**. 
 ### 11.4 Write rate
 
 - Arkiv blocks are about 2 seconds. Do not write for each request.
+- The gateway starts one asynchronous account-stat batch at startup, then every 600 seconds from
+  shared config. Runs never overlap; one failed account does not block the rest. Failed writes retry
+  at the next scheduled batch. The gateway's Arkiv writer key owns these entities; TTL is one day.
+- Account stats publish cumulative `earned_total_mc` as `earned_mc`, cumulative `spent_total_mc`
+  as `spent_mc`, their contribution ratio (one-credit denominator floor), and minimum node reliability
+  (null without nodes). No World nullifier, session token, payout wallet, or private key is published.
+- Account-stat publishing needs `ARKIV_PRIVATE_KEY`; discovery and network reads need no signing key.
+
 - Nodes and pools write every 30 seconds. Account stats write every 10 minutes.
 
 ### 11.5 Track files
@@ -591,7 +662,8 @@ The MVP has no output verification. To not design against it, the gateway keeps:
 | Item | Notes |
 |---|---|
 | Fault tolerance | Gateway failover when a node stops during a request (resend prompt + partial answer to another pool). |
-| Stall detection | Detect a stall of more than 5 s in the stream and find the stage that stalled. |
+| Stall detection
+| Detect a stall of more than 5 s in the stream and find the stage that stalled. |
 | Node join and leave while the pool runs | Rebalance, spare copies, cool-down before global rebalance. |
 | Heartbeat grace hook | Launcher patch so that a node that waits more than 30 s is not dropped. Removes synchronized joins. |
 | Ghost guard and admission hook | Reject heartbeat-only joins and unknown peers inside the Parallax scheduler. |
