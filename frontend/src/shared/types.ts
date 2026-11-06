@@ -41,7 +41,7 @@ export type PoolListing = {
   members: string[];
   status: "ready" | "forming" | "offline";
   layer_map: RouteHop[];
-  /** Lowest node reliability in the pool (§9.2). */
+  /** Pool reliability (§9.2): 0.7 × pool success rate + 0.3 × pool uptime, the pool as one identity. */
   reliability: number;
   /** 0.0 to 1.0. Router score = reliability × (1 − load). */
   load: number;

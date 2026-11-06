@@ -1,5 +1,5 @@
 /* /network (spec §12, §11): the consumer directory, read from Arkiv through GET /network.
-   Every pool (models, members, layer map, status, reliability = lowest member, load) and every
+   Every pool (models, members, layer map, status, reliability = the pool's own success + uptime record, load) and every
    node (GPU, memory, layers, tok/s, status, reliability, owner). Pick a pool here to query it. */
 import type { NodeListing, PoolListing } from "@shared/types";
 import { PageHead } from "../components/ConsoleShell";
@@ -134,7 +134,7 @@ function PoolCard({ pool, nodes, offers }: { pool: PoolListing; nodes: NodeListi
         <div className="stat">
           <span className="mono-label">Reliability</span>
           <p className="stat-value">{pool.reliability.toFixed(2)}</p>
-          <p className="stat-note">lowest member</p>
+          <p className="stat-note">pool success + uptime</p>
         </div>
         <div className="stat">
           <span className="mono-label">Load</span>
