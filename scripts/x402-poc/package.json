@@ -1,0 +1,27 @@
+{
+  "name": "@gpupool/x402-poc",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "server": "node --env-file-if-exists=.env src/server.ts",
+    "client": "node --env-file-if-exists=.env src/client.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@gpupool/shared": "workspace:*",
+    "@hono/node-server": "^2.1.6",
+    "@x402/core": "2.30.0",
+    "@x402/fetch": "2.30.0",
+    "@x402/hedera": "2.30.0",
+    "@x402/hono": "2.30.0",
+    "hono": "^4.13.16",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "^7.0.2"
+  }
+}
