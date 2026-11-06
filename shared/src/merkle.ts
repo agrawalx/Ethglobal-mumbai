@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { EpochNumber, EvmAddress, Hex32, Tinybar } from "./common.ts";
+import { AccountId, EpochNumber, EvmAddress, Hex32, LayerRange, Tinybar } from "./common.ts";
 
 /**
  * Epoch payout Merkle tree (SPEC §10.5). The gateway (TS) and EpochPayout.sol must agree:
@@ -28,3 +28,12 @@ export const PayoutProof = z.object({
   merkle_root: Hex32,
 });
 export type PayoutProof = z.infer<typeof PayoutProof>;
+
+/** Provider attribution frozen when an x402 request starts (never recomputed from later ownership changes). */
+export const PayoutRoute = z.array(z.object({
+  node_id: EvmAddress,
+  owner_account: AccountId,
+  payout_address: EvmAddress.nullable(),
+  layers: LayerRange,
+})).min(1);
+export type PayoutRoute = z.infer<typeof PayoutRoute>;

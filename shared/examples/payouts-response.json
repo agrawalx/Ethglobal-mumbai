@@ -1,1 +1,19 @@
-{ "payout_address": "0xb1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1", "payouts": [ { "epoch": 2989853, "amount_tinybar": "1280000", "merkle_root": "0xefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef", "proof": ["0x1212121212121212121212121212121212121212121212121212121212121212"], "claimed": false, "claim_tx": null } ] }
+{
+  "payout_address": "0xb1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+  "payouts": [
+    {
+      "epoch": 2989853,
+      "amount_tinybar": "1280000",
+      "merkle_root": "0xefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+      "proof": [
+        "0x1212121212121212121212121212121212121212121212121212121212121212"
+      ],
+      "claimed": false,
+      "claim_tx": null,
+      "post_tx": "0x3434343434343434343434343434343434343434343434343434343434343434",
+      "claimable_at": 1793912460000,
+      "claimable": true,
+      "swept": false
+    }
+  ]
+}

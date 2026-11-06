@@ -330,6 +330,10 @@ export const PayoutsResponse = z.object({
       proof: z.array(Hex32),
       claimed: z.boolean(),
       claim_tx: Hex32.nullable(),
+      post_tx: Hex32,
+      claimable_at: TimestampMs,
+      claimable: z.boolean(),
+      swept: z.boolean(),
     }),
   ),
 });

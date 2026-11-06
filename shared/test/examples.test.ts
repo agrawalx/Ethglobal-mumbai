@@ -34,6 +34,7 @@ const EXAMPLES: Record<string, z.ZodType> = {
   "arkiv-account-stats.json": S.ArkivAccountStats,
   "merkle-leaf.json": S.MerkleLeaf,
   "payout-proof.json": S.PayoutProof,
+  "payout-route.json": S.PayoutRoute,
   "hcs-account-created.json": S.AccountCreatedEvent,
   "hcs-starter-grant.json": S.StarterGrantEvent,
   "hcs-request-settled.json": S.RequestSettledEvent,

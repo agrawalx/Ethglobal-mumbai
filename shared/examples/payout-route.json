@@ -1,0 +1,11 @@
+[
+  {
+    "node_id": "0xa4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4",
+    "owner_account": "acc_provider",
+    "payout_address": "0xb1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+    "layers": [
+      0,
+      40
+    ]
+  }
+]

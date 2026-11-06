@@ -75,3 +75,20 @@ Next.js needs `transpilePackages: ["@gpupool/shared"]` in `next.config`.
 - ~~IDKit v4 formats~~ `RpSignatureResponse` pinned (step 2.1). `WorldVerifyRequest` stays opaque: the IDKit result is forwarded unchanged.
 - ~~x402 formats~~ Confirmed (step 1.6): settle response `payer` = client Hedera account ID, `transaction` = Hedera tx ID `0.0.<facilitator fee payer>@sec.nanos`. Both match `HederaAccountId` / `HederaTxId`. The 402 requirements come in the `PAYMENT-REQUIRED` header (library-owned).
 - ~~Arkiv `models` array~~ Decided (step 1.4): indexed slots `model0..model3`; see `arkiv/schema.md`.
+
+**Provider payout snapshot and claim API (step 3.3)**
+- `PayoutRoute` (`src/merkle.ts`, `examples/payout-route.json`) freezes each paid request's node,
+  pseudonymous owner account, payout address (nullable), and layers in SQLite. It is not a public receipt field.
+- `PayoutsResponse` includes confirmed posting tx, `claimable_at` (Unix ms), `claimable`, `claimed`,
+  `claim_tx`, and `swept`. All amounts and Solidity claim arguments remain tinybar decimal strings.
+- Provider totals use 80% per paid successful request with per-node layer floors. Missing/self/unknown
+  shares and rounding remain in treasury. Multiple nodes with the same payout wallet aggregate to one leaf.
+- `gateway/src/merkle.ts` reproduces `contracts/test/fixtures/merkle-vector.json` exactly.
+
+**Network and ledger APIs**
+- `NetworkResponse`: public Arkiv entities plus derived minimum pool reliability and active load.
+  Known gateway node scores take precedence for the pool metric; source membership remains Arkiv.
+- `LedgerEventsResponse`: newest SQLite audit events with signed payloads and nullable HCS sequence.
+  `/ledger/events?limit=N` defaults to 50; only integer values 1–100 are accepted.
+- `ArkivAccountStats.earned_mc` / `spent_mc` are lifetime contribution totals from balances
+  `earned_total_mc` / `spent_total_mc`, not starter grants or remaining spendable credits.
