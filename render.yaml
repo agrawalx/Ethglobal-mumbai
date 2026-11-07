@@ -11,6 +11,19 @@ services:
     startCommand: cd gateway && node src/main.ts
     healthCheckPath: /healthz
     numInstances: 1
+    # A deploy restarts the service (disk = no zero-downtime) and drops every helper connection.
+    # Rebuild only for code the gateway runs or serves (the provider bundle), not docs or the frontend.
+    buildFilter:
+      paths:
+        - gateway/**
+        - shared/**
+        - arkiv/**
+        - node-agent/**
+        - pool/**
+        - package.json
+        - pnpm-lock.yaml
+        - pnpm-workspace.yaml
+        - render.yaml
     disk:
       name: gateway-data
       mountPath: /var/data
