@@ -1,5 +1,5 @@
-/* Layer split + query simulator. N laptops → the model's layers split by memory into pipeline
-   stages → one token travels stage by stage → the request settles with the real §8.3 rule
+/* Layer split + query simulator. N laptops → the model's layers placed into pipeline stages by
+   Parallax's own rules (lib/layers.ts parallaxPlacement) → one token travels stage by stage → the request settles with the real §8.3 rule
    (costMc / splitMc, the gateway's integer math) → the node owners' credits, and what they buy
    on a different pool. "Live pool" mode uses a real layer map from /network (Arkiv). */
 import { useEffect, useRef, useState } from "react";
@@ -7,10 +7,10 @@ import { useReducedMotion } from "motion/react";
 import type { NodeListing, PoolListing, RouteHop } from "@shared/types";
 import config from "../../../../shared/config/gpupool.config.json";
 import { costMc, splitMc } from "../../lib/credits";
-import { allocateLayers, coversExactly, RESERVED_GB, toRoute } from "../../lib/layers";
+import { CHIPS, coversExactly, parallaxPlacement, stageGiB } from "../../lib/layers";
 import { fmtLayers, fmtMc, fmtNum, gpuShort, nodeName } from "../../lib/format";
 
-type Laptop = { id: string; name: string; gpu: string; mem: number; owner: string };
+type Laptop = { id: string; name: string; gpu: string; mem: number; owner: string; chip: string };
 type ModelCfg = (typeof config.models)[number];
 
 const MEM_OPTIONS = [8, 12, 16, 18, 24, 32, 36, 48, 64];
@@ -18,8 +18,9 @@ const MAX_LAPTOPS = 8;
 const HOP_MS = 520;
 const short = (id: string) => id.split("/")[1] ?? id;
 const letter = (i: number) => String.fromCharCode(65 + i);
-const mkLaptop = (i: number, mem: number): Laptop => ({ id: `sim-${letter(i)}`, name: `Laptop ${letter(i)}`, gpu: "laptop", mem, owner: `owner-${letter(i)}` });
-const START: Laptop[] = [mkLaptop(0, 8), mkLaptop(1, 16), mkLaptop(2, 16), mkLaptop(3, 24)];
+const mkLaptop = (i: number, mem: number, chip = "M5"): Laptop => ({ id: `sim-${letter(i)}`, name: `Laptop ${letter(i)}`, gpu: "laptop", mem, owner: `owner-${letter(i)}`, chip });
+/* the demo pool: four 16 GB Macs */
+const START: Laptop[] = [mkLaptop(0, 16, "M4"), mkLaptop(1, 16, "M5"), mkLaptop(2, 16, "M5"), mkLaptop(3, 16, "M2")];
 
 type Phase = { kind: "idle" } | { kind: "hop"; stage: number } | { kind: "settled" };
 type Run = Phase & { key: string };
@@ -50,14 +51,23 @@ export default function LayerSim({ pools = [], nodes = [], preferLive = false }:
       const total = model?.num_layers ?? pool.layer_map.reduce((m, h) => Math.max(m, h.layers[1]), 0);
       const lap: Laptop[] = pool.layer_map.map((h) => {
         const n = nodes.find((x) => x.node_id === h.node_id);
-        return { id: h.node_id, name: nodeName(n, h.node_id), gpu: n ? gpuShort(n.gpu) : "unlisted", mem: n?.mem_gb ?? 0, owner: n?.owner_account ?? `unknown-${h.node_id}` };
+        return { id: h.node_id, name: nodeName(n, h.node_id), gpu: n ? gpuShort(n.gpu) : "unlisted", mem: n?.mem_gb ?? 0, owner: n?.owner_account ?? `unknown-${h.node_id}`, chip: "" };
       });
-      return { model, modelId: pool.models[0], total, sizeGb: model?.size_gb ?? 0, factor: model?.model_factor ?? 1, laptops: lap, route: pool.layer_map as RouteHop[] | null, fits: coversExactly(pool.layer_map, total) };
+      return { model, modelId: pool.models[0], total, sizeGb: model?.size_gb ?? 0, factor: model?.model_factor ?? 1, laptops: lap, route: pool.layer_map as RouteHop[] | null, fits: coversExactly(pool.layer_map, total), placement: null };
     }
     const model = config.models.find((m) => m.model_id === modelId) as ModelCfg;
-    const counts = allocateLayers(laptops.map((l) => l.mem), model.num_layers, model.size_gb);
-    return { model, modelId, total: model.num_layers, sizeGb: model.size_gb, factor: model.model_factor, laptops, route: counts ? toRoute(laptops.map((l) => l.id), counts) : null, fits: !!counts };
+    const placement = parallaxPlacement(laptops.map((l) => ({ id: l.id, memGb: l.mem, chip: l.chip })), model);
+    return { model, modelId, total: model.num_layers, sizeGb: model.size_gb, factor: model.model_factor, laptops, route: placement?.pipelines[0] ?? null, fits: !!placement, placement };
   })();
+  /* every stage of every pipeline (copies of the model), for the laptop cards */
+  const hopOf = (id: string): { hop: RouteHop; copy: number } | undefined => {
+    const pipes = view.placement?.pipelines ?? (view.route ? [view.route] : []);
+    for (let c = 0; c < pipes.length; c++) {
+      const hop = pipes[c].find((h) => h.node_id === id);
+      if (hop) return { hop, copy: c };
+    }
+    return undefined;
+  };
 
   const stages = view.route ?? [];
   const youIdx = Math.min(you, view.laptops.length - 1);
@@ -91,6 +101,7 @@ export default function LayerSim({ pools = [], nodes = [], preferLive = false }:
   }
 
   const setMem = (i: number, mem: number) => setLaptops((ls) => ls.map((l, j) => (j === i ? { ...l, mem } : l)));
+  const setChip = (i: number, chip: string) => setLaptops((ls) => ls.map((l, j) => (j === i ? { ...l, chip } : l)));
   const add = () => setLaptops((ls) => (ls.length >= MAX_LAPTOPS ? ls : [...ls, mkLaptop(ls.length, 16)]));
   const remove = () => setLaptops((ls) => (ls.length <= 1 ? ls : ls.slice(0, -1)));
   const stageOf = (id: string) => stages.findIndex((h) => h.node_id === id);
@@ -176,7 +187,15 @@ export default function LayerSim({ pools = [], nodes = [], preferLive = false }:
         </div>
         {!view.fits && (
           <p className="sim-warn" role="status">
-            {live ? "This pool's layer map does not cover every layer exactly once, so the route is unknown and node shares go to the reserve." : `These laptops cannot hold ${short(view.modelId)}: it needs about ${view.sizeGb} GB for weights plus ${RESERVED_GB} GB per laptop for the system. Add a laptop or more memory.`}
+            {live ? "This pool's layer map does not cover every layer exactly once, so the route is unknown and node shares go to the reserve." : `These laptops cannot hold ${short(view.modelId)} (about ${view.sizeGb} GB of weights): Parallax lets each laptop use about 65% of its memory for weights. Add a laptop or more memory.`}
+          </p>
+        )}
+        {!live && view.placement && (
+          <p className="faint sim-source" style={{ marginTop: 10 }}>
+            Placed by Parallax's rules: as few stages as possible, layers in proportion to each chip's compute, capped by memory.
+            {view.placement.equalSplit ? " Same-memory pool: every laptop gets an equal share (website onboarding rule)." : ""}
+            {view.placement.pipelines.length > 1 ? ` ${view.placement.pipelines.length} full copies of the model; a request uses one.` : ""}
+            {view.placement.standby.length ? ` ${view.placement.standby.length} ${view.placement.standby.length === 1 ? "laptop is not needed and waits" : "laptops are not needed and wait"} on standby.` : ""}
           </p>
         )}
       </div>
@@ -188,15 +207,16 @@ export default function LayerSim({ pools = [], nodes = [], preferLive = false }:
         )}
         {view.laptops.map((l, i) => {
           const s = stageOf(l.id);
-          const hop = s >= 0 ? stages[s] : undefined;
+          const placed = hopOf(l.id);
+          const hop = placed?.hop;
           const n = hop ? hop.layers[1] - hop.layers[0] : 0;
-          const usedGb = (n * view.sizeGb) / Math.max(view.total, 1);
+          const usedGb = hop ? stageGiB(view.modelId, view.sizeGb, view.total, hop) : 0;
           const share = split.nodes.find((x) => x.node_id === l.id);
           const isYou = i === youIdx;
           return (
             <li key={l.id} style={{ ["--c" as string]: color(l.id, i), ["--i" as string]: i }} className={`sim-laptop${s === activeStage ? " is-hot" : ""}${s >= 0 && s < activeStage ? " is-done" : ""}${isYou ? " is-you" : ""}`}>
               <div className="sim-screen">
-                <span className="sim-layers">{hop ? fmtLayers(hop.layers) : "no layers"}</span>
+                <span className="sim-layers">{hop ? `${placed && placed.copy > 0 ? `copy ${placed.copy + 1} · ` : ""}${fmtLayers(hop.layers)}` : live ? "no layers" : "standby"}</span>
                 <span className="sim-count">{n} layers</span>
               </div>
               <div className="sim-base" aria-hidden="true" />
@@ -204,6 +224,17 @@ export default function LayerSim({ pools = [], nodes = [], preferLive = false }:
               {live ? (
                 <span className="faint sim-sub">{l.mem ? `${l.mem} GB` : "no Arkiv listing"}</span>
               ) : (
+                <>
+                <label className="sim-mem">
+                  <span className="sr-only">Chip of {l.name}</span>
+                  <select className="select" value={l.chip} onChange={(e) => setChip(i, e.target.value)}>
+                    {CHIPS.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <label className="sim-mem">
                   <span className="sr-only">Memory of {l.name}</span>
                   <select className="select" value={l.mem} onChange={(e) => setMem(i, +e.target.value)}>
@@ -214,6 +245,7 @@ export default function LayerSim({ pools = [], nodes = [], preferLive = false }:
                     ))}
                   </select>
                 </label>
+                </>
               )}
               {l.mem > 0 && (
                 <span className="sim-membar" title={`${fmtNum(usedGb, 1)} of ${l.mem} GB used by weights`}>

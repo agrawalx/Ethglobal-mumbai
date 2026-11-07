@@ -209,5 +209,21 @@ ok((await mockApi.keys(keyToken))[0].revoked, "revoke: the key is marked revoked
 await assert.rejects(mockApi.revokeKey(keyToken, k1.id)); pass++; console.log("  ✓ revoking twice fails");
 ok((await mockApi.keyRequests(keyToken, k1.id)).length === 0, "usage: empty for a new key");
 
+console.log("Layer placement (Parallax rules, checked against Parallax 162354a and the live pools)");
+{
+  const { parallaxPlacement } = await import("../src/lib/layers.ts");
+  const cfg = (await import("../../shared/config/gpupool.config.json", { with: { type: "json" } })).default;
+  const model = (id: string) => cfg.models.find((m: { model_id: string }) => m.model_id.includes(id))!;
+  const spans = (p: ReturnType<typeof parallaxPlacement>) => p?.pipelines.map((r) => r.map((h) => `${h.node_id}:${h.layers[0]}-${h.layers[1]}`).join(" "));
+  ok(spans(parallaxPlacement([{ id: "m5", memGb: 16, chip: "M5" }, { id: "m4", memGb: 16, chip: "M4" }, { id: "rtx", memGb: 8, chip: "RTX" }], model("14B")))?.[0] === "m5:0-14 m4:14-29 rtx:29-40", "14B on M5 + M4 + RTX 4060: 14 / 15 / 11 (the live pool)");
+  const four = parallaxPlacement(["M4", "M5", "M5", "M2"].map((chip, i) => ({ id: `n${i}`, memGb: 16, chip })), model("30B"));
+  ok(spans(four)?.[0] === "n0:0-12 n1:12-24 n2:24-36 n3:36-48" && four!.equalSplit, "30B on four 16 GB Macs: equal split 12 each (the live pool)");
+  const mixed = parallaxPlacement([{ id: "a8", memGb: 8, chip: "M2" }, { id: "b16", memGb: 16, chip: "M4" }, { id: "c16", memGb: 16, chip: "M5" }, { id: "d24", memGb: 24, chip: "M4 Pro" }], model("30B"));
+  ok(spans(mixed)?.[0] === "d24:0-23 b16:23-35 c16:35-48" && mixed!.standby.join() === "a8", "30B on 8/16/16/24 GB: fewest stages, the 8 GB laptop on standby (same as Parallax)");
+  const small = parallaxPlacement([{ id: "a", memGb: 16, chip: "M4" }, { id: "b", memGb: 24, chip: "M5" }], model("8B"));
+  ok(small!.pipelines.length === 2 && small!.pipelines.every((r) => r.length === 1), "8B fits one laptop: two copies of the model, one per laptop");
+  ok(parallaxPlacement([{ id: "a", memGb: 8, chip: "M2" }, { id: "b", memGb: 8, chip: "M2" }], model("30B")) === null, "30B on two 8 GB laptops: does not fit");
+}
+
 console.log(`\n${pass} checks passed`);
 process.exit(0);
