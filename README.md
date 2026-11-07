@@ -86,6 +86,37 @@ pnpm --dir frontend dev              # localhost:5173
 
 Use trusted HTTPS for World phone login and remote helpers. Then onboard a pool through the frontend; starting the web services alone does not create inference capacity. See [gateway configuration](gateway/README.md), [pool bootstrap](docs/POOL-KICKSTART.md) and the [live runbook](docs/LIVE-DEMO-RUNBOOK.md).
 
+## Arkiv submission
+
+We use `@arkiv-network/sdk` **1.0.1** on [Rabdi](https://docs.arkiv.network/networks/rabdi/), Arkiv's current testnet (chain ID **7794095**). Nodes publish their own listings; the elected pool writer publishes the pool. The gateway reads Arkiv to populate the model picker, select candidate pools, and display the Network and Contributors pages.
+
+These writer wallets were verified through live Arkiv entity reads on **7 November 2026**:
+
+| Writer wallet | Published entities | Example entity key |
+|---|---|---|
+| `0xfeb19Eb223236427a31B2D909851025aBc55dB1b` | Model catalog and account-stat snapshots | `0x5156a3bf4dbfac9ee1369bd3375df1fadd6dc0af1537091e2493ca077d93335d` (Qwen3-8B model) |
+| `0xF653C0E15AED8d736BC4B7739cC9CB8920f10f38` | Node and elected-writer pool listing | `0x495928ffad00abfe4495bef44ff66c1ef8df40e7a92ff7fadbc65df4f1351ccd` (pool) |
+| `0xd7f9C5FC95Ef93750638aF553bAcbE36d5bDecAB` | Node listing | `0xbcd984f190e8f331ce00b5f892759c88af316d8519d4a9503f096113376e50a0` (node) |
+
+From the repository root, after installing **Node.js 24+** and **pnpm**, run this read-only Arkiv query:
+
+```bash
+pnpm install
+pnpm --filter @gpupool/arkiv cli list-models
+```
+
+It queries the `gpupool.model` named schema and prints model metadata. No wallet, private key, or funded account is needed for reads. The default public RPC is rate limited; for reliable access, copy `arkiv/.env.example` to `arkiv/.env` and set only `ARKIV_ACCESS_KEY` from [Arkiv Hub](https://hub.arkiv.network/access-keys).
+
+To run the router's model/status filter directly:
+
+```bash
+pnpm --filter @gpupool/arkiv cli list-ready-pools Qwen/Qwen3-8B-FP8
+```
+
+Node and pool records expire 120 seconds after their last successful renewal; a query may therefore return an empty list when providers are offline. Catalog records last 30 days unless refreshed. Example keys above identify records observed at verification time, not permanent availability.
+
+Track documents: [Schema](arkiv/schema.md) · [Feedback](arkiv/friction.md) · [Reach](arkiv/reach.md) · [Why Arkiv](arkiv/why-arkiv.md) · [How we use Arkiv](arkiv/how-you-use-arkiv.md).
+
 ## What challenged us
 
 - **Mixed hardware:** NVIDIA FP8 and Apple MLX need different model snapshots but must serve the same layer pipeline.
@@ -103,3 +134,11 @@ Use trusted HTTPS for World phone login and remote helpers. Then onboard a pool 
 - Batch provider claims to reduce gas overhead; harden the system before considering mainnet payments.
 
 For implementation details, see the [specification](docs/SPEC.md) and [engineering handoff](docs/HANDOFF.md).
+
+## License and AI disclosure
+
+GPU Pool's original code and documentation are available under the [MIT License](LICENSE). Third-party code, assets, dependencies, and model weights retain their respective licenses; see [frontend attribution](frontend/NOTICE.md) and the model catalog's license metadata.
+
+We used **OpenAI Codex and Anthropic Claude** to assist with implementation, debugging, test creation, research, and documentation, including the Arkiv submission files. The team directed the work, made product and architecture decisions, and ran the hardware experiments described in the engineering handoff. AI-generated suggestions and tests are not evidence that a feature passed live validation; the linked runbooks distinguish implemented code, local checks, and hardware/service results.
+
+We use **Parallax** as an existing inference dependency. The frontend incorporates material from **Quil** and **Omniverse**, as recorded in its notices. These are reused components, not work we claim to have created from scratch during the event.
