@@ -103,3 +103,61 @@ Use trusted HTTPS for World phone login and remote helpers. Then onboard a pool 
 - Batch provider claims to reduce gas overhead; harden the system before considering mainnet payments.
 
 For implementation details, see the [specification](docs/SPEC.md) and [engineering handoff](docs/HANDOFF.md).
+
+## Sponsor tracks
+
+### Track requirements
+
+| Track | Requirement | Where it is met |
+|---|---|---|
+| **Arkiv** | Explain what users would lose without Arkiv, what stays off-chain, and how filters, ownership and expiry fit the app | [Why Arkiv](arkiv/why-arkiv.md), [How we use Arkiv](arkiv/how-you-use-arkiv.md) |
+| **Hedera: AI Agents That Pay (x402)** | An x402-protected endpoint settled on Hedera through a listed facilitator; an agent that pays with no human approval; a settled transaction ID in the README; a demo with a HashScan link | `POST /v1/chat/completions` (402 → x402 on `hedera:testnet` via `x402.org/facilitator`), `agent-client/`, transactions below |
+| **Hedera extras** | Spending controls; HCS as a tamper-evident audit log; revenue split to providers | Agent budget cap; signed events on HCS topic `0.0.11332608`; `EpochPayout` contract |
+| **World: Best Use of IDKit** | IDKit in a working app, server-side proof verification, a product event that needs a unique human, the minimum sufficient credential, success and failure paths | [World ID submission](docs/WORLD_IDKIT_SUBMISSION.md) |
+
+### Arkiv
+
+- **Catalog writer wallet:** `0xfeb19eb223236427a31b2d909851025abc55db1b` writes the `gpupool.model` entities. Each laptop writes its own `gpupool.node` entity with its node wallet, and the elected pool writer signs `gpupool.pool`.
+- **Network:** Arkiv testnet "Rabdi", chain ID `7794095`.
+- **Docs:** [Why Arkiv](arkiv/why-arkiv.md) · [How we use Arkiv](arkiv/how-you-use-arkiv.md) · code in [`arkiv/`](arkiv/) ([schemas and filters](arkiv/src/schema.ts), [owner-scoped writes](arkiv/src/writer.ts), [reads](arkiv/src/reader.ts)).
+- **A query you can run:** list the model catalog straight from Arkiv (`select … from gpupool.model`):
+
+  ```bash
+  cd arkiv && node --env-file=.env src/cli.ts list-models
+  # → Qwen/Qwen3-8B-FP8, Qwen/Qwen3-14B-FP8, Qwen/Qwen3-30B-A3B-Instruct-2507-FP8
+  ```
+
+  The router runs `node src/cli.ts list-ready-pools <model>`: pools where `status = ready` and the model is listed.
+
+### Hedera x402 payments
+
+Status: **working on Hedera testnet.** An AI agent pays 0.01 HBAR per request with x402 and gets its answer; nobody approves it. Settled transactions (agent `0.0.11332604` → treasury `0.0.11331600`, network fee paid by the facilitator `0.0.9185802`):
+
+| x402 payment | HCS audit event |
+|---|---|
+| [`0.0.9185802@1794018731.489265813`](https://hashscan.io/testnet/transaction/0.0.9185802-1794018731-489265813) | #133 `x402_payment`, signature valid |
+| [`0.0.9185802@1794018738.510280927`](https://hashscan.io/testnet/transaction/0.0.9185802-1794018738-510280927) | `x402_payment` |
+| [`0.0.9185802@1794016987.106070928`](https://hashscan.io/testnet/transaction/0.0.9185802-1794016987-106070928) | #115 `x402_payment` |
+| [`0.0.9185802@1794016459.379155319`](https://hashscan.io/testnet/transaction/0.0.9185802-1794016459-379155319) | #111 `x402_payment`, signature valid |
+| [`0.0.9185802@1794011853.698529921`](https://hashscan.io/testnet/transaction/0.0.9185802-1794011853-698529921) (x402 top-up: 1 HBAR → 10 credits) | #104 `credits_purchased`, signature valid |
+
+- **HCS audit topic:** [`0.0.11332608`](https://hashscan.io/testnet/topic/0.0.11332608), signed by the gateway (public key `0x9750f108f4273406aa7498086fc73b404633e5750d9f1d3dacfd95c1cc58c508`). Verify any event with `cd gateway && node --env-file=.env src/verify-event.ts <seq> <pubkey>`.
+- **Provider payouts:** `EpochPayout` contract `0x22aafc9cbdafd4e5a7e7eae47b27cad48ad8b82c` (Hedera EVM, chain 296).
+- **Docs:** [x402](gateway/README.md#x402-step-24), [HCS](gateway/README.md#hcs-step-23), [epoch settlement and payouts](gateway/README.md#epoch-settlement-and-provider-payouts-step-33), [agent client](agent-client/).
+
+### World ID
+
+- **IDKit v4**, action `gpupool-account`, credentials **Orb (`proof_of_human`) or Selfie Check (`selfie`)**; one account per nullifier.
+- **Configuration (public values from `gateway/.env`):**
+
+  | Key | Value |
+  |---|---|
+  | `WORLD_APP_ID` | `app_3defa81f175967a96109b1a628927bb6` |
+  | `WORLD_RP_ID` | `rp_831104fa5fd04dd5` |
+  | `WORLD_ACTION` | `gpupool-account` |
+  | `WORLD_ENVIRONMENT` | `staging` (World ID Simulator) |
+  | `WORLD_SIMULATOR_DEVICE_ACCOUNTS` | `true`: staging only; the simulator returns one nullifier for every identity, so accounts are keyed per browser until real World App logins |
+  | `WORLD_RP_SIGNING_KEY` | server-only; signs each IDKit request in the gateway and never reaches the browser |
+
+- **Flow:** the gateway signs the request (`/auth/world/rp-signature`), the browser runs IDKit, and the gateway verifies the proof with World's v4 verify API (`/auth/world/verify`). A new human gets 10,000 starter credits, recorded as a signed event on HCS.
+- **Docs:** [World ID submission](docs/WORLD_IDKIT_SUBMISSION.md) · code: [`gateway/src/world.ts`](gateway/src/world.ts), [`frontend/src/auth/LoginSheet.tsx`](frontend/src/auth/LoginSheet.tsx).
