@@ -134,7 +134,9 @@ export function loadNetworkConfig(): GpupoolConfig {
 
 /** Throws one clear message listing every bad or missing key. */
 export function loadConfig(rawEnv: Record<string, string | undefined> = process.env): Config {
-  const r = GatewayEnv.safeParse(rawEnv);
+  // Values pasted into a hosting dashboard often carry a trailing newline; keys and URLs never contain edge whitespace.
+  const trimmed = Object.fromEntries(Object.entries(rawEnv).map(([k, v]) => [k, typeof v === "string" ? v.trim() : v]));
+  const r = GatewayEnv.safeParse(trimmed);
   if (!r.success) {
     const lines = r.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`);
     throw new Error(`invalid gateway env (see gateway/.env.example):\n${lines.join("\n")}`);
