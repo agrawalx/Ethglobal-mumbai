@@ -1,7 +1,7 @@
 # Arkiv schema (gpupool)
 
 Network: Arkiv testnet **Rabdi**, chain ID 7794095, RPC `https://rpc.rabdi.db-chain.testnet.arkiv.network/<access-key>`.
-SDK: `@arkiv-network/sdk` **1.0.1** + `viem` 2. Code: `arkiv/src/schema.ts`. Logical records: `shared/src/arkiv.ts`.
+SDK: `@arkiv-network/sdk` **1.0.1** + `viem` 2. Code: [`src/schema.ts`](src/schema.ts). Logical records: [`shared/src/arkiv.ts`](../shared/src/arkiv.ts).
 
 SDK 1.0 has typed columns (`defineSchema`) and no free payload field. Our encoding:
 
@@ -14,9 +14,13 @@ SDK 1.0 has typed columns (`defineSchema`) and no free payload field. Our encodi
 | Entity | Indexed str columns | payload (JSON) | Writer | Expiry (`shared/config` `arkiv_ttl_s`) |
 |---|---|---|---|---|
 | `gpupool.node` | type, owner_account, node_id, pool_id, gpu, status | mem_gb, layers, tok_s, reliability | node agent (node key) | 120 s, re-set every 30 s |
-| `gpupool.pool` | type, pool_id, status, model0..model3 | members, coordinator_url_hash, layer_map (null while no valid map; from gateway `GET /pools/:pool_id`), reliability (pool score, SPEC §9.2, from the same endpoint) | coordinator (pool key) | 120 s, re-set every 30 s |
-| `gpupool.model` | type, model_id | mlx_variant, size_gb, model_factor, license | admin (gateway key) | 30 days |
-| `gpupool.account_stats` | type, account_id | earned_mc, spent_mc, ratio, reliability | gateway | 1 day, updated every 10 min |
+| `gpupool.pool` | type, pool_id, status, model0..model3 | members, coordinator_url_hash, layer_map (null while no valid map; from gateway `GET /pools/:pool_id`), reliability (pool score, SPEC §9.2, from the same endpoint), optional context_length | elected pool writer (dedicated pool key when present, otherwise its node key) | 120 s, re-set every 30 s |
+| `gpupool.model` | type, model_id | mlx_variant, size_gb, model_factor, license | admin (gateway key) | 30 days; refreshed by rerunning seed-models |
+| `gpupool.account_stats` | type, account_id | earned_mc, spent_mc, ratio, reliability | gateway | 1 day, published at startup and every 10 min |
+
+The writer wallet owns the Arkiv entity; `owner_account` is an application account ID, not an edit permission. Our upserts find records by logical ID **and** `ownedBy(writer)`. Ownership protects an existing entity, but does not prevent another wallet from creating a separate entity with the same schema or logical ID. Routing also checks gateway registration and signed heartbeats. Model prices and layer counts remain gateway configuration.
+
+The table lists all indexed fields. Active read filters are pool `status` plus model slots, and node `pool_id`; catalog and account-stat reads use their named schemas. Logical IDs are used for owner-scoped upserts. GPU type and owner account are indexed but are not current marketplace filters. Public reads currently fetch at most 100 records per entity query.
 
 ## Queries
 
