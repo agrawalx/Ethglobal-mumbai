@@ -55,6 +55,14 @@ export function fitContext(req: ChatCompletionRequest, contextLength: number, mi
   let tokens = size(r);
   if (tokens <= budget) return { ok: true, req: r, promptTokens: tokens, trimmed: 0 };
 
+  // The stock OpenCode tool set can exceed a 4K pool even on its first turn. Shorten
+  // optional descriptions further before cutting history; keep every tool and its schema.
+  if (compact && r.tools?.length) {
+    r = { ...r, tools: compactTools(r.tools, 80, 0) };
+    tokens = size(r);
+    if (tokens <= budget) return { ok: true, req: r, promptTokens: tokens, trimmed: 0 };
+  }
+
   // 2. cut tool results, in growing steps
   let trimmed = 0;
   for (const limit of TOOL_LIMITS) {

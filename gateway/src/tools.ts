@@ -1,4 +1,4 @@
-import { contentText, type ChatCompletionRequest, type ChatMessage, type Tool, type ToolCall } from "@gpupool/shared";
+import { contentText, Usage, type ChatCompletionRequest, type ChatMessage, type Tool, type ToolCall } from "@gpupool/shared";
 
 /**
  * Tool calling for OpenAI clients (OpenCode) on pools without native support.
@@ -20,33 +20,34 @@ export function usesTools(req: ChatCompletionRequest): boolean {
 }
 
 const MAX_DESC = 200;
-const shortDesc = (d: string): string => {
+const shortDesc = (d: string, limit = MAX_DESC): string => {
   const first = d.split(/\n\s*\n/)[0]!.replace(/\s+/g, " ").trim();
-  return first.length > MAX_DESC ? `${first.slice(0, MAX_DESC - 1)}…` : first;
+  return first.length > limit ? `${first.slice(0, limit - 1)}…` : first;
 };
 
 /** JSON Schema without noise: no examples/$schema/titles, short descriptions. Keeps names, types, required. */
-function compactSchema(v: unknown): unknown {
-  if (Array.isArray(v)) return v.map(compactSchema);
+function compactSchema(v: unknown, descriptionLimit: number): unknown {
+  if (Array.isArray(v)) return v.map(x => compactSchema(x, descriptionLimit));
   if (!v || typeof v !== "object") return v;
   const out: Record<string, unknown> = {};
   for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
     if (k === "examples" || k === "$schema" || k === "title" || k === "additionalProperties" || k === "default") continue;
-    out[k] = k === "description" && typeof x === "string" ? shortDesc(x) : k === "properties" && x && typeof x === "object"
-      ? Object.fromEntries(Object.entries(x as Record<string, unknown>).map(([p, s]) => [p, compactSchema(s)]))
-      : compactSchema(x);
+    if (k === "description" && descriptionLimit === 0) continue;
+    out[k] = k === "description" && typeof x === "string" ? shortDesc(x, descriptionLimit) : k === "properties" && x && typeof x === "object"
+      ? Object.fromEntries(Object.entries(x as Record<string, unknown>).map(([p, s]) => [p, compactSchema(s, descriptionLimit)]))
+      : compactSchema(x, descriptionLimit);
   }
   return out;
 }
 
 /** Smaller tool definitions for the prompt (OpenCode's descriptions are long). */
-export function compactTools(tools: Tool[]): Tool[] {
+export function compactTools(tools: Tool[], descriptionLimit = MAX_DESC, parameterDescriptionLimit = descriptionLimit): Tool[] {
   return tools.map((t) => ({
     type: "function",
     function: {
       name: t.function.name,
-      ...(t.function.description ? { description: shortDesc(t.function.description) } : {}),
-      ...(t.function.parameters ? { parameters: compactSchema(t.function.parameters) as Record<string, unknown> } : {}),
+      ...(t.function.description ? { description: shortDesc(t.function.description, descriptionLimit) } : {}),
+      ...(t.function.parameters ? { parameters: compactSchema(t.function.parameters, parameterDescriptionLimit) as Record<string, unknown> } : {}),
     },
   }));
 }
@@ -196,7 +197,7 @@ export function rewriteCompletion(body: Record<string, any>): Record<string, any
   if (!choice?.message) return body;
   const { content, tool_calls } = splitAnswer(String(choice.message.content ?? ""));
   const message = tool_calls.length ? { role: "assistant", content, tool_calls } : { role: "assistant", content: content ?? "" };
-  return { ...body, choices: [{ ...choice, message, finish_reason: tool_calls.length ? "tool_calls" : choice.finish_reason }] };
+  return { ...body, choices: [{ ...choice, message, finish_reason: tool_calls.length ? "tool_calls" : choice.finish_reason ?? "stop" }] };
 }
 
 /**
@@ -211,6 +212,8 @@ export function toolStream(source: ReadableStream<Uint8Array>): ReadableStream<U
   let buf = "";
   let flushed = false;
   let finished = false;
+  let completed = false;
+  let failed = false;
   let base: Record<string, any> = { object: "chat.completion.chunk", choices: [] };
 
   // the index of a call is fixed when it is emitted: count as we go
@@ -226,15 +229,15 @@ export function toolStream(source: ReadableStream<Uint8Array>): ReadableStream<U
     }
     return s;
   };
-  /** Emit held text/calls. A stream that ends without its own finish chunk still closes a tool turn
-      with finish_reason "tool_calls", or OpenAI clients (OpenCode) would not run the tools. */
+  /** Successful turns must finish explicitly, including the plain answer after a tool result.
+      Otherwise OpenCode treats the finish as unknown and keeps requesting another turn. */
   const flush = (closeTurn = true): string => {
-    if (flushed) return "";
-    flushed = true;
-    let s = emit(parser.end());
-    if (closeTurn && !finished && parser.calls > 0) {
+    if (failed) return "";
+    let s = "";
+    if (!flushed) { flushed = true; s = emit(parser.end()); }
+    if (closeTurn && !finished) {
       finished = true;
-      s += `data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] })}\n\n`;
+      s += `data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: parser.calls > 0 ? "tool_calls" : "stop" }] })}\n\n`;
     }
     return s;
   };
@@ -244,16 +247,19 @@ export function toolStream(source: ReadableStream<Uint8Array>): ReadableStream<U
     const dataLine = lines.find((l) => l.startsWith("data:"));
     if (!dataLine) return `${ev}\n\n`;
     const data = dataLine.slice(5).trim();
-    if (data === "[DONE]") return `${flush()}${ev}\n\n`;
+    // proxyStream emits DONE only after validated usage; error streams have no DONE.
+    if (data === "[DONE]") { completed = true; return `${flush()}${ev}\n\n`; }
     let chunk: Record<string, any>;
     try {
       chunk = JSON.parse(data);
     } catch {
       return `${ev}\n\n`;
     }
-    if (chunk.error || !Array.isArray(chunk.choices) || chunk.choices.length === 0) {
-      // usage-only chunk (or an error): flush held text first so nothing is lost
-      return `${chunk.error ? "" : flush()}${ev}\n\n`;
+    if (chunk.error) { failed = true; return `${ev}\n\n`; }
+    const hasUsage = Usage.safeParse(chunk.usage).success;
+    if (!Array.isArray(chunk.choices) || chunk.choices.length === 0) {
+      if (hasUsage) completed = true;
+      return `${hasUsage ? flush() : ""}${ev}\n\n`;
     }
     const { choices: _c, usage: _u, ...rest } = chunk;
     base = { ...rest };
@@ -267,7 +273,9 @@ export function toolStream(source: ReadableStream<Uint8Array>): ReadableStream<U
       finished = true;
       const finish = parser.calls > 0 ? "tool_calls" : choice.finish_reason;
       out += `data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: finish }], ...(chunk.usage ? { usage: chunk.usage } : {}) })}\n\n`;
-    } else if (chunk.usage) {
+    } else if (hasUsage) {
+      completed = true;
+      out += flush();
       out += `data: ${JSON.stringify({ ...base, choices: [], usage: chunk.usage })}\n\n`;
     }
     return out;
@@ -282,7 +290,8 @@ export function toolStream(source: ReadableStream<Uint8Array>): ReadableStream<U
           buf += dec.decode();
           let out = buf.trim() ? buf.split(/\r?\n\r?\n/).filter((e) => e.trim()).map(rewrite).join("") : "";
           buf = "";
-          out += flush();
+          // Never repair an incomplete/error stream into a successful tool execution.
+          if (completed || finished) out += flush(completed);
           if (out) controller.enqueue(enc.encode(out));
           controller.close();
           return;

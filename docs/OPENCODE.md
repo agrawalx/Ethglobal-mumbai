@@ -21,6 +21,7 @@ OpenCode ──POST /v1/chat/completions, Bearer gpa_…──▶ gateway
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
+  "compaction": { "auto": false },
   "provider": {
     "gpupool": {
       "npm": "@ai-sdk/openai-compatible",
@@ -36,6 +37,12 @@ OpenCode ──POST /v1/chat/completions, Bearer gpa_…──▶ gateway
 5. Run `opencode` and pick the model with `/models`.
 
 Any OpenAI client works the same way: use base URL `<gateway>/v1` and the key as the API key.
+
+For the current 4K pool, the supplied OpenCode config leaves automatic context fitting to the
+gateway. OpenCode's default output/compaction reserve can otherwise start a separate summary
+request immediately after the first tool call, before it answers the user. Manual compaction
+remains available. Large system prompts or a current tool chain that cannot fit still return
+`context_length_exceeded`; this does not increase the model's runtime context.
 
 ## Credits
 
@@ -201,3 +208,39 @@ provider earnings, drain to 403, and revoked-key 401.
 
 Record request IDs, HCS sequence numbers, locked multipliers and picked `max_tokens`
 here for both runs. Never record API keys. Use Hedera testnet only.
+
+## OpenCode tool-flow fixes (7 Nov 2026)
+
+- Completed tool-emulation streams now emit exactly one final `tool_calls` or `stop` reason,
+  even when the upstream omits it. Without `stop` on the answer after a tool result, actual
+  OpenCode 1.19.5 repeatedly requested another turn. Error/truncated streams cannot flush a
+  held partial call as successful; explicit `length` finishes remain unchanged.
+- When normal tool compaction still exceeds the prompt budget, optional parameter descriptions
+  are removed and function descriptions are shortened further. Tool names, parameter names,
+  types, required lists and enums remain. A captured stock ten-tool prompt changed from a
+  rejected 3,921-token estimate to a fitting 3,227-token estimate; the pool's tokenizer measured
+  2,911 tokens. No Mac context or KV-memory limit was raised.
+- The coordinator helper stops a completed SSE response at `[DONE]` rather than waiting for
+  HTTP EOF. A lingering Parallax HTTP/RPC stream must not hold up the next tool-result request.
+  Terminal markers split across network chunks and CRLF are handled. A real HTTP regression
+  deliberately leaves the upstream open after DONE and requires the relay to return first.
+- The copied client config sets `compaction.auto=false` for this small pool, where the gateway
+  already fits history. See [OpenCode V1 compaction configuration](https://docs.opencode.ai/docs/config/#compaction).
+
+Repeat the actual-client regression without live inference or chain writes:
+
+```sh
+cd gateway
+pnpm e2e:opencode npx --yes opencode-ai@1.19.5
+```
+
+It runs the stock build agent with its default tool definitions against the real gateway and
+fixture inference. It requires a successful generated-file read, the actual file contents in
+the next model turn, the exact final phrase, `stop`, and exactly two backend requests. It does
+not count a tool permission error as a successful read. Test state and configuration are isolated.
+
+Live verification with a read-only agent passed against the three-node Qwen3-14B pool in 27.13 s:
+one completed file read, returned tool result, exact generated phrase and final `stop`.
+Request IDs: `req_mw5ed7lu9f3f6c0532d906ba` (tool turn, HCS 77),
+`req_mw5edfth36faaa6c49c973da` (answer, HCS 78). These were checked in the gateway records;
+no claim of a larger-context or arbitrary-repository test is made here.

@@ -38,6 +38,9 @@ function opencodeJson(contextLength: number) {
   return JSON.stringify(
     {
       $schema: "https://opencode.ai/config.json",
+      // The gateway already fits history to the live pool context. OpenCode's
+      // default compaction reserve is too large for this 4K pool.
+      compaction: { auto: false },
       provider: {
         gpupool: {
           npm: "@ai-sdk/openai-compatible",

@@ -338,9 +338,18 @@ def forward_job(base, token, job, private_port=3001):
         connection.putheader("Transfer-Encoding", "chunked")
         connection.endheaders()
         with upstream:
+            streaming = upstream.headers.get("content-type", "").lower().startswith("text/event-stream")
+            terminal_tail = b""
             # read1 does not wait for a large buffer, preserving token-by-token SSE latency.
             while chunk := upstream.read1(16384):
                 connection.send(f"{len(chunk):x}\r\n".encode() + chunk + b"\r\n")
+                if streaming:
+                    terminal = terminal_tail + chunk
+                    # Parallax can leave the HTTP/RPC stream open after DONE. Waiting for
+                    # EOF then blocks this helper's next OpenCode tool-result request.
+                    if re.search(rb"(?:^|\r?\n)data:[ \t]*\[DONE\]\r?\n\r?\n", terminal):
+                        break
+                    terminal_tail = terminal[-64:]
         connection.send(b"0\r\n\r\n")
         response = connection.getresponse()
         response.read()

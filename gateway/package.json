@@ -16,7 +16,8 @@
     "demo:incentives": "node scripts/incentives-demo.ts",
     "verify": "node --env-file-if-exists=.env scripts/verify-backend.ts",
     "api-key": "node --env-file-if-exists=.env scripts/api-key.ts",
-    "e2e:docs": "node scripts/docs-flow-e2e.ts"
+    "e2e:docs": "node scripts/docs-flow-e2e.ts",
+    "e2e:opencode": "node scripts/opencode-e2e.ts"
   },
   "dependencies": {
     "@gpupool/arkiv": "workspace:*",

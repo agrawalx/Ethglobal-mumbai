@@ -3,6 +3,9 @@ import importlib.util
 import io
 import json
 import os
+import concurrent.futures
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import threading
 from pathlib import Path
 import tempfile
 import unittest
@@ -15,6 +18,61 @@ spec.loader.exec_module(helper)
 
 
 class ProviderHelperTests(unittest.TestCase):
+    def test_done_releases_relay_without_waiting_for_http_eof(self):
+        release = threading.Event()
+        uploaded = []
+        payload = b'data: {"choices":[{"delta":{"content":"data: [DONE]"}}]}\r\n\r\n'
+        class Upstream(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+            def log_message(self, *_): pass
+            def do_POST(self):
+                self.rfile.read(int(self.headers["content-length"]))
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+                try:
+                    for chunk in [payload, b"data: [DO", b"NE]\r\n\r\n"]:
+                        self.wfile.write(f"{len(chunk):x}\r\n".encode() + chunk + b"\r\n")
+                        self.wfile.flush()
+                    release.wait(5)  # DONE has arrived, but the HTTP body deliberately stays open.
+                    self.wfile.write(b"0\r\n\r\n")
+                except (BrokenPipeError, ConnectionResetError): pass
+        class Gateway(BaseHTTPRequestHandler):
+            def log_message(self, *_): pass
+            def do_POST(self):
+                body = b""
+                while True:
+                    size = int(self.rfile.readline().strip(), 16)
+                    if not size:
+                        self.rfile.readline()
+                        break
+                    body += self.rfile.read(size)
+                    self.rfile.read(2)
+                uploaded.append(body)
+                self.send_response(200)
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"{}")
+        upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+        gateway = ThreadingHTTPServer(("127.0.0.1", 0), Gateway)
+        for server in [upstream, gateway]:
+            server.daemon_threads = True
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            future = pool.submit(helper.forward_job, f"http://127.0.0.1:{gateway.server_port}", "fixture-token",
+                                 {"id": "fixture", "path": "/v1/chat/completions", "body": {"stream": True}}, upstream.server_port)
+            future.result(timeout=2)
+            self.assertFalse(release.is_set(), "relay returns while upstream is still open")
+            self.assertEqual(uploaded, [payload + b"data: [DONE]\r\n\r\n"])
+        finally:
+            release.set()
+            pool.shutdown(wait=True)
+            for server in [upstream, gateway]:
+                server.shutdown()
+                server.server_close()
+
     def test_operator_secrets_are_removed_before_any_subprocess(self):
         private = ["WORLD_RP_SIGNING_KEY", "JWT_SECRET", "HEDERA_OPERATOR_KEY", "TREASURY_PRIVATE_KEY", "ARKIV_PRIVATE_KEY", "PROVIDER_ARKIV_FUNDER_KEY"]
         with patch.dict(os.environ, {**{key: "test-only-value" for key in private}, "HF_TOKEN": "provider-owned-hub-token"}):
