@@ -1,0 +1,63 @@
+# Render blueprint for the GPU Pool gateway (docs/HANDOFF.md §8 "Render").
+# Secrets are NOT here: every `sync: false` key is entered in the Render dashboard (copy from your local gateway/.env).
+# One instance only: SQLite on the persistent disk and the in-memory pool queues allow a single process.
+services:
+  - type: web
+    name: gpupool-gateway
+    runtime: node
+    region: singapore
+    plan: starter
+    buildCommand: npx -y pnpm@12.8.1 install --frozen-lockfile
+    startCommand: cd gateway && node src/main.ts
+    healthCheckPath: /healthz
+    numInstances: 1
+    disk:
+      name: gateway-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - { key: NODE_VERSION, value: "24" }
+      - { key: HOST, value: 0.0.0.0 }
+      - { key: DATABASE_PATH, value: /var/data/gateway.sqlite }
+      - { key: DB_RESET_ON_MISMATCH, value: "true" }
+      - { key: PUBLIC_URL, value: https://ethglobal.yash-agrawal.dev }
+      # Required by the config schema; provider pools are reached through the helpers' relay, not this URL.
+      - { key: POOL_COORDINATOR_URL, value: http://127.0.0.1:3001 }
+      - { key: HEDERA_NETWORK, value: "testnet" }
+      - { key: HEDERA_OPERATOR_ID, value: "0.0.11331600" }
+      - { key: HCS_TOPIC_ID, value: "0.0.11332608" }
+      - { key: HEDERA_MIRROR_URL, value: "https://testnet.mirrornode.hedera.com" }
+      - { key: HEDERA_JSON_RPC_URL, value: "https://testnet.hashio.io/api" }
+      - { key: HEDERA_CHAIN_ID, value: "296" }
+      - { key: TREASURY_ACCOUNT_ID, value: "0.0.11331600" }
+      - { key: X402_FACILITATOR_URL, value: "https://x402.org/facilitator" }
+      - { key: X402_NETWORK, value: "hedera:testnet" }
+      - { key: X402_PAY_TO, value: "0.0.11331600" }
+      - { key: PAYOUT_CONTRACT_ADDRESS, value: "0x22aafc9cbdafd4e5a7e7eae47b27cad48ad8b82c" }
+      - { key: EPOCH_SECONDS, value: "600" }
+      - { key: ARKIV_CHAIN_ID, value: "7794095" }
+      - { key: WORLD_APP_ID, value: "app_3defa81f175967a96109b1a628927bb6" }
+      - { key: WORLD_RP_ID, value: "rp_831104fa5fd04dd5" }
+      - { key: WORLD_ACTION, value: "gpupool-account" }
+      - { key: WORLD_ENVIRONMENT, value: "staging" }
+      - { key: WORLD_SIMULATOR_DEVICE_ACCOUNTS, value: "true" }
+      - { key: STARTER_CREDITS, value: "10000" }
+      - { key: STARTER_EXPIRY_DAYS, value: "14" }
+      - { key: CORS_ORIGINS, value: "http://localhost:5173,http://127.0.0.1:5173,http://10.73.185.71:5173,https://ethglobal.yash-agrawal.dev,https://gpupool-ethglobal.vercel.app" }
+      - { key: POOL_TIMEOUT_MS, value: "600000" }
+      - { key: VERIFICATION_ENABLED, value: "false" }
+      - { key: HEARTBEAT_SECONDS, value: "10" }
+      - { key: TOOLS_MODE, value: "emulate" }
+      - { key: PROVIDER_ARKIV_GRANT_WEI, value: "50000000000000000" }
+      # secrets: set in the dashboard
+      - { key: JWT_SECRET, sync: false }
+      - { key: GATEWAY_SIGNING_KEY, sync: false }
+      - { key: WORLD_RP_SIGNING_KEY, sync: false }
+      - { key: HEDERA_OPERATOR_KEY, sync: false }
+      - { key: TREASURY_PRIVATE_KEY, sync: false }
+      - { key: SETTLER_PRIVATE_KEY, sync: false }
+      - { key: ARKIV_RPC_URL, sync: false }
+      - { key: ARKIV_ACCESS_KEY, sync: false }
+      - { key: ARKIV_PRIVATE_KEY, sync: false }
+      - { key: TRANSCRIPT_KEY, sync: false }
+      - { key: PROVIDER_ARKIV_FUNDER_KEY, sync: false }

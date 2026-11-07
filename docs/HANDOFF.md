@@ -475,3 +475,24 @@ Main frontend copied into backendXoutofscope. It is Vite/React with public VITE 
 ### Pool request availability
 
 `GET /pools/:pool_id/availability?model=<model-id>` reports `available`, `reason`, `action`, and `checked_at`. It uses the marketplace model catalog and the same pool eligibility checks as `/v1/models`. The provider and network views poll this endpoint; connected helpers and directory listing status do not by themselves mean requests can be routed. A directory read failure returns 503, so the UI shows availability as unknown and allows a retry. The check is a snapshot: a later request can still fail if pool state changes.
+
+## Hosting the gateway on Render
+
+The gateway runs as one Render web service from `render.yaml` (Node 24, region Singapore, plan Starter, a 1 GB disk at
+`/var/data` for SQLite, one instance). Laptop pools need no inbound access: every provider helper reaches the gateway over
+outbound HTTPS (relay long-poll), so the coordinator helper uses `--gateway https://ethglobal.yash-agrawal.dev` like the members.
+
+1. Render dashboard → New → Blueprint → this repository. Enter every `sync: false` key from your local `gateway/.env`
+   (never commit them): `JWT_SECRET`, `GATEWAY_SIGNING_KEY`, `WORLD_RP_SIGNING_KEY`, `HEDERA_OPERATOR_KEY`,
+   `TREASURY_PRIVATE_KEY`, `SETTLER_PRIVATE_KEY`, `ARKIV_RPC_URL`, `ARKIV_ACCESS_KEY`, `ARKIV_PRIVATE_KEY`, `TRANSCRIPT_KEY`,
+   `PROVIDER_ARKIV_FUNDER_KEY`. Public values are in `render.yaml`; Render sets `PORT`.
+2. The database starts empty on the disk (`DATABASE_PATH=/var/data/gateway.sqlite`): accounts, pools and API keys are
+   created again. HCS keeps the earlier history.
+3. Custom domain: add `ethglobal.yash-agrawal.dev` to the service; in Cloudflare DNS replace the tunnel record with a
+   DNS-only CNAME to `gpupool-gateway.onrender.com`. Then stop the local tunnel and the local gateway.
+4. Check: `curl https://ethglobal.yash-agrawal.dev/healthz`, `/v1/models`, `/provider/helper.py`; World login on
+   `https://gpupool-ethglobal.vercel.app` (already in `CORS_ORIGINS`).
+
+Notes: `/pools/plan` and `/incentives/flags` answer local requests only, so they refuse on Render. A service with a disk
+restarts on every deploy (a few seconds of downtime; helpers reconnect): do not deploy during the demo.
+`PARALLAX_ROUTE_LOG` and `PARALLAX_ALLOWED_PEERS_FILE` stay unset (they need a scheduler on the same machine).
