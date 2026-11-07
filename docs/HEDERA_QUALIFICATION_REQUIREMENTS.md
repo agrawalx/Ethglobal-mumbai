@@ -219,7 +219,7 @@ Risk: an earlier epoch close failed on timeouts from the public `hashio.io` Hede
 
 ## Action checklist
 
-- [ ] **Add the README "Payment flow (x402 on Hedera)" section** with tx `0.0.9185802@1794011853.698529921`, the HashScan link and HCS #104. Required.
+- [X] **Add the README "Payment flow (x402 on Hedera)" section** with tx `0.0.9185802@1794011853.698529921`, the HashScan link and HCS #104. Required.
 - [x] Repo is public.
 - [x] Pool serving; AI agent paid 2 chat requests on Hedera testnet.
 - [x] **Demo video recorded:** https://www.youtube.com/watch?v=zQ4D1H8n550
