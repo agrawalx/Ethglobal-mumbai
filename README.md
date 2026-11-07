@@ -115,7 +115,7 @@ For implementation details, see the [specification](docs/SPEC.md) and [engineeri
 - Payments: [`0.0.9185802@1794018731.489265813`](https://hashscan.io/testnet/transaction/0.0.9185802-1794018731-489265813) · [`0.0.9185802@1794016459.379155319`](https://hashscan.io/testnet/transaction/0.0.9185802-1794016459-379155319) · top-up [`0.0.9185802@1794011853.698529921`](https://hashscan.io/testnet/transaction/0.0.9185802-1794011853-698529921)
 - Agent `0.0.11332604` → treasury `0.0.11331600`; facilitator `0.0.9185802`
 - HCS topic: [`0.0.11332608`](https://hashscan.io/testnet/topic/0.0.11332608) · EpochPayout: `0x22aafc9cbdafd4e5a7e7eae47b27cad48ad8b82c`
-- Docs: [gateway/README.md](gateway/README.md#x402-step-24)
+- Docs: [Hedera qualification requirements](docs/HEDERA_QUALIFICATION_REQUIREMENTS.md) · [gateway/README.md](gateway/README.md#x402-step-24)
 
 **World ID**
 - `WORLD_APP_ID=app_3defa81f175967a96109b1a628927bb6` · `WORLD_RP_ID=rp_831104fa5fd04dd5` · `WORLD_ACTION=gpupool-account` · `WORLD_ENVIRONMENT=staging`
