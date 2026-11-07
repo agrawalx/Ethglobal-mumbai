@@ -24,6 +24,11 @@ services:
         - pnpm-lock.yaml
         - pnpm-workspace.yaml
         - render.yaml
+      # Docs live inside code folders too (e.g. arkiv/*.md): never redeploy for them.
+      ignoredPaths:
+        - "**/*.md"
+        - docs/**
+        - frontend/**
     disk:
       name: gateway-data
       mountPath: /var/data
