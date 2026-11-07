@@ -119,17 +119,23 @@ test("revoking a member immediately invalidates its helper credential", async ()
   } finally { s.db.close(); }
 });
 
-test("outbound relay streams responses, rejects cross-pool uploads and expires cancelled work", async () => {
+test("outbound relay streams ordered parts as they arrive, rejects foreign or out-of-order parts and expires cancelled work", async () => {
   const relay = new ProviderRelay();
   const result = relay.forward("pool-a", "/v1/chat/completions", { stream: true });
   const job = await relay.poll("pool-a");
   assert.ok(job);
-  await assert.rejects(relay.accept("pool-b", job.id, 200, "text/event-stream", new ReadableStream()), /unknown/);
-  const encoder = new TextEncoder();
-  const uploaded = relay.accept("pool-a", job.id, 200, "text/event-stream", new ReadableStream({ start(c) { c.enqueue(encoder.encode("data: token\n\n")); c.enqueue(encoder.encode("data: [DONE]\n\n")); c.close(); } }));
-  assert.equal(await (await result).text(), "data: token\n\ndata: [DONE]\n\n");
-  await uploaded;
-  await assert.rejects(relay.accept("pool-a", job.id, 200, "application/json", new ReadableStream()), /unknown/);
+  const enc = (t: string) => new TextEncoder().encode(t);
+  assert.throws(() => relay.part("pool-b", job.id, 0, 200, "text/event-stream", enc("x"), false), /unknown/);
+  assert.throws(() => relay.part("pool-a", job.id, 1, 200, "text/event-stream", enc("x"), false), /unknown/); // must start at 0
+  relay.part("pool-a", job.id, 0, 200, "text/event-stream", enc("data: token\n\n"), false);
+  const response = await result; // the client's response starts with the first part, before the answer ends
+  assert.equal(response.headers.get("content-type"), "text/event-stream");
+  const reader = response.body!.getReader();
+  assert.equal(new TextDecoder().decode((await reader.read()).value), "data: token\n\n");
+  relay.part("pool-a", job.id, 1, 200, "text/event-stream", enc("data: [DONE]\n\n"), true);
+  assert.equal(new TextDecoder().decode((await reader.read()).value), "data: [DONE]\n\n");
+  assert.equal((await reader.read()).done, true);
+  assert.throws(() => relay.part("pool-a", job.id, 2, 200, "text/event-stream", enc("late"), false), /unknown/);
   const abort = new AbortController();
   const cancelled = relay.forward("pool-a", "/v1/chat/completions", {}, abort.signal);
   const check = assert.rejects(cancelled, /cancelled/);
@@ -212,7 +218,8 @@ test("start waits for every approved helper, then real signed heartbeats gate re
     const job = (await (await s.app.request("/provider/helper/jobs", { headers: { authorization: `Bearer ${coordinator.credential.token}` } })).json()).job;
     assert.ok(job);
     assert.equal(job.path, "/v1/chat/completions");
-    const uploaded = s.app.request(`/provider/helper/jobs/${job.id}`, post({ choices: [{ message: { content: "Hello" } }], usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 } }, coordinator.credential.token));
+    const uploaded = s.app.request(`/provider/helper/jobs/${job.id}/parts`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${coordinator.credential.token}`, "x-part-seq": "0", "x-part-final": "1", "x-upstream-status": "200" },
+      body: JSON.stringify({ choices: [{ message: { content: "Hello" } }], usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 } }) });
     const result = await inference;
     assert.equal(result.status, 200, await result.clone().text());
     assert.equal((await result.json()).choices[0].message.content, "Hello");

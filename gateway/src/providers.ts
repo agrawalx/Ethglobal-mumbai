@@ -288,10 +288,14 @@ export function providerRoutes(db: Db, cfg: Config, signer: Signer, relay: Provi
     return c.json({ ok: true });
   });
   helper.get("/jobs", async c => c.get("helper").role === "coordinator" ? c.json({ job: await relay.poll(c.get("helper").pool_id, c.req.raw.signal) }) : fail(c, 403, "Coordinator only"));
-  helper.post("/jobs/:id", async c => {
-    const member = c.get("helper"), status = Number(c.req.header("x-upstream-status") ?? 200);
-    if (member.role !== "coordinator" || !c.req.raw.body || !Number.isInteger(status) || status < 200 || status > 599 || status === 204 || status === 304) return fail(c, 400, "Invalid relay response");
-    try { await relay.accept(member.pool_id, c.req.param("id"), status, c.req.header("content-type")?.startsWith("text/event-stream") ? "text/event-stream" : "application/json", c.req.raw.body); }
+  // The coordinator streams each answer as ordered small parts (see ProviderRelay.part): a proxy that buffers
+  // request bodies then delays one part, not the whole answer.
+  helper.post("/jobs/:id/parts", async c => {
+    const member = c.get("helper"), status = Number(c.req.header("x-upstream-status") ?? 200), seq = Number(c.req.header("x-part-seq"));
+    if (member.role !== "coordinator" || !Number.isInteger(seq) || seq < 0 || !Number.isInteger(status) || status < 200 || status > 599 || status === 204 || status === 304) return fail(c, 400, "Invalid relay response");
+    const data = new Uint8Array(await c.req.arrayBuffer());
+    const type = c.req.header("content-type")?.startsWith("text/event-stream") ? "text/event-stream" : "application/json";
+    try { relay.part(member.pool_id, c.req.param("id"), seq, status, type, data, c.req.header("x-part-final") === "1"); }
     catch { return fail(c, 409, "Relay request was cancelled or already completed"); }
     return c.json({ ok: true });
   });

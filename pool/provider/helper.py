@@ -329,30 +329,42 @@ def forward_job(base, token, job, private_port=3001):
         upstream = error
     destination = urllib.parse.urlparse(base)
     connection = (http.client.HTTPSConnection if destination.scheme == "https" else http.client.HTTPConnection)(destination.hostname, destination.port, timeout=600)
+    path = destination.path.rstrip("/") + "/provider/helper/jobs/" + job["id"] + "/parts"
+    seq = 0
+
+    def send_part(data, final):
+        # One small POST per piece of the answer. A proxy in front of the gateway (Render/Cloudflare) buffers a
+        # request body until it ends, so one long chunked upload would hold every token back until the end.
+        nonlocal seq
+        connection.request("POST", path, body=data, headers={
+            "Authorization": "Bearer " + token, "User-Agent": USER_AGENT,
+            "Content-Type": upstream.headers.get("content-type", "application/json"),
+            "X-Upstream-Status": str(upstream.status), "X-Part-Seq": str(seq), "X-Part-Final": "1" if final else "0"})
+        response = connection.getresponse()
+        response.read()
+        if response.status == 409:
+            raise RuntimeError("Relay request was cancelled by the gateway")
+        if response.status >= 400:
+            raise RuntimeError(f"Gateway returned HTTP {response.status} for a relay part")
+        seq += 1
+
     try:
-        connection.putrequest("POST", destination.path.rstrip("/") + "/provider/helper/jobs/" + job["id"])
-        connection.putheader("Authorization", "Bearer " + token)
-        connection.putheader("User-Agent", USER_AGENT)
-        connection.putheader("Content-Type", upstream.headers.get("content-type", "application/json"))
-        connection.putheader("X-Upstream-Status", str(upstream.status))
-        connection.putheader("Transfer-Encoding", "chunked")
-        connection.endheaders()
         with upstream:
             streaming = upstream.headers.get("content-type", "").lower().startswith("text/event-stream")
             terminal_tail = b""
-            # read1 does not wait for a large buffer, preserving token-by-token SSE latency.
+            # read1 returns what has arrived without waiting for a full buffer. While a part is in flight,
+            # new tokens queue in the socket, so the next read1 batches them: one POST per round trip.
             while chunk := upstream.read1(16384):
-                connection.send(f"{len(chunk):x}\r\n".encode() + chunk + b"\r\n")
                 if streaming:
                     terminal = terminal_tail + chunk
                     # Parallax can leave the HTTP/RPC stream open after DONE. Waiting for
                     # EOF then blocks this helper's next OpenCode tool-result request.
                     if re.search(rb"(?:^|\r?\n)data:[ \t]*\[DONE\]\r?\n\r?\n", terminal):
-                        break
+                        send_part(chunk, True)
+                        return
                     terminal_tail = terminal[-64:]
-        connection.send(b"0\r\n\r\n")
-        response = connection.getresponse()
-        response.read()
+                send_part(chunk, False)
+        send_part(b"", True)
     finally:
         connection.close()
 

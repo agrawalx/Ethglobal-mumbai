@@ -20,7 +20,7 @@ spec.loader.exec_module(helper)
 class ProviderHelperTests(unittest.TestCase):
     def test_done_releases_relay_without_waiting_for_http_eof(self):
         release = threading.Event()
-        uploaded = []
+        parts = []
         payload = b'data: {"choices":[{"delta":{"content":"data: [DONE]"}}]}\r\n\r\n'
         class Upstream(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
@@ -40,16 +40,10 @@ class ProviderHelperTests(unittest.TestCase):
                 except (BrokenPipeError, ConnectionResetError): pass
         class Gateway(BaseHTTPRequestHandler):
             def log_message(self, *_): pass
+            protocol_version = "HTTP/1.1"  # keep-alive: the helper sends every part on one connection
             def do_POST(self):
-                body = b""
-                while True:
-                    size = int(self.rfile.readline().strip(), 16)
-                    if not size:
-                        self.rfile.readline()
-                        break
-                    body += self.rfile.read(size)
-                    self.rfile.read(2)
-                uploaded.append(body)
+                body = self.rfile.read(int(self.headers.get("content-length") or 0))
+                parts.append((int(self.headers["x-part-seq"]), self.headers["x-part-final"], body))
                 self.send_response(200)
                 self.send_header("Content-Length", "2")
                 self.end_headers()
@@ -65,7 +59,11 @@ class ProviderHelperTests(unittest.TestCase):
                                  {"id": "fixture", "path": "/v1/chat/completions", "body": {"stream": True}}, upstream.server_port)
             future.result(timeout=2)
             self.assertFalse(release.is_set(), "relay returns while upstream is still open")
-            self.assertEqual(uploaded, [payload + b"data: [DONE]\r\n\r\n"])
+            # Each piece is its own part, in order; the part holding DONE is final and nothing waits for EOF.
+            self.assertEqual([seq for seq, _, _ in parts], list(range(len(parts))))
+            self.assertEqual(parts[-1][1], "1")
+            self.assertTrue(all(final == "0" for _, final, _ in parts[:-1]))
+            self.assertEqual(b"".join(body for _, _, body in parts), payload + b"data: [DONE]\r\n\r\n")
         finally:
             release.set()
             pool.shutdown(wait=True)

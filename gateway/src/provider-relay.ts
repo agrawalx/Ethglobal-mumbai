@@ -3,7 +3,11 @@ import type { ProviderJob } from "@gpupool/shared";
 import type { z } from "zod";
 
 type Job = { wire: z.infer<typeof ProviderJob>; pool: string; delivered: boolean; resolve: (response: Response) => void;
-  reject: (error: Error) => void; cleanup: () => void; accepted: boolean; cancelStream?: () => void };
+  reject: (error: Error) => void; cleanup: () => void; accepted: boolean; cancelStream?: () => void;
+  controller?: ReadableStreamDefaultController<Uint8Array>; nextSeq: number; bytes: number; closed: boolean };
+
+/** Upper bound for one relayed response. */
+const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 type Poll = { resolve: (job: z.infer<typeof ProviderJob> | null) => void; cleanup: () => void };
 
 /** Outbound-only coordinator connection. All payment/auth/settlement stays in chat.ts. */
@@ -21,7 +25,7 @@ export class ProviderRelay {
       const timer = setTimeout(() => { this.jobs.get(id)?.cancelStream?.(); cancel(); reject(new Error("provider relay timed out")); }, 600_000);
       timer.unref();
       const job: Job = { wire: { id, path, body: body ?? null }, pool, delivered: false, accepted: false,
-        resolve, reject, cleanup: cancel };
+        resolve, reject, cleanup: cancel, nextSeq: 0, bytes: 0, closed: false };
       this.jobs.set(id, job);
       signal?.addEventListener("abort", abort, { once: true });
       const poll = this.polls.get(pool);
@@ -45,30 +49,29 @@ export class ProviderRelay {
     });
   }
 
-  async accept(pool: string, id: string, status: number, contentType: string, body: ReadableStream<Uint8Array>): Promise<void> {
+  /**
+   * One part of a relayed response, in order (seq 0, 1, 2…). The helper sends many small POSTs instead of one
+   * chunked upload: proxies in front of the gateway (Render/Cloudflare) buffer a request body until it ends,
+   * which held every token back until the answer was complete. Part 0 carries the upstream status and type and
+   * starts the client's response; `final` closes it. Throws for an unknown, foreign, cancelled or out-of-order part.
+   */
+  part(pool: string, id: string, seq: number, status: number, contentType: string, data: Uint8Array, final: boolean): void {
     const job = this.jobs.get(id);
-    if (!job || job.pool !== pool || !job.delivered || job.accepted) throw new Error("unknown or completed relay job");
-    job.accepted = true;
-    const reader = body.getReader();
-    let bytes = 0;
-    let finish!: () => void;
-    const done = new Promise<void>(resolve => { finish = resolve; });
-    const close = () => { job.cleanup(); finish(); };
-    const stream = new ReadableStream<Uint8Array>({
-      start(controller) { job.cancelStream = () => { controller.error(new Error("Provider relay disconnected")); void reader.cancel().catch(() => {}); close(); }; },
-      async pull(controller) {
-        try {
-          const next = await reader.read();
-          if (next.done) { controller.close(); close(); return; }
-          bytes += next.value.byteLength;
-          if (bytes > 16 * 1024 * 1024) throw new Error("provider response exceeds limit");
-          controller.enqueue(next.value);
-        } catch (error) { controller.error(error); void reader.cancel().catch(() => {}); close(); }
-      },
-      cancel() { void reader.cancel().catch(() => {}); close(); },
-    });
-    job.resolve(new Response(stream, { status, headers: { "content-type": contentType } }));
-    await done;
+    if (!job || job.pool !== pool || !job.delivered || job.closed || seq !== job.nextSeq) throw new Error("unknown or completed relay job");
+    job.nextSeq++;
+    if (seq === 0) {
+      job.accepted = true;
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) { job.controller = controller; },
+        cancel: () => { job.closed = true; job.cleanup(); },
+      });
+      job.cancelStream = () => { if (!job.closed) { job.closed = true; job.controller?.error(new Error("Provider relay disconnected")); } job.cleanup(); };
+      job.resolve(new Response(stream, { status, headers: { "content-type": contentType } }));
+    }
+    job.bytes += data.byteLength;
+    if (job.bytes > MAX_RESPONSE_BYTES) { job.cancelStream?.(); throw new Error("provider response exceeds limit"); }
+    if (data.byteLength) job.controller!.enqueue(data);
+    if (final) { job.closed = true; job.controller!.close(); job.cleanup(); }
   }
 
   closePool(pool: string) {
