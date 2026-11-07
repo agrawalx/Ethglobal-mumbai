@@ -311,6 +311,7 @@ Each component has a `.env.example`. Copy it to `.env` and fill it. Summary:
 | `WORLD_RP_SIGNING_KEY` | RP signing key (server only) |
 | `WORLD_ACTION` | `gpupool-account` |
 | `WORLD_ENVIRONMENT` | `staging` |
+| `WORLD_SIMULATOR_DEVICE_ACCOUNTS` | TEMPORARY, staging only (gateway refuses it in production). `true` = account key is sha256(nullifier:browser device id) from the `x-gpupool-device` header, because the World simulator returns one nullifier for every identity. Remove once real World App logins work. |
 | `STARTER_CREDITS` | e.g. `10000` |
 | `STARTER_EXPIRY_DAYS` | e.g. `14` |
 | `HEDERA_NETWORK` | `testnet` |

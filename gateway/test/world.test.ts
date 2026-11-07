@@ -128,3 +128,41 @@ test("cancel: the user closes the widget → the frontend sends nothing → noth
   assert.equal(r.status, 401);
   db.close();
 });
+
+test("simulator device accounts (staging, temporary): same nullifier + different browsers → different accounts; header required", async () => {
+  const cfg = loadConfig({ ...env, WORLD_SIMULATOR_DEVICE_ACCOUNTS: "true" });
+  const db = openDb(":memory:");
+  const w = world((b) => ok(b.responses[0].nullifier));
+  const app = createApp({ cfg, db, signer, worldFetch: w.f });
+  const verify = (device?: string) => app.request("/auth/world/verify", { method: "POST", headers: { "content-type": "application/json", ...(device ? { "x-gpupool-device": device } : {}) }, body: JSON.stringify(idkitResult("0xAA05")) });
+  const a = WorldVerifyResponse.parse(await (await verify("a".repeat(32))).json());
+  const b = WorldVerifyResponse.parse(await (await verify("b".repeat(32))).json());
+  const a2 = WorldVerifyResponse.parse(await (await verify("A".repeat(32))).json());
+  assert.notEqual(a.account_id, b.account_id);
+  assert.equal(a2.account_id, a.account_id);
+  assert.equal(a2.new_account, false);
+  const missing = await verify();
+  assert.equal(missing.status, 400);
+  ErrorResponse.parse(await missing.json());
+  // The device header is never forwarded to World.
+  assert.deepEqual(w.calls[0]!.body, idkitResult("0xAA05"));
+  db.close();
+});
+
+test("simulator device accounts are refused in production; header ignored when the flag is off", async () => {
+  const prod = setupWith({ WORLD_ENVIRONMENT: "production", WORLD_SIMULATOR_DEVICE_ACCOUNTS: "true" });
+  assert.equal((await prod.app.request("/auth/world/rp-signature", { method: "POST" })).status, 500);
+  prod.db.close();
+  const off = setupWith({});
+  const r = (d: string) => off.app.request("/auth/world/verify", { method: "POST", headers: { "content-type": "application/json", "x-gpupool-device": d }, body: JSON.stringify(idkitResult("0xAA06")) });
+  const a = WorldVerifyResponse.parse(await (await r("a".repeat(32))).json());
+  const b = WorldVerifyResponse.parse(await (await r("b".repeat(32))).json());
+  assert.equal(a.account_id, b.account_id);
+  off.db.close();
+});
+
+function setupWith(extra: Record<string, string>) {
+  const cfg = loadConfig({ ...env, ...extra });
+  const db = openDb(":memory:");
+  return { db, app: createApp({ cfg, db, signer, worldFetch: world((b) => ok(b.responses[0].nullifier)).f }) };
+}

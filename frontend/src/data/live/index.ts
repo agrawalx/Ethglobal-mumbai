@@ -33,6 +33,17 @@ async function call<T>(path: string, init: RequestInit & { what?: string } = {})
   return (await res.json()) as T;
 }
 const get = <T,>(path: string, token?: string | null) => call<T>(path, { headers: auth(token) });
+/** TEMPORARY (staging World simulator gives one nullifier to everyone): random id per browser; the gateway
+ *  keys simulator accounts by nullifier + this id when WORLD_SIMULATOR_DEVICE_ACCOUNTS=true. Ignored in production. */
+const DEVICE_KEY = "gpupool.device.v1";
+function deviceId(): string {
+  let id = localStorage.getItem(DEVICE_KEY);
+  if (!id || !/^[0-9a-f]{32,64}$/.test(id)) {
+    id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+    localStorage.setItem(DEVICE_KEY, id);
+  }
+  return id;
+}
 const post = <T,>(path: string, body: unknown, token?: string | null, what?: string) =>
   call<T>(path, { method: "POST", body: JSON.stringify(body), headers: auth(token), what });
 
@@ -64,7 +75,7 @@ export const liveApi: PoolApi = {
   auth: {
     rpContext: async () => rpFromWire(await post("/auth/world/rp-signature", {}, null, "World login")),
     async verify(result) {
-      const r = WorldVerifyResponse.parse(await post("/auth/world/verify", result, null, "World login"));
+      const r = WorldVerifyResponse.parse(await call("/auth/world/verify", { method: "POST", body: JSON.stringify(result), headers: { "x-gpupool-device": deviceId() }, what: "World login" }));
       return { token:r.token, created:r.new_account, me:await liveApi.me(r.token) } satisfies LoginResult;
     },
   },

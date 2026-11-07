@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { credentialOf, upgradeCredential } from "./incentives.ts";
 import type { Context } from "hono";
 import { signRequest } from "@worldcoin/idkit-core/signing";
@@ -31,8 +32,26 @@ const worldEnv = (cfg: Config) => {
   const e = cfg.env;
   const missing = ["WORLD_APP_ID", "WORLD_RP_ID", "WORLD_RP_SIGNING_KEY", "WORLD_ACTION", "JWT_SECRET", "GATEWAY_SIGNING_KEY"].filter((k) => !e[k as keyof typeof e]);
   if (missing.length) throw new Error(`World login needs ${missing.join(", ")} (gateway/.env)`);
-  return { appId: e.WORLD_APP_ID!, rpId: e.WORLD_RP_ID!, key: e.WORLD_RP_SIGNING_KEY!, action: e.WORLD_ACTION!, environment: (e.WORLD_ENVIRONMENT ?? "staging") as "staging" | "production" };
+  const environment = (e.WORLD_ENVIRONMENT ?? "staging") as "staging" | "production";
+  const deviceAccounts = e.WORLD_SIMULATOR_DEVICE_ACCOUNTS === "true";
+  if (deviceAccounts && environment !== "staging") throw new Error("WORLD_SIMULATOR_DEVICE_ACCOUNTS=true is allowed only with WORLD_ENVIRONMENT=staging");
+  return { appId: e.WORLD_APP_ID!, rpId: e.WORLD_RP_ID!, key: e.WORLD_RP_SIGNING_KEY!, action: e.WORLD_ACTION!, environment, deviceAccounts };
 };
+
+/** Browser device id header (TEMPORARY, staging simulator only). */
+export const DEVICE_HEADER = "x-gpupool-device";
+
+/**
+ * TEMPORARY until real World App logins: the staging simulator returns the SAME nullifier for every
+ * identity, so every tester would share one account. With WORLD_SIMULATOR_DEVICE_ACCOUNTS=true
+ * (staging only) the account key is sha256(nullifier:device), the device id being a random value each
+ * browser keeps in localStorage. Production always keys accounts by the nullifier alone.
+ */
+export function accountKey(nullifierKey: string, deviceAccounts: boolean, device: string | undefined): string | { error: string } {
+  if (!deviceAccounts) return nullifierKey;
+  if (!device || !/^[0-9a-f]{32,64}$/.test(device)) return { error: `simulator login needs the ${DEVICE_HEADER} header (32-64 hex chars); reload the site` };
+  return `sim:${createHash("sha256").update(`${nullifierKey}:${device}`).digest("hex")}`;
+}
 
 export function rpSignatureHandler(cfg: Config) {
   return (c: Context): Response => {
@@ -85,7 +104,9 @@ export function verifyHandler(db: Db, cfg: Config, signer: Signer, worldFetch: W
 
     // Normalise to 32-byte 0x hex so the same human always maps to the same row.
     const key = `0x${nullifier.slice(2).padStart(64, "0")}`;
-    const login = loginOrCreate(db, cfg, signer, key);
+    const account = accountKey(key, w.deviceAccounts, c.req.header(DEVICE_HEADER)?.toLowerCase());
+    if (typeof account !== "string") return errorResponse(c, 400, "bad_request", account.error);
+    const login = loginOrCreate(db, cfg, signer, account);
     // SPEC §16.3: same nullifier = same account; keep the strongest credential shown (node cap tier).
     upgradeCredential(db, login.accountId, credentialOf(used));
     const token = await issueToken(cfg.env.JWT_SECRET!, login.accountId, cfg.net.session_ttl_s);

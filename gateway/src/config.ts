@@ -38,6 +38,7 @@ export const GatewayEnv = z.preprocess(
     WORLD_RP_SIGNING_KEY: opt,
     WORLD_ACTION: opt,
     WORLD_ENVIRONMENT: opt,
+    WORLD_SIMULATOR_DEVICE_ACCOUNTS: opt,
     STARTER_CREDITS: z.coerce.number().int().nonnegative().optional(),
     STARTER_EXPIRY_DAYS: z.coerce.number().int().positive().optional(),
     HEDERA_NETWORK: opt,
