@@ -22,8 +22,11 @@ import { env } from "../config/env";
 import config from "../../../shared/config/gpupool.config.json";
 
 const cr = (n: number) => fmtNum(n, 1);
-const MODEL = config.models.find((m) => m.model_id === "Qwen/Qwen3-14B-FP8") ?? config.models[0]!;
-const OUT_LIMIT = MODEL.x402_prices[MODEL.x402_prices.length - 1]!.max_tokens;
+type CatalogModel = (typeof config.models)[number];
+/** Used until /v1/models answers, or when no pool serves any model. */
+const DEFAULT_MODEL = config.models.find((m) => m.model_id === "Qwen/Qwen3-14B-FP8") ?? config.models[0]!;
+const outLimit = (m: CatalogModel) => m.x402_prices[m.x402_prices.length - 1]!.max_tokens;
+const shortName = (id: string) => (id.split("/")[1] ?? id).replace(/-FP8$/, "");
 const IN_WEIGHT = config.cost.input_token_weight;
 
 /** Gateway origin for clients outside the browser (same origin when VITE_GATEWAY_URL is empty). */
@@ -34,7 +37,7 @@ const TOPUP_CMD = `cd agent-client
 pnpm topup --check      # this key's credits
 pnpm topup --hbar 5     # pay 5 testnet HBAR → +${5 * TOPUP.credits_per_hbar} credits on this key`;
 
-function opencodeJson(contextLength: number) {
+function opencodeJson(model: CatalogModel, contextLength: number) {
   return JSON.stringify(
     {
       $schema: "https://opencode.ai/config.json",
@@ -46,10 +49,10 @@ function opencodeJson(contextLength: number) {
           npm: "@ai-sdk/openai-compatible",
           name: "GPU Pool",
           options: { baseURL: apiBase(), apiKey: "{env:GPUPOOL_API_KEY}" },
-          models: { [MODEL.model_id]: { name: "Qwen3 14B on GPU Pool", limit: { context: contextLength, output: OUT_LIMIT } } },
+          models: { [model.model_id]: { name: `${shortName(model.model_id)} on GPU Pool`, limit: { context: contextLength, output: outLimit(model) } } },
         },
       },
-      model: `gpupool/${MODEL.model_id}`,
+      model: `gpupool/${model.model_id}`,
     },
     null,
     2,
@@ -172,6 +175,9 @@ export default function Keys() {
   const [sheet, setSheet] = useState<Receipt | null>(null);
   const [sheetErr, setSheetErr] = useState<Error | null>(null);
 
+  // OpenCode should ask for the model a pool serves right now (e.g. Qwen3-30B-A3B on the Mac pool), not a fixed one.
+  const served = models.data?.find((m) => m.served);
+  const MODEL = config.models.find((m) => m.model_id === served?.model.model_id) ?? DEFAULT_MODEL;
   const offer = models.data?.find((m) => m.model.model_id === MODEL.model_id);
   const factor = offer?.model.model_factor ?? MODEL.model_factor;
   const perKOut = offer?.price?.credits_per_1k_out ?? factor * 1000;
@@ -333,7 +339,7 @@ export default function Keys() {
               Run <code className="mono">opencode</code>, then pick the model with <code className="mono">/models</code>.
             </li>
           </ol>
-          <CodeBox code={opencodeJson(contextLength)} />
+          <CodeBox code={opencodeJson(MODEL, contextLength)} />
           <p className="faint table-note">Any OpenAI client works the same way: base URL {apiBase()}, the key as the API key.</p>
         </section>
       </div>
