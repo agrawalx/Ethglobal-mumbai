@@ -108,7 +108,7 @@ For implementation details, see the [specification](docs/SPEC.md) and [engineeri
 
 **Arkiv**
 - Catalog writer: `0xfeb19eb223236427a31b2d909851025abc55db1b` (Rabdi, chain 7794095)
-- Docs: [why-arkiv.md](arkiv/why-arkiv.md) · [how-you-use-arkiv.md](arkiv/how-you-use-arkiv.md) · [arkiv/](arkiv/)
+- Docs: [why-arkiv.md](arkiv/why-arkiv.md) · [how-you-use-arkiv.md](arkiv/how-you-use-arkiv.md) · [schema.md](arkiv/schema.md) · [friction.md](arkiv/friction.md) · [reach.md](arkiv/reach.md) · [arkiv/](arkiv/)
 - Query: `cd arkiv && node --env-file=.env src/cli.ts list-models`
 
 **Hedera x402**
